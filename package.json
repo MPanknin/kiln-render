@@ -1,0 +1,19 @@
+{
+  "name": "kiln",
+  "version": "0.1.0",
+  "description": "Brick-based WebGPU volume renderer with virtual texturing",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "devDependencies": {
+    "@webgpu/types": "^0.1.69",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^4.0.18"
+  }
+}

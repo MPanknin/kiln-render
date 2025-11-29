@@ -4,7 +4,7 @@
  * Simple free-list allocator. When full, caller must evict before allocating.
  */
 
-import { GRID_SIZE } from './indirection.js';
+import { GRID_SIZE } from './config.js';
 
 export interface AtlasSlot {
   x: number;

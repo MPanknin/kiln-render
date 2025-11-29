@@ -2,7 +2,7 @@
  * Volume canvas (atlas) and test volume generation
  */
 
-export const CANVAS_SIZE = 512;
+import { ATLAS_SIZE } from './config.js';
 
 export interface VolumeCanvas {
   texture: GPUTexture;
@@ -14,13 +14,13 @@ export interface VolumeCanvas {
  */
 export function createVolumeCanvas(device: GPUDevice): VolumeCanvas {
   const texture = device.createTexture({
-    size: [CANVAS_SIZE, CANVAS_SIZE, CANVAS_SIZE],
+    size: [ATLAS_SIZE, ATLAS_SIZE, ATLAS_SIZE],
     format: 'r8unorm',
     dimension: '3d',
     usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
   });
 
-  return { texture, size: CANVAS_SIZE };
+  return { texture, size: ATLAS_SIZE };
 }
 
 /**

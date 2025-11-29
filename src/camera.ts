@@ -2,15 +2,15 @@
  * Simple arcball camera with mouse interaction
  */
 
-// Volume canvas center (512/2 = 256)
-const TARGET = [256, 256, 256];
+// Camera orbits around origin (center of normalized volume)
+const TARGET: [number, number, number] = [0, 0, 0];
 
 export class Camera {
   position: Float32Array;
 
-  private distance = 1200;
-  private rotationX = 0;
-  private rotationY = 0;
+  private distance = 2.4;  // Distance from origin in normalized units
+  private rotationX = 0.3;
+  private rotationY = 0.4;
   private isDragging = false;
   private lastX = 0;
   private lastY = 0;
@@ -45,14 +45,15 @@ export class Camera {
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.distance *= 1 + e.deltaY * 0.001;
-      this.distance = Math.max(100, Math.min(3000, this.distance));
+      // Zoom limits for normalized space
+      this.distance = Math.max(0.5, Math.min(10, this.distance));
       this.updatePosition();
     }, { passive: false });
   }
 
   private updatePosition() {
     const cosX = Math.cos(this.rotationX);
-    // Orbit around the center of the volume canvas
+    // Orbit around origin (center of normalized volume)
     this.position[0] = TARGET[0] + Math.sin(this.rotationY) * cosX * this.distance;
     this.position[1] = TARGET[1] + Math.sin(this.rotationX) * this.distance;
     this.position[2] = TARGET[2] + Math.cos(this.rotationY) * cosX * this.distance;
@@ -63,7 +64,10 @@ export class Camera {
   }
 
   getProjectionMatrix(aspect: number): Float32Array {
-    return perspective(Math.PI / 4, aspect, 1, 5000);
+    // Near/far planes for normalized space
+    const near = 0.01;
+    const far = 100;
+    return perspective(Math.PI / 4, aspect, near, far);
   }
 }
 

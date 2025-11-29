@@ -2,24 +2,28 @@
  * Box geometry for proxy rendering
  */
 
+import { NORMALIZED_SIZE } from './config.js';
+
 export interface BoxGeometry {
   vertices: Float32Array;
   indices: Uint16Array;
   wireframeIndices: Uint16Array;
 }
 
-export function createBox(size: number = 512): BoxGeometry {
-  // Cube vertices in [0, size] range (matching volume canvas)
-  const s = size;
+export function createBox(size: [number, number, number] = NORMALIZED_SIZE): BoxGeometry {
+  // Box vertices with normalized dimensions based on dataset aspect ratio
+  // Centered at origin: [-size/2, size/2] for each axis
+  const [sx, sy, sz] = size;
+  const hx = sx / 2, hy = sy / 2, hz = sz / 2;
   const vertices = new Float32Array([
-    0, 0, 0,  // 0
-    s, 0, 0,  // 1
-    s, s, 0,  // 2
-    0, s, 0,  // 3
-    0, 0, s,  // 4
-    s, 0, s,  // 5
-    s, s, s,  // 6
-    0, s, s,  // 7
+    -hx, -hy, -hz,  // 0
+     hx, -hy, -hz,  // 1
+     hx,  hy, -hz,  // 2
+    -hx,  hy, -hz,  // 3
+    -hx, -hy,  hz,  // 4
+     hx, -hy,  hz,  // 5
+     hx,  hy,  hz,  // 6
+    -hx,  hy,  hz,  // 7
   ]);
 
   // Triangle indices (6 faces, 2 triangles each)
@@ -49,6 +53,7 @@ export interface AxisGeometry {
 export function createAxis(size: number): AxisGeometry {
   // 6 vertices: 2 per axis (origin + endpoint)
   // Format: x, y, z, r, g, b
+  // Axes start at origin (center of normalized volume)
   const vertices = new Float32Array([
     // X axis (red)
     0, 0, 0, 1, 0, 0,

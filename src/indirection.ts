@@ -3,13 +3,11 @@
  *
  * Maps virtual brick coordinates to atlas positions.
  *
- * Virtual volume is divided into bricks (e.g., 64³ bricks in a 512³ volume = 8x8x8 brick grid)
+ * Virtual volume is divided into bricks (BRICK_SIZE³ bricks, forming a GRID_SIZE³ grid)
  * Each entry in the indirection table tells the shader where to find that brick in the atlas.
  */
 
-export const BRICK_SIZE = 64;  // Each brick is 64³
-export const GRID_SIZE = 8;    // 512 / 64 = 8 bricks per dimension
-export const ATLAS_SIZE = 512;
+import { GRID_SIZE, DATASET_GRID } from './config.js';
 
 export interface BrickLocation {
   // Virtual position (which brick in the logical volume)
@@ -34,15 +32,20 @@ export class IndirectionTable {
   // GPU texture: 3D texture where each texel is the atlas offset for that brick
   texture: GPUTexture;
 
+  // Dataset grid dimensions for indexing
+  private gridX = DATASET_GRID[0];
+  private gridY = DATASET_GRID[1];
+  private gridZ = DATASET_GRID[2];
+
   constructor(device: GPUDevice) {
     this.device = device;
 
-    // 8x8x8 grid, 4 bytes per entry (RGBA)
-    this.data = new Uint8Array(GRID_SIZE * GRID_SIZE * GRID_SIZE * 4);
+    // Dataset grid, 4 bytes per entry (RGBA)
+    this.data = new Uint8Array(this.gridX * this.gridY * this.gridZ * 4);
 
-    // Create 3D texture for indirection (8x8x8, RGBA8)
+    // Create 3D texture for indirection (dataset grid size, RGBA8)
     this.texture = device.createTexture({
-      size: [GRID_SIZE, GRID_SIZE, GRID_SIZE],
+      size: [this.gridX, this.gridY, this.gridZ],
       format: 'rgba8unorm',
       dimension: '3d',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
@@ -54,31 +57,30 @@ export class IndirectionTable {
 
   /**
    * Register a brick mapping: virtual position -> atlas position
-   * Positions are in brick units (0-7), not voxels
+   * Positions are in brick units (0-GRID_SIZE-1), not voxels
    */
   setBrick(
     virtualX: number, virtualY: number, virtualZ: number,
     atlasX: number, atlasY: number, atlasZ: number
   ) {
-    const idx = (virtualX + virtualY * GRID_SIZE + virtualZ * GRID_SIZE * GRID_SIZE) * 4;
+    const idx = (virtualX + virtualY * this.gridX + virtualZ * this.gridX * this.gridY) * 4;
 
-    // Store atlas position as brick units (0-7) scaled to 0-255
-    // Shader will convert back: atlasCoord = indirection.xyz * (BRICK_SIZE / ATLAS_SIZE)
-    this.data[idx + 0] = atlasX * 32;  // 0-7 -> 0,32,64,96,128,160,192,224
-    this.data[idx + 1] = atlasY * 32;
-    this.data[idx + 2] = atlasZ * 32;
+    // Store atlas position as brick units scaled to 0-255
+    // Scale factor: 256 / GRID_SIZE to map atlas brick coords to [0,1] range
+    const scale = 256 / GRID_SIZE;
+    this.data[idx + 0] = atlasX * scale;
+    this.data[idx + 1] = atlasY * scale;
+    this.data[idx + 2] = atlasZ * scale;
     this.data[idx + 3] = 255;  // loaded = true
 
     this.updateBrickGPU(virtualX, virtualY, virtualZ);
-
-    console.log(`Indirection: virtual[${virtualX},${virtualY},${virtualZ}] -> atlas[${atlasX},${atlasY},${atlasZ}]`);
   }
 
   /**
    * Clear a brick (mark as not loaded)
    */
   clearBrick(virtualX: number, virtualY: number, virtualZ: number) {
-    const idx = (virtualX + virtualY * GRID_SIZE + virtualZ * GRID_SIZE * GRID_SIZE) * 4;
+    const idx = (virtualX + virtualY * this.gridX + virtualZ * this.gridX * this.gridY) * 4;
     this.data[idx + 0] = 0;
     this.data[idx + 1] = 0;
     this.data[idx + 2] = 0;
@@ -99,7 +101,7 @@ export class IndirectionTable {
    * Update a single brick entry on the GPU (partial update)
    */
   private updateBrickGPU(x: number, y: number, z: number) {
-    const idx = (x + y * GRID_SIZE + z * GRID_SIZE * GRID_SIZE) * 4;
+    const idx = (x + y * this.gridX + z * this.gridX * this.gridY) * 4;
 
     // Write just this single texel to the GPU
     this.device.queue.writeTexture(
@@ -117,8 +119,8 @@ export class IndirectionTable {
     this.device.queue.writeTexture(
       { texture: this.texture },
       this.data,
-      { bytesPerRow: GRID_SIZE * 4, rowsPerImage: GRID_SIZE },
-      [GRID_SIZE, GRID_SIZE, GRID_SIZE]
+      { bytesPerRow: this.gridX * 4, rowsPerImage: this.gridY },
+      [this.gridX, this.gridY, this.gridZ]
     );
   }
 }

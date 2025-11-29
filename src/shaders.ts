@@ -2,17 +2,23 @@
  * WGSL Shaders
  */
 
+import { CONFIG } from './config.js';
+
 export const volumeShader = /* wgsl */ `
 struct Uniforms {
   mvp: mat4x4f,
   inverseModel: mat4x4f,
   cameraPos: vec3f,
-  useIndirection: f32,  // 0 = direct sampling, 1 = use indirection
+  useIndirection: f32,
+  datasetSize: vec3f,      // Dataset dimensions in voxels (e.g., 512, 512, 256)
+  _pad1: f32,
+  normalizedSize: vec3f,   // Normalized proxy dimensions (e.g., 1.0, 1.0, 0.5)
+  _pad2: f32,
 }
 
-const BRICK_SIZE: f32 = 64.0;
-const GRID_SIZE: f32 = 8.0;
-const ATLAS_SIZE: f32 = 512.0;
+const BRICK_SIZE: f32 = ${CONFIG.BRICK_SIZE}.0;
+const GRID_SIZE: f32 = ${CONFIG.GRID_SIZE}.0;
+const ATLAS_SIZE: f32 = ${CONFIG.ATLAS_SIZE}.0;
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var volumeSampler: sampler;
@@ -35,12 +41,21 @@ fn vs(@location(0) pos: vec3f) -> VertexOut {
   return out;
 }
 
-// Sample with indirection: virtual position -> atlas position
-fn sampleWithIndirection(virtualPos: vec3f) -> f32 {
-  // Convert virtual position [0,512] to brick coordinate [0,1] for indirection lookup
-  let brickCoord = virtualPos / ATLAS_SIZE;  // [0,1]
+// Convert normalized position to virtual voxel coordinates
+fn normalizedToVoxel(normalizedPos: vec3f) -> vec3f {
+  // normalizedPos is in [-0.5*normalizedSize, 0.5*normalizedSize]
+  // Map to [0, datasetSize]
+  let unitPos = (normalizedPos / uniforms.normalizedSize) + 0.5;  // [0, 1]
+  return unitPos * uniforms.datasetSize;  // [0, datasetSize]
+}
 
-  // Sample indirection table (8x8x8 texture)
+// Sample with indirection: virtual voxel position -> atlas sample
+fn sampleWithIndirection(voxelPos: vec3f) -> f32 {
+  // Convert voxel position to brick coordinate [0,1] for indirection lookup
+  // Use dataset size to determine the virtual grid extent
+  let brickCoord = voxelPos / uniforms.datasetSize;  // [0,1]
+
+  // Sample indirection table
   // Returns: xyz = atlas brick offset (0-1), w = loaded flag
   let indirection = textureSampleLevel(indirectionTexture, indirectionSampler, brickCoord, 0.0);
 
@@ -50,10 +65,9 @@ fn sampleWithIndirection(virtualPos: vec3f) -> f32 {
   }
 
   // Calculate position within the brick [0, BRICK_SIZE]
-  let posInBrick = virtualPos % BRICK_SIZE;
+  let posInBrick = voxelPos % BRICK_SIZE;
 
   // Calculate atlas position: brick offset + position within brick
-  // indirection.xyz is in [0,1] range, representing atlas position
   let atlasPos = indirection.xyz + (posInBrick / ATLAS_SIZE);
 
   // Sample the volume atlas
@@ -66,18 +80,23 @@ fn fs(@location(0) modelPos: vec3f) -> @location(0) vec4f {
   let rayDir = normalize(modelPos - camInModel);
   let rayOrigin = camInModel;
 
-  // Ray-box intersection for [0, 512] cube
+  // Ray-box intersection for normalized proxy box
+  // Box is centered at origin: [-normalizedSize/2, normalizedSize/2]
+  let halfSize = uniforms.normalizedSize * 0.5;
   let invDir = 1.0 / rayDir;
-  let t0 = (0.0 - rayOrigin) * invDir;
-  let t1 = (512.0 - rayOrigin) * invDir;
+  let t0 = (-halfSize - rayOrigin) * invDir;
+  let t1 = (halfSize - rayOrigin) * invDir;
   let tmin = min(t0, t1);
   let tmax = max(t0, t1);
   let tNear = max(max(tmin.x, tmin.y), tmin.z);
   let tFar = min(min(tmax.x, tmax.y), tmax.z);
 
-  if (tNear > tFar || tFar < 0.0) { discard; }
+  // If ray misses box or exit point is behind camera, discard
+  if (tNear > tFar || tFar <= 0.0) { discard; }
 
+  // Handle camera inside volume: start from camera (0) if entry is behind us
   let tStart = max(tNear, 0.0);
+
   let numSteps = 128u;
   let stepSize = (tFar - tStart) / f32(numSteps);
 
@@ -86,20 +105,26 @@ fn fs(@location(0) modelPos: vec3f) -> @location(0) vec4f {
 
   for (var i = 0u; i < numSteps; i++) {
     let t = tStart + f32(i) * stepSize;
-    let samplePos = rayOrigin + rayDir * t;
+    let samplePos = rayOrigin + rayDir * t;  // In normalized space
+
+    // Convert normalized position to voxel coordinates for sampling
+    let voxelPos = normalizedToVoxel(samplePos);
 
     // Sample volume (with or without indirection)
     var density: f32;
     if (uniforms.useIndirection > 0.5) {
-      density = sampleWithIndirection(samplePos);
+      density = sampleWithIndirection(voxelPos);
     } else {
-      // Direct sampling: treat samplePos as atlas coordinates
-      density = textureSampleLevel(volumeTexture, volumeSampler, samplePos / ATLAS_SIZE, 0.0).r;
+      // Direct sampling: treat voxelPos as atlas coordinates
+      density = textureSampleLevel(volumeTexture, volumeSampler, voxelPos / ATLAS_SIZE, 0.0).r;
     }
 
     if (density > 0.01) {
       let tfColor = textureSampleLevel(tfTexture, tfSampler, density, 0.0);
-      let sampleAlpha = tfColor.a * stepSize * 2.0;
+      // Scale alpha: stepSize is in normalized space (~0.01), scale to voxel-like range
+      // Use max dataset dimension as reference scale
+      let maxDim = max(uniforms.datasetSize.x, max(uniforms.datasetSize.y, uniforms.datasetSize.z));
+      let sampleAlpha = tfColor.a * stepSize * maxDim * 0.3;
 
       color += tfColor.rgb * sampleAlpha * (1.0 - alpha);
       alpha += sampleAlpha * (1.0 - alpha);

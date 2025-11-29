@@ -6,14 +6,15 @@ import { Camera } from './camera.js';
 import { VolumeCanvas, createVolumeCanvas, writeToCanvas } from './volume.js';
 import { createBox, createAxis } from './geometry.js';
 import { createTransferFunction } from './transfer-function.js';
-import { IndirectionTable, BRICK_SIZE } from './indirection.js';
+import { IndirectionTable } from './indirection.js';
 import { AtlasAllocator, AtlasSlot } from './atlas-allocator.js';
 import { volumeShader, wireframeShader, axisShader } from './shaders.js';
+import { BRICK_SIZE, DATASET_SIZE, NORMALIZED_SIZE } from './config.js';
 
 export class Renderer {
   private device: GPUDevice;
 
-  // Volume canvas (512³ atlas)
+  // Volume canvas (atlas texture)
   canvas: VolumeCanvas;
 
   // Indirection table for virtual texturing
@@ -55,7 +56,7 @@ export class Renderer {
   constructor(device: GPUDevice, format: GPUTextureFormat) {
     this.device = device;
 
-    // Create 512³ volume canvas (empty)
+    // Create volume canvas (empty)
     this.canvas = createVolumeCanvas(device);
 
     // Create indirection table for virtual texturing
@@ -64,8 +65,8 @@ export class Renderer {
     // Create atlas allocator
     this.allocator = new AtlasAllocator();
 
-    // Create geometry (512 units to match volume canvas)
-    const box = createBox(512);
+    // Create geometry (normalized proxy based on dataset aspect ratio)
+    const box = createBox(NORMALIZED_SIZE);
 
     this.vertexBuffer = device.createBuffer({
       size: box.vertices.byteLength,
@@ -87,8 +88,8 @@ export class Renderer {
     device.queue.writeBuffer(this.wireframeIndexBuffer, 0, box.wireframeIndices);
     this.wireframeIndexCount = box.wireframeIndices.length;
 
-    // Create axis geometry (larger to be visible at 512 scale)
-    const axis = createAxis(600);
+    // Create axis geometry (slightly larger than normalized proxy for visibility)
+    const axis = createAxis(0.6);
     this.axisVertexBuffer = device.createBuffer({
       size: axis.vertices.byteLength,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
@@ -96,9 +97,10 @@ export class Renderer {
     device.queue.writeBuffer(this.axisVertexBuffer, 0, axis.vertices);
 
     // Create uniform buffers
-    // Volume: mat4 mvp (64) + mat4 inverseModel (64) + vec3 cameraPos (12) + useIndirection (4) = 144
+    // Volume: mat4 mvp (64) + mat4 inverseModel (64) + vec3 cameraPos (12) + useIndirection (4)
+    //       + vec3 datasetSize (12) + pad (4) + vec3 normalizedSize (12) + pad (4) = 176
     this.uniformBuffer = device.createBuffer({
-      size: 144,
+      size: 176,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -172,7 +174,7 @@ export class Renderer {
           },
         }],
       },
-      primitive: { topology: 'triangle-list', cullMode: 'front' },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil,
     });
 
@@ -297,11 +299,15 @@ export class Renderer {
     ]);
 
     // Update volume uniforms
-    const uniformData = new Float32Array(36);
-    uniformData.set(mvp, 0);
-    uniformData.set(inverseModel, 16);
-    uniformData.set(camera.position, 32);
-    uniformData[35] = this.useIndirection ? 1.0 : 0.0;
+    const uniformData = new Float32Array(44);  // 176 bytes / 4
+    uniformData.set(mvp, 0);                   // 0-15: mvp
+    uniformData.set(inverseModel, 16);         // 16-31: inverseModel
+    uniformData.set(camera.position, 32);      // 32-34: cameraPos
+    uniformData[35] = this.useIndirection ? 1.0 : 0.0;  // 35: useIndirection
+    uniformData.set(DATASET_SIZE, 36);         // 36-38: datasetSize
+    // 39: padding
+    uniformData.set(NORMALIZED_SIZE, 40);      // 40-42: normalizedSize
+    // 43: padding
     this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
 
     // Update wireframe uniforms

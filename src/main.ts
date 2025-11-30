@@ -367,17 +367,6 @@ async function main() {
   (window as any).merge = merge;
   (window as any).refine = refine;
 
-  // Toggle render mode between 'fragment' and 'compute'
-  (window as any).setRenderMode = (mode: 'fragment' | 'compute') => {
-    renderer.renderMode = mode;
-    console.log(`Render mode set to: ${mode}`);
-  };
-
-  (window as any).toggleRenderMode = () => {
-    renderer.renderMode = renderer.renderMode === 'fragment' ? 'compute' : 'fragment';
-    console.log(`Render mode toggled to: ${renderer.renderMode}`);
-  };
-
   // Load a brick at virtual position (allocator picks atlas slot)
   (window as any).loadBrick = (
     virtualX: number, virtualY: number, virtualZ: number,

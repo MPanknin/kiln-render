@@ -5,7 +5,9 @@
 
 import { Renderer } from './renderer.js';
 import { Camera } from './camera.js';
-import { generateSphereVolume, generateSolidVolume } from './volume.js';
+import { generateSphereVolume, generateSolidVolume, writeToCanvas } from './volume.js';
+import { generateTestPyramid } from './generator.js';
+import { Octree } from './octree.js';
 import { BRICK_SIZE, GRID_SIZE, ATLAS_SIZE, DATASET_SIZE, DATASET_GRID, NORMALIZED_SIZE, CONFIG } from './config.js';
 import { AtlasSlot } from './atlas-allocator.js';
 import './../test/snapshot-test.js'; 
@@ -44,33 +46,267 @@ async function main() {
 
   const key = (x: number, y: number, z: number) => `${x},${y},${z}`;
 
-  // Demo: load spheres spread across the dataset volume
-  // Positions are in brick coordinates within the dataset grid
-  const [gx, gy, gz] = DATASET_GRID;
-  const testPositions: [number, number, number][] = [
-    [0, 0, 0],
-    [gx - 1, gy - 1, gz - 1],
-    [Math.floor(gx / 2), Math.floor(gy / 2), Math.floor(gz / 2)],
-    [0, gy - 1, 0],
-    [gx - 1, 0, gz - 1],
-    [Math.floor(gx / 3), Math.floor(gy / 3), Math.floor(gz / 3)],
-    [Math.floor(2 * gx / 3), Math.floor(2 * gy / 3), Math.floor(2 * gz / 3)],
-    [1, Math.min(gy - 1, 5), 1],
-    [Math.min(gx - 1, 5), 1, Math.min(gz - 1, 3)],
-    [2, 4, Math.min(gz - 1, 2)],
-  ];
+  // Generate test pyramid and log its structure
+  const pyramid = generateTestPyramid(DATASET_SIZE[0], DATASET_SIZE[1], DATASET_SIZE[2], BRICK_SIZE);
 
-  for (let i = 0; i < testPositions.length; i++) {
-    const pos = testPositions[i]!;
-    const [x, y, z] = pos;
-    // Skip if out of bounds for current dataset
-    if (x >= gx || y >= gy || z >= gz) continue;
-    const intensity = 120 + (i * 17 % 135);
-    const radius = 20 + (i * 7 % 10);
-    const data = generateSphereVolume(BRICK_SIZE, radius, intensity);
-    const slot = renderer.loadBrick(x, y, z, data);
-    if (slot) loadedBricks.set(key(x, y, z), slot);
+  // LOD name to level mapping
+  const lodMap: Record<string, number> = {
+    'scale0': 0,
+    'scale1': 1,
+    'scale2': 2,
+    'scale3': 3,
+  };
+
+  console.log('\n📊 Test Pyramid Structure:');
+  for (const [levelName, bricks] of Object.entries(pyramid)) {
+    const keys = Array.from(bricks.keys());
+    console.log(`  ${levelName}: ${bricks.size} bricks`);
+    console.log(`    Keys: ${keys.slice(0, 5).join(', ')}${keys.length > 5 ? ', ...' : ''}`);
   }
+
+  /**
+   * Load a LOD level into the renderer (additive - doesn't clear existing bricks)
+   * For lower LODs, one brick covers multiple virtual brick positions
+   * so we fill multiple indirection entries pointing to the same atlas slot
+   */
+  const loadLevel = (levelName: string) => {
+    const levelData = pyramid[levelName];
+    const lod = lodMap[levelName];
+    if (!levelData || lod === undefined) {
+      console.warn(`Unknown level: ${levelName}`);
+      return;
+    }
+
+    // LOD scale: how many full-res bricks one LOD brick covers per axis
+    const lodScale = Math.pow(2, lod);
+    let loadedCount = 0;
+
+    for (const [brickKey, data] of levelData) {
+      const [bz, by, bx] = brickKey.split('/').map(Number);
+
+      // Check if this LOD brick is already loaded
+      const lodKey = `${levelName}:${brickKey}`;
+      if (loadedBricks.has(lodKey)) {
+        continue;
+      }
+
+      // Allocate atlas slot and write brick data
+      const slot = renderer.allocator.allocate();
+      if (!slot) {
+        console.warn('Atlas full');
+        break;
+      }
+
+      // Write to atlas
+      const offset: [number, number, number] = [
+        slot.x * BRICK_SIZE,
+        slot.y * BRICK_SIZE,
+        slot.z * BRICK_SIZE
+      ];
+      writeToCanvas(device, renderer.canvas, data, [BRICK_SIZE, BRICK_SIZE, BRICK_SIZE], offset);
+
+      // Fill all indirection entries this brick covers
+      // e.g., LOD 3 brick at (0,0,0) fills positions (0-7, 0-7, 0-7) in the 8x8x8 grid
+      for (let dz = 0; dz < lodScale; dz++) {
+        for (let dy = 0; dy < lodScale; dy++) {
+          for (let dx = 0; dx < lodScale; dx++) {
+            const vx = bx * lodScale + dx;
+            const vy = by * lodScale + dy;
+            const vz = bz * lodScale + dz;
+            if (vx < DATASET_GRID[0] && vy < DATASET_GRID[1] && vz < DATASET_GRID[2]) {
+              renderer.indirection.setBrick(vx, vy, vz, slot.x, slot.y, slot.z, lod);
+            }
+          }
+        }
+      }
+
+      loadedBricks.set(lodKey, slot);
+      loadedCount++;
+    }
+
+    console.log(`Loaded ${levelName} (LOD ${lod}): ${loadedCount} new bricks, ${renderer.allocator.usedCount}/${renderer.allocator.totalSlots} atlas slots used`);
+  };
+
+  /**
+   * Clear all bricks and reset
+   */
+  const clearAll = () => {
+    renderer.clearAllBricks();
+    loadedBricks.clear();
+    console.log('Cleared all bricks');
+  };
+
+  /**
+   * Load a single brick from a specific LOD level
+   * @param lod - LOD level (0-3)
+   * @param bx, by, bz - Brick coordinates at that LOD level
+   */
+  const loadBrickAtLod = (lod: number, bx: number, by: number, bz: number) => {
+    const levelName = `scale${lod}`;
+    const levelData = pyramid[levelName];
+    if (!levelData) {
+      console.warn(`Unknown LOD: ${lod}`);
+      return null;
+    }
+
+    const brickKey = `${bz}/${by}/${bx}`;
+    const data = levelData.get(brickKey);
+    if (!data) {
+      console.warn(`Brick ${brickKey} not found in ${levelName}`);
+      return null;
+    }
+
+    const lodKey = `${levelName}:${brickKey}`;
+    if (loadedBricks.has(lodKey)) {
+      console.log(`Brick ${lodKey} already loaded`);
+      return loadedBricks.get(lodKey);
+    }
+
+    // Allocate atlas slot
+    const slot = renderer.allocator.allocate();
+    if (!slot) {
+      console.warn('Atlas full');
+      return null;
+    }
+
+    // Write to atlas
+    const offset: [number, number, number] = [
+      slot.x * BRICK_SIZE,
+      slot.y * BRICK_SIZE,
+      slot.z * BRICK_SIZE
+    ];
+    writeToCanvas(device, renderer.canvas, data, [BRICK_SIZE, BRICK_SIZE, BRICK_SIZE], offset);
+
+    // Fill indirection entries this brick covers
+    const lodScale = Math.pow(2, lod);
+    for (let dz = 0; dz < lodScale; dz++) {
+      for (let dy = 0; dy < lodScale; dy++) {
+        for (let dx = 0; dx < lodScale; dx++) {
+          const vx = bx * lodScale + dx;
+          const vy = by * lodScale + dy;
+          const vz = bz * lodScale + dz;
+          if (vx < DATASET_GRID[0] && vy < DATASET_GRID[1] && vz < DATASET_GRID[2]) {
+            renderer.indirection.setBrick(vx, vy, vz, slot.x, slot.y, slot.z, lod);
+          }
+        }
+      }
+    }
+
+    loadedBricks.set(lodKey, slot);
+    console.log(`Loaded ${lodKey} -> atlas[${slot.x},${slot.y},${slot.z}]`);
+    return slot;
+  };
+
+  /**
+   * Subdivide a brick: replace one LOD brick with 8 children from the next finer LOD
+   * @param lod - Current LOD level of the brick to subdivide (must be > 0)
+   * @param bx, by, bz - Brick coordinates at current LOD level
+   */
+  const subdivide = (lod: number, bx: number, by: number, bz: number) => {
+    if (lod <= 0) {
+      console.warn('Cannot subdivide LOD 0 - already at finest level');
+      return;
+    }
+
+    const childLod = lod - 1;
+    const childScale = 2; // Each parent brick becomes 2x2x2 children
+
+    console.log(`Subdividing LOD ${lod} brick (${bx},${by},${bz}) into 8 LOD ${childLod} bricks`);
+
+    // Load all 8 children
+    for (let dz = 0; dz < childScale; dz++) {
+      for (let dy = 0; dy < childScale; dy++) {
+        for (let dx = 0; dx < childScale; dx++) {
+          const cx = bx * childScale + dx;
+          const cy = by * childScale + dy;
+          const cz = bz * childScale + dz;
+          loadBrickAtLod(childLod, cx, cy, cz);
+        }
+      }
+    }
+
+    console.log(`Atlas: ${renderer.allocator.usedCount}/${renderer.allocator.totalSlots} slots used`);
+  };
+
+  // Create octree for LOD management
+  const octree = new Octree(3, loadBrickAtLod);
+
+  // Helper to update indirection when collapsing
+  const updateIndirectionForNode = (lod: number, bx: number, by: number, bz: number, slot: AtlasSlot) => {
+    const lodScale = Math.pow(2, lod);
+    for (let dz = 0; dz < lodScale; dz++) {
+      for (let dy = 0; dy < lodScale; dy++) {
+        for (let dx = 0; dx < lodScale; dx++) {
+          const vx = bx * lodScale + dx;
+          const vy = by * lodScale + dy;
+          const vz = bz * lodScale + dz;
+          if (vx < DATASET_GRID[0] && vy < DATASET_GRID[1] && vz < DATASET_GRID[2]) {
+            renderer.indirection.setBrick(vx, vy, vz, slot.x, slot.y, slot.z, lod);
+          }
+        }
+      }
+    }
+  };
+
+  /**
+   * Split a leaf node into 8 children (refine)
+   * @param lod - LOD level of the leaf to split
+   * @param bx, by, bz - Brick coordinates at that LOD
+   */
+  const split = (lod: number, bx: number, by: number, bz: number) => {
+    const leaf = octree.findLeaf(lod, bx, by, bz);
+    if (!leaf) {
+      console.warn(`No leaf found at LOD ${lod} (${bx},${by},${bz})`);
+      return;
+    }
+    octree.subdivide(leaf);
+    console.log(`Atlas: ${renderer.allocator.usedCount}/${renderer.allocator.totalSlots} slots used`);
+  };
+
+  /**
+   * Merge 8 children back into parent (coarsen)
+   * @param lod - LOD level of the parent (not the children)
+   * @param bx, by, bz - Brick coordinates of the parent
+   */
+  const merge = (lod: number, bx: number, by: number, bz: number) => {
+    // Find the parent node that has these children
+    const findNode = (node: OctreeNode): OctreeNode | null => {
+      if (node.lod === lod && node.bx === bx && node.by === by && node.bz === bz) {
+        return node;
+      }
+      if (node.children) {
+        for (const child of node.children) {
+          const found = findNode(child);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    const node = findNode(octree.root);
+    if (!node) {
+      console.warn(`No node found at LOD ${lod} (${bx},${by},${bz})`);
+      return;
+    }
+    octree.collapse(node, updateIndirectionForNode);
+  };
+
+  /**
+   * Refine towards camera position
+   */
+  const refine = () => {
+    // Camera position is in world space, convert to normalized volume space
+    const camPos: [number, number, number] = [
+      camera.position[0],
+      camera.position[1],
+      camera.position[2]
+    ];
+    octree.refineTowards(camPos);
+    console.log(`Atlas: ${renderer.allocator.usedCount}/${renderer.allocator.totalSlots} slots used`);
+  };
+
+  // Load root (LOD 3)
+  octree.loadRoot();
 
   // Create camera
   const camera = new Camera(canvas);
@@ -121,6 +357,26 @@ async function main() {
   (window as any).renderer = renderer;
   (window as any).device = device;
   (window as any).loadedBricks = loadedBricks;
+  (window as any).pyramid = pyramid;
+  (window as any).loadLevel = loadLevel;
+  (window as any).clearAll = clearAll;
+  (window as any).loadBrickAtLod = loadBrickAtLod;
+  (window as any).subdivide = subdivide;
+  (window as any).octree = octree;
+  (window as any).split = split;
+  (window as any).merge = merge;
+  (window as any).refine = refine;
+
+  // Toggle render mode between 'fragment' and 'compute'
+  (window as any).setRenderMode = (mode: 'fragment' | 'compute') => {
+    renderer.renderMode = mode;
+    console.log(`Render mode set to: ${mode}`);
+  };
+
+  (window as any).toggleRenderMode = () => {
+    renderer.renderMode = renderer.renderMode === 'fragment' ? 'compute' : 'fragment';
+    console.log(`Render mode toggled to: ${renderer.renderMode}`);
+  };
 
   // Load a brick at virtual position (allocator picks atlas slot)
   (window as any).loadBrick = (

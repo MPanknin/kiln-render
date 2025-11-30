@@ -8,11 +8,14 @@ import { createBox, createAxis } from './geometry.js';
 import { createTransferFunction } from './transfer-function.js';
 import { IndirectionTable } from './indirection.js';
 import { AtlasAllocator, AtlasSlot } from './atlas-allocator.js';
-import { volumeShader, wireframeShader, axisShader } from './shaders.js';
+import { volumeShader, wireframeShader, axisShader, computeShader, blitShader } from './shaders.js';
 import { BRICK_SIZE, DATASET_SIZE, NORMALIZED_SIZE } from './config.js';
+
+export type RenderMode = 'fragment' | 'compute';
 
 export class Renderer {
   private device: GPUDevice;
+  private format: GPUTextureFormat;
 
   // Volume canvas (atlas texture)
   canvas: VolumeCanvas;
@@ -26,12 +29,24 @@ export class Renderer {
   // Debug: toggle indirection on/off
   useIndirection = true;
 
-  // Pipelines
+  // Rendering mode: 'fragment' (proxy box) or 'compute' (compute shader)
+  renderMode: RenderMode = 'compute';
+
+  // Fragment-based pipelines
   private volumePipeline: GPURenderPipeline;
   private wireframePipeline: GPURenderPipeline;
   private axisPipeline: GPURenderPipeline;
 
-  // Bind groups
+  // Compute-based pipeline
+  private computePipeline: GPUComputePipeline;
+  private blitPipeline: GPURenderPipeline;
+  private computeBindGroup: GPUBindGroup;
+  private blitBindGroup: GPUBindGroup;
+  private computeUniformBuffer: GPUBuffer;
+  private computeOutputTexture: GPUTexture;
+  private computeOutputView: GPUTextureView;
+
+  // Fragment bind groups
   private volumeBindGroup: GPUBindGroup;
   private wireframeBindGroup: GPUBindGroup;
   private axisBindGroup: GPUBindGroup;
@@ -53,8 +68,13 @@ export class Renderer {
   private indexCount: number;
   private wireframeIndexCount: number;
 
+  // Screen size for compute shader
+  private screenWidth = 1;
+  private screenHeight = 1;
+
   constructor(device: GPUDevice, format: GPUTextureFormat) {
     this.device = device;
+    this.format = format;
 
     // Create volume canvas (empty)
     this.canvas = createVolumeCanvas(device);
@@ -228,15 +248,81 @@ export class Renderer {
       layout: this.axisPipeline.getBindGroupLayout(0),
       entries: [{ binding: 0, resource: { buffer: this.axisUniformBuffer } }],
     });
+
+    // ===== Compute shader pipeline =====
+
+    // Compute uniform buffer: mat4 inverseViewProj (64) + vec3 cameraPos (12) + useIndirection (4)
+    //                       + vec3 datasetSize (12) + pad (4) + vec3 normalizedSize (12) + pad (4)
+    //                       + vec2 screenSize (8) + pad (8) = 128
+    this.computeUniformBuffer = device.createBuffer({
+      size: 128,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    // Output texture (will be resized)
+    this.computeOutputTexture = device.createTexture({
+      size: [1, 1],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.computeOutputView = this.computeOutputTexture.createView();
+
+    // Compute pipeline
+    const computeModule = device.createShaderModule({ code: computeShader });
+    this.computePipeline = device.createComputePipeline({
+      layout: 'auto',
+      compute: { module: computeModule, entryPoint: 'main' },
+    });
+
+    // Compute bind group (will be recreated on resize)
+    this.computeBindGroup = device.createBindGroup({
+      layout: this.computePipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.computeUniformBuffer } },
+        { binding: 1, resource: volumeSampler },
+        { binding: 2, resource: this.canvas.texture.createView() },
+        { binding: 3, resource: tfSampler },
+        { binding: 4, resource: tfTexture.createView() },
+        { binding: 5, resource: indirectionSampler },
+        { binding: 6, resource: this.indirection.texture.createView() },
+        { binding: 7, resource: this.computeOutputView },
+      ],
+    });
+
+    // Blit pipeline (fullscreen quad to display compute output)
+    const blitModule = device.createShaderModule({ code: blitShader });
+    const blitSampler = device.createSampler({
+      magFilter: 'linear',
+      minFilter: 'linear',
+    });
+
+    this.blitPipeline = device.createRenderPipeline({
+      layout: 'auto',
+      vertex: { module: blitModule, entryPoint: 'vs' },
+      fragment: { module: blitModule, entryPoint: 'fs', targets: [{ format }] },
+      primitive: { topology: 'triangle-list' },
+    });
+
+    this.blitBindGroup = device.createBindGroup({
+      layout: this.blitPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: this.computeOutputView },
+        { binding: 1, resource: blitSampler },
+      ],
+    });
   }
 
   /**
    * Load a brick into the atlas at the next available slot
+   * @param virtualX, virtualY, virtualZ - Virtual brick position in the dataset grid
+   * @param data - Brick voxel data (BRICK_SIZE³)
+   * @param lod - LOD level (0 = full res, 1 = 2x downsample, 2 = 4x, 3 = 8x)
    * Returns the atlas slot used, or null if atlas is full
    */
   loadBrick(
     virtualX: number, virtualY: number, virtualZ: number,
-    data: Uint8Array
+    data: Uint8Array,
+    lod: number = 0
   ): AtlasSlot | null {
     const slot = this.allocator.allocate();
     if (!slot) {
@@ -252,8 +338,8 @@ export class Renderer {
     ];
     writeToCanvas(this.device, this.canvas, data, [BRICK_SIZE, BRICK_SIZE, BRICK_SIZE], offset);
 
-    // Set up indirection mapping
-    this.indirection.setBrick(virtualX, virtualY, virtualZ, slot.x, slot.y, slot.z);
+    // Set up indirection mapping with LOD level
+    this.indirection.setBrick(virtualX, virtualY, virtualZ, slot.x, slot.y, slot.z, lod);
 
     return slot;
   }
@@ -275,6 +361,10 @@ export class Renderer {
   }
 
   resize(width: number, height: number) {
+    this.screenWidth = width;
+    this.screenHeight = height;
+
+    // Resize depth texture
     this.depthTexture.destroy();
     this.depthTexture = this.device.createTexture({
       size: [width, height],
@@ -282,6 +372,63 @@ export class Renderer {
       usage: GPUTextureUsage.RENDER_ATTACHMENT,
     });
     this.depthView = this.depthTexture.createView();
+
+    // Resize compute output texture
+    this.computeOutputTexture.destroy();
+    this.computeOutputTexture = this.device.createTexture({
+      size: [width, height],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.computeOutputView = this.computeOutputTexture.createView();
+
+    // Recreate compute bind group with new output texture
+    this.recreateComputeBindGroups();
+  }
+
+  private recreateComputeBindGroups() {
+    // Need to get samplers again - store them as class members would be cleaner
+    // For now, recreate them
+    const volumeSampler = this.device.createSampler({
+      magFilter: 'linear',
+      minFilter: 'linear',
+    });
+    const tfSampler = this.device.createSampler({
+      magFilter: 'linear',
+      minFilter: 'linear',
+      addressModeU: 'clamp-to-edge',
+    });
+    const indirectionSampler = this.device.createSampler({
+      magFilter: 'nearest',
+      minFilter: 'nearest',
+    });
+    const tfTexture = createTransferFunction(this.device);
+    const blitSampler = this.device.createSampler({
+      magFilter: 'linear',
+      minFilter: 'linear',
+    });
+
+    this.computeBindGroup = this.device.createBindGroup({
+      layout: this.computePipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.computeUniformBuffer } },
+        { binding: 1, resource: volumeSampler },
+        { binding: 2, resource: this.canvas.texture.createView() },
+        { binding: 3, resource: tfSampler },
+        { binding: 4, resource: tfTexture.createView() },
+        { binding: 5, resource: indirectionSampler },
+        { binding: 6, resource: this.indirection.texture.createView() },
+        { binding: 7, resource: this.computeOutputView },
+      ],
+    });
+
+    this.blitBindGroup = this.device.createBindGroup({
+      layout: this.blitPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: this.computeOutputView },
+        { binding: 1, resource: blitSampler },
+      ],
+    });
   }
 
   render(colorView: GPUTextureView, camera: Camera) {
@@ -289,7 +436,16 @@ export class Renderer {
     const view = camera.getViewMatrix();
     const proj = camera.getProjectionMatrix(aspect);
     const mvp = multiplyMatrices(proj, view);
+    const vp = multiplyMatrices(proj, view);
 
+    if (this.renderMode === 'compute') {
+      this.renderCompute(colorView, camera, vp);
+    } else {
+      this.renderFragment(colorView, camera, mvp, vp);
+    }
+  }
+
+  private renderFragment(colorView: GPUTextureView, camera: Camera, mvp: Float32Array, vp: Float32Array) {
     // Identity model matrix, so inverse is also identity
     const inverseModel = new Float32Array([
       1, 0, 0, 0,
@@ -345,7 +501,6 @@ export class Renderer {
     pass.drawIndexed(this.wireframeIndexCount);
 
     // Draw axis
-    const vp = multiplyMatrices(proj, view);
     this.device.queue.writeBuffer(this.axisUniformBuffer, 0, vp);
     pass.setPipeline(this.axisPipeline);
     pass.setBindGroup(0, this.axisBindGroup);
@@ -355,6 +510,93 @@ export class Renderer {
     pass.end();
     this.device.queue.submit([encoder.finish()]);
   }
+
+  private renderCompute(colorView: GPUTextureView, camera: Camera, vp: Float32Array) {
+    // Compute inverse view-projection for ray generation
+    const inverseViewProj = invertMatrix(vp);
+
+    // Update compute uniforms
+    // Layout: mat4 inverseViewProj (64) + vec3 cameraPos (12) + useIndirection (4)
+    //       + vec3 datasetSize (12) + pad (4) + vec3 normalizedSize (12) + pad (4)
+    //       + vec2 screenSize (8) + pad (8) = 128 bytes = 32 floats
+    const computeUniformData = new Float32Array(32);
+    computeUniformData.set(inverseViewProj, 0);           // 0-15: inverseViewProj
+    computeUniformData.set(camera.position, 16);          // 16-18: cameraPos
+    computeUniformData[19] = this.useIndirection ? 1.0 : 0.0;  // 19: useIndirection
+    computeUniformData.set(DATASET_SIZE, 20);             // 20-22: datasetSize
+    // 23: padding
+    computeUniformData.set(NORMALIZED_SIZE, 24);          // 24-26: normalizedSize
+    // 27: padding
+    computeUniformData[28] = this.screenWidth;            // 28: screenSize.x
+    computeUniformData[29] = this.screenHeight;           // 29: screenSize.y
+    // 30-31: padding
+    this.device.queue.writeBuffer(this.computeUniformBuffer, 0, computeUniformData);
+
+    const encoder = this.device.createCommandEncoder();
+
+    // Dispatch compute shader
+    const computePass = encoder.beginComputePass();
+    computePass.setPipeline(this.computePipeline);
+    computePass.setBindGroup(0, this.computeBindGroup);
+    // Workgroup size is 8x8, so dispatch ceil(width/8) x ceil(height/8)
+    const workgroupsX = Math.ceil(this.screenWidth / 8);
+    const workgroupsY = Math.ceil(this.screenHeight / 8);
+    computePass.dispatchWorkgroups(workgroupsX, workgroupsY, 1);
+    computePass.end();
+
+    // Blit compute output to screen
+    const blitPass = encoder.beginRenderPass({
+      colorAttachments: [{
+        view: colorView,
+        clearValue: [0.05, 0.05, 0.05, 1],
+        loadOp: 'clear',
+        storeOp: 'store',
+      }],
+    });
+    blitPass.setPipeline(this.blitPipeline);
+    blitPass.setBindGroup(0, this.blitBindGroup);
+    blitPass.draw(3); // Fullscreen triangle
+
+    // Draw wireframe overlay (reuse depth texture for proper ordering)
+    // For compute mode, we don't have depth info, so wireframe draws on top
+    const mvp = vp; // Model is identity
+    this.device.queue.writeBuffer(this.wireframeUniformBuffer, 0, mvp);
+
+    blitPass.end();
+
+    // Separate pass for wireframe and axis with depth
+    const overlayPass = encoder.beginRenderPass({
+      colorAttachments: [{
+        view: colorView,
+        loadOp: 'load',  // Keep the blitted volume
+        storeOp: 'store',
+      }],
+      depthStencilAttachment: {
+        view: this.depthView,
+        depthClearValue: 1,
+        depthLoadOp: 'clear',
+        depthStoreOp: 'store',
+      },
+    });
+
+    // Draw wireframe
+    overlayPass.setPipeline(this.wireframePipeline);
+    overlayPass.setBindGroup(0, this.wireframeBindGroup);
+    overlayPass.setVertexBuffer(0, this.vertexBuffer);
+    overlayPass.setIndexBuffer(this.wireframeIndexBuffer, 'uint16');
+    overlayPass.drawIndexed(this.wireframeIndexCount);
+
+    // Draw axis
+    this.device.queue.writeBuffer(this.axisUniformBuffer, 0, vp);
+    overlayPass.setPipeline(this.axisPipeline);
+    overlayPass.setBindGroup(0, this.axisBindGroup);
+    overlayPass.setVertexBuffer(0, this.axisVertexBuffer);
+    overlayPass.draw(6);
+
+    overlayPass.end();
+
+    this.device.queue.submit([encoder.finish()]);
+  }
 }
 
 function multiplyMatrices(a: Float32Array, b: Float32Array): Float32Array {
@@ -362,11 +604,68 @@ function multiplyMatrices(a: Float32Array, b: Float32Array): Float32Array {
   for (let i = 0; i < 4; i++) {
     for (let j = 0; j < 4; j++) {
       result[j * 4 + i] =
-        a[i] * b[j * 4] +
-        a[i + 4] * b[j * 4 + 1] +
-        a[i + 8] * b[j * 4 + 2] +
-        a[i + 12] * b[j * 4 + 3];
+        a[i]! * b[j * 4]! +
+        a[i + 4]! * b[j * 4 + 1]! +
+        a[i + 8]! * b[j * 4 + 2]! +
+        a[i + 12]! * b[j * 4 + 3]!;
     }
   }
   return result;
+}
+
+function invertMatrix(m: Float32Array): Float32Array {
+  // Use explicit indexing to avoid TS strict mode issues
+  const m0 = m[0]!, m1 = m[1]!, m2 = m[2]!, m3 = m[3]!;
+  const m4 = m[4]!, m5 = m[5]!, m6 = m[6]!, m7 = m[7]!;
+  const m8 = m[8]!, m9 = m[9]!, m10 = m[10]!, m11 = m[11]!;
+  const m12 = m[12]!, m13 = m[13]!, m14 = m[14]!, m15 = m[15]!;
+
+  const inv0 = m5 * m10 * m15 - m5 * m11 * m14 - m9 * m6 * m15 +
+               m9 * m7 * m14 + m13 * m6 * m11 - m13 * m7 * m10;
+  const inv4 = -m4 * m10 * m15 + m4 * m11 * m14 + m8 * m6 * m15 -
+               m8 * m7 * m14 - m12 * m6 * m11 + m12 * m7 * m10;
+  const inv8 = m4 * m9 * m15 - m4 * m11 * m13 - m8 * m5 * m15 +
+               m8 * m7 * m13 + m12 * m5 * m11 - m12 * m7 * m9;
+  const inv12 = -m4 * m9 * m14 + m4 * m10 * m13 + m8 * m5 * m14 -
+                m8 * m6 * m13 - m12 * m5 * m10 + m12 * m6 * m9;
+
+  const inv1 = -m1 * m10 * m15 + m1 * m11 * m14 + m9 * m2 * m15 -
+               m9 * m3 * m14 - m13 * m2 * m11 + m13 * m3 * m10;
+  const inv5 = m0 * m10 * m15 - m0 * m11 * m14 - m8 * m2 * m15 +
+               m8 * m3 * m14 + m12 * m2 * m11 - m12 * m3 * m10;
+  const inv9 = -m0 * m9 * m15 + m0 * m11 * m13 + m8 * m1 * m15 -
+               m8 * m3 * m13 - m12 * m1 * m11 + m12 * m3 * m9;
+  const inv13 = m0 * m9 * m14 - m0 * m10 * m13 - m8 * m1 * m14 +
+                m8 * m2 * m13 + m12 * m1 * m10 - m12 * m2 * m9;
+
+  const inv2 = m1 * m6 * m15 - m1 * m7 * m14 - m5 * m2 * m15 +
+               m5 * m3 * m14 + m13 * m2 * m7 - m13 * m3 * m6;
+  const inv6 = -m0 * m6 * m15 + m0 * m7 * m14 + m4 * m2 * m15 -
+               m4 * m3 * m14 - m12 * m2 * m7 + m12 * m3 * m6;
+  const inv10 = m0 * m5 * m15 - m0 * m7 * m13 - m4 * m1 * m15 +
+                m4 * m3 * m13 + m12 * m1 * m7 - m12 * m3 * m5;
+  const inv14 = -m0 * m5 * m14 + m0 * m6 * m13 + m4 * m1 * m14 -
+                m4 * m2 * m13 - m12 * m1 * m6 + m12 * m2 * m5;
+
+  const inv3 = -m1 * m6 * m11 + m1 * m7 * m10 + m5 * m2 * m11 -
+               m5 * m3 * m10 - m9 * m2 * m7 + m9 * m3 * m6;
+  const inv7 = m0 * m6 * m11 - m0 * m7 * m10 - m4 * m2 * m11 +
+               m4 * m3 * m10 + m8 * m2 * m7 - m8 * m3 * m6;
+  const inv11 = -m0 * m5 * m11 + m0 * m7 * m9 + m4 * m1 * m11 -
+                m4 * m3 * m9 - m8 * m1 * m7 + m8 * m3 * m5;
+  const inv15 = m0 * m5 * m10 - m0 * m6 * m9 - m4 * m1 * m10 +
+                m4 * m2 * m9 + m8 * m1 * m6 - m8 * m2 * m5;
+
+  let det = m0 * inv0 + m1 * inv4 + m2 * inv8 + m3 * inv12;
+  if (det === 0) {
+    return new Float32Array(16); // Return zero matrix if singular
+  }
+
+  det = 1.0 / det;
+  return new Float32Array([
+    inv0 * det, inv1 * det, inv2 * det, inv3 * det,
+    inv4 * det, inv5 * det, inv6 * det, inv7 * det,
+    inv8 * det, inv9 * det, inv10 * det, inv11 * det,
+    inv12 * det, inv13 * det, inv14 * det, inv15 * det,
+  ]);
 }

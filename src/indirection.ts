@@ -58,10 +58,12 @@ export class IndirectionTable {
   /**
    * Register a brick mapping: virtual position -> atlas position
    * Positions are in brick units (0-GRID_SIZE-1), not voxels
+   * @param lod - LOD level (0 = full res, 1 = 2x downsample, 2 = 4x, 3 = 8x)
    */
   setBrick(
     virtualX: number, virtualY: number, virtualZ: number,
-    atlasX: number, atlasY: number, atlasZ: number
+    atlasX: number, atlasY: number, atlasZ: number,
+    lod: number = 0
   ) {
     const idx = (virtualX + virtualY * this.gridX + virtualZ * this.gridX * this.gridY) * 4;
 
@@ -71,7 +73,10 @@ export class IndirectionTable {
     this.data[idx + 0] = atlasX * scale;
     this.data[idx + 1] = atlasY * scale;
     this.data[idx + 2] = atlasZ * scale;
-    this.data[idx + 3] = 255;  // loaded = true
+    // Store LOD level: 0 = not loaded, 1-4 = lod 0-3
+    // Values: 51 = lod0, 102 = lod1, 153 = lod2, 204 = lod3
+    // Using 51 as base so max is 204, safely under 255
+    this.data[idx + 3] = (lod + 1) * 51;
 
     this.updateBrickGPU(virtualX, virtualY, virtualZ);
   }

@@ -7,7 +7,7 @@
  * Each entry in the indirection table tells the shader where to find that brick in the atlas.
  */
 
-import { GRID_SIZE, DATASET_GRID } from './config.js';
+import { GRID_SIZE, getDatasetGrid } from './config.js';
 
 export interface BrickLocation {
   // Virtual position (which brick in the logical volume)
@@ -33,12 +33,18 @@ export class IndirectionTable {
   texture: GPUTexture;
 
   // Dataset grid dimensions for indexing
-  private gridX = DATASET_GRID[0];
-  private gridY = DATASET_GRID[1];
-  private gridZ = DATASET_GRID[2];
+  private gridX: number;
+  private gridY: number;
+  private gridZ: number;
 
   constructor(device: GPUDevice) {
     this.device = device;
+
+    // Get current dataset grid dimensions
+    const datasetGrid = getDatasetGrid();
+    this.gridX = datasetGrid[0];
+    this.gridY = datasetGrid[1];
+    this.gridZ = datasetGrid[2];
 
     // Dataset grid, 4 bytes per entry (RGBA)
     this.data = new Uint8Array(this.gridX * this.gridY * this.gridZ * 4);

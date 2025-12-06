@@ -5,32 +5,79 @@
  * These values define the structure of the virtual texturing system.
  */
 
-// Core constants
+// Core constants (fixed)
 export const BRICK_SIZE = 64;    // Each brick is 64³ voxels
 export const ATLAS_SIZE = 768;   // Volume atlas texture size
 
-// Dataset dimensions (the actual volume being visualized)
-// This defines the virtual volume space, independent of atlas size
-export const DATASET_SIZE: [number, number, number] = [512, 256, 512];
-
-// Computed constants (derived from core constants)
+// Computed atlas constants (derived from core constants)
 export const GRID_SIZE = ATLAS_SIZE / BRICK_SIZE;  // 12 bricks per dimension (atlas capacity)
 export const TOTAL_BRICK_SLOTS = GRID_SIZE ** 3;   // 1728 slots total
 
-// Dataset brick grid (how many bricks the dataset spans)
-export const DATASET_GRID: [number, number, number] = [
-  Math.ceil(DATASET_SIZE[0] / BRICK_SIZE),
-  Math.ceil(DATASET_SIZE[1] / BRICK_SIZE),
-  Math.ceil(DATASET_SIZE[2] / BRICK_SIZE),
-];
+// Dataset dimensions (can be reconfigured dynamically)
+// Default: small test volume
+let datasetSize: [number, number, number] = [512, 256, 512];
+let voxelSpacing: [number, number, number] = [1, 1, 1];
 
-// Normalized proxy dimensions (largest = 1.0, others proportional)
-const maxDim = Math.max(...DATASET_SIZE);
-export const NORMALIZED_SIZE: [number, number, number] = [
-  DATASET_SIZE[0] / maxDim,
-  DATASET_SIZE[1] / maxDim,
-  DATASET_SIZE[2] / maxDim,
-];
+// Computed dataset properties
+function computeDatasetGrid(): [number, number, number] {
+  return [
+    Math.ceil(datasetSize[0] / BRICK_SIZE),
+    Math.ceil(datasetSize[1] / BRICK_SIZE),
+    Math.ceil(datasetSize[2] / BRICK_SIZE),
+  ];
+}
+
+function computeNormalizedSize(): [number, number, number] {
+  // Physical size = voxel count * voxel spacing
+  const physicalSize: [number, number, number] = [
+    datasetSize[0] * voxelSpacing[0],
+    datasetSize[1] * voxelSpacing[1],
+    datasetSize[2] * voxelSpacing[2],
+  ];
+  const maxDim = Math.max(...physicalSize);
+  return [
+    physicalSize[0] / maxDim,
+    physicalSize[1] / maxDim,
+    physicalSize[2] / maxDim,
+  ];
+}
+
+// Exported getters (use these instead of direct constants for dynamic values)
+export function getDatasetSize(): [number, number, number] {
+  return [...datasetSize];
+}
+
+export function getVoxelSpacing(): [number, number, number] {
+  return [...voxelSpacing];
+}
+
+export function getDatasetGrid(): [number, number, number] {
+  return computeDatasetGrid();
+}
+
+export function getNormalizedSize(): [number, number, number] {
+  return computeNormalizedSize();
+}
+
+/**
+ * Reconfigure dataset dimensions
+ * Call this before initializing renderer/octree when loading a new volume
+ */
+export function setDatasetSize(size: [number, number, number], spacing?: [number, number, number]): void {
+  datasetSize = [...size];
+  if (spacing) {
+    voxelSpacing = [...spacing];
+  }
+  console.log(`Dataset size set to ${size[0]}x${size[1]}x${size[2]}`);
+  console.log(`  Voxel spacing: ${voxelSpacing.join(' x ')}`);
+  console.log(`  Brick grid: ${computeDatasetGrid().join('x')}`);
+  console.log(`  Normalized: ${computeNormalizedSize().map(n => n.toFixed(3)).join('x')}`);
+}
+
+// Legacy exports for compatibility (use with caution - these are snapshots)
+export const DATASET_SIZE: [number, number, number] = datasetSize;
+export const DATASET_GRID: [number, number, number] = computeDatasetGrid();
+export const NORMALIZED_SIZE: [number, number, number] = computeNormalizedSize();
 
 // Grouped config object for convenience
 export const CONFIG = {
@@ -38,6 +85,7 @@ export const CONFIG = {
   ATLAS_SIZE,
   GRID_SIZE,
   TOTAL_BRICK_SLOTS,
+  // These are snapshots - for dynamic values use the getter functions
   DATASET_SIZE,
   DATASET_GRID,
   NORMALIZED_SIZE,

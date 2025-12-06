@@ -3,6 +3,9 @@
  *
  * Each node represents a brick at a specific LOD level.
  * Leaf nodes are rendered, internal nodes are subdivided.
+ *
+ * Supports multi-root configurations for non-cubic volumes where
+ * the coarsest LOD level has more than one brick.
  */
 
 import { AtlasSlot } from './atlas-allocator.js';
@@ -27,39 +30,61 @@ export interface OctreeNode {
 }
 
 export class Octree {
+  // For multi-root support, we use a virtual root that contains the actual roots
   root: OctreeNode;
+  roots: OctreeNode[] = [];
   maxLod: number;
+
+  // Brick grid at coarsest LOD level
+  rootGrid: [number, number, number];
 
   // Callback to load a brick into the atlas
   private loadBrickFn: (lod: number, bx: number, by: number, bz: number) => AtlasSlot | null;
 
   constructor(
     maxLod: number,
-    loadBrickFn: (lod: number, bx: number, by: number, bz: number) => AtlasSlot | null
+    loadBrickFn: (lod: number, bx: number, by: number, bz: number) => AtlasSlot | null,
+    rootGrid: [number, number, number] = [1, 1, 1]
   ) {
     this.maxLod = maxLod;
     this.loadBrickFn = loadBrickFn;
+    this.rootGrid = rootGrid;
 
-    // Create root node at coarsest LOD
-    this.root = {
-      lod: maxLod,
-      bx: 0,
-      by: 0,
-      bz: 0,
-      slot: null,
-      children: null,
-      parent: null,
-    };
+    // Create root nodes at coarsest LOD
+    // If rootGrid is [1,1,1], we have a single root (original behavior)
+    // Otherwise, we create a grid of roots
+    for (let z = 0; z < rootGrid[2]; z++) {
+      for (let y = 0; y < rootGrid[1]; y++) {
+        for (let x = 0; x < rootGrid[0]; x++) {
+          const node: OctreeNode = {
+            lod: maxLod,
+            bx: x,
+            by: y,
+            bz: z,
+            slot: null,
+            children: null,
+            parent: null,
+          };
+          this.roots.push(node);
+        }
+      }
+    }
+
+    // For backwards compatibility, root points to first root
+    // (or the only root if single-root mode)
+    this.root = this.roots[0]!;
   }
 
   /**
-   * Load the root node (coarsest LOD)
+   * Load all root nodes (coarsest LOD)
    */
   loadRoot(): void {
-    if (!this.root.slot) {
-      this.root.slot = this.loadBrickFn(this.root.lod, this.root.bx, this.root.by, this.root.bz);
-      console.log(`Octree: Loaded root at LOD ${this.root.lod}`);
+    for (const root of this.roots) {
+      if (!root.slot) {
+        root.slot = this.loadBrickFn(root.lod, root.bx, root.by, root.bz);
+      }
     }
+    console.log(`Octree: Loaded ${this.roots.length} root(s) at LOD ${this.maxLod}`);
   }
 
   /**
@@ -67,7 +92,9 @@ export class Octree {
    */
   getLeaves(): OctreeNode[] {
     const leaves: OctreeNode[] = [];
-    this.collectLeaves(this.root, leaves);
+    for (const root of this.roots) {
+      this.collectLeaves(root, leaves);
+    }
     return leaves;
   }
 
@@ -187,7 +214,7 @@ export class Octree {
   /**
    * Get stats about the octree
    */
-  getStats(): { totalNodes: number; loadedNodes: number; leafNodes: number } {
+  getStats(): { totalNodes: number; loadedNodes: number; leafNodes: number; rootCount: number } {
     let totalNodes = 0;
     let loadedNodes = 0;
 
@@ -201,13 +228,16 @@ export class Octree {
       }
     };
 
-    countNodes(this.root);
+    for (const root of this.roots) {
+      countNodes(root);
+    }
     const leaves = this.getLeaves();
 
     return {
       totalNodes,
       loadedNodes,
       leafNodes: leaves.length,
+      rootCount: this.roots.length,
     };
   }
 
@@ -272,10 +302,15 @@ export class Octree {
       }
     };
 
-    console.log('Octree structure:');
-    printNode(this.root, '');
+    console.log(`Octree structure (${this.roots.length} root(s)):`);
+    for (let i = 0; i < this.roots.length; i++) {
+      if (this.roots.length > 1) {
+        console.log(`Root ${i}:`);
+      }
+      printNode(this.roots[i]!, '');
+    }
 
     const stats = this.getStats();
-    console.log(`Total: ${stats.leafNodes} leaves, ${stats.loadedNodes} loaded`);
+    console.log(`Total: ${stats.leafNodes} leaves, ${stats.loadedNodes} loaded, ${stats.rootCount} roots`);
   }
 }

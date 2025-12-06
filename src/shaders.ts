@@ -46,7 +46,12 @@ fn intersectBox(rayOrigin: vec3f, rayDir: vec3f, boxMin: vec3f, boxMax: vec3f) -
 
 // Sample with indirection: virtual voxel position -> density
 fn sampleWithIndirection(voxelPos: vec3f, datasetSize: vec3f) -> f32 {
-  let brickCoord = voxelPos / datasetSize;
+  // Compute integer brick index from voxel position
+  let brickIndex = floor(voxelPos / BRICK_SIZE);
+  // Get indirection texture dimensions to properly center in texels
+  let indirectionSize = vec3f(textureDimensions(indirectionTexture));
+  // Convert brick index to normalized texture coordinate (center of texel)
+  let brickCoord = (brickIndex + 0.5) / indirectionSize;
   let indirection = textureSampleLevel(indirectionTexture, indirectionSampler, brickCoord, 0.0);
 
   if (indirection.w < 0.1) {
@@ -76,9 +81,10 @@ fn sampleVolume(voxelPos: vec3f, datasetSize: vec3f, useIndirection: f32) -> f32
 fn composeSample(density: f32, stepSize: f32, maxDim: f32, color: ptr<function, vec3f>, alpha: ptr<function, f32>) {
   if (density > 0.01) {
     let tfColor = textureSampleLevel(tfTexture, tfSampler, density, 0.0);
-    let sampleAlpha = tfColor.a * stepSize * maxDim * 0.3;
+    let sampleAlpha = tfColor.a * stepSize * maxDim * 0.05;
 
-    *color += tfColor.rgb * sampleAlpha * (1.0 - *alpha);
+    // *color += tfColor.rgb * sampleAlpha * (1.0 - *alpha);
+    *color += sampleAlpha * (1.0 - *alpha);
     *alpha += sampleAlpha * (1.0 - *alpha);
   }
 }

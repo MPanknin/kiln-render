@@ -9,7 +9,7 @@ import { createTransferFunction } from './transfer-function.js';
 import { IndirectionTable } from './indirection.js';
 import { AtlasAllocator, AtlasSlot } from './atlas-allocator.js';
 import { volumeShader, wireframeShader, axisShader, computeShader, blitShader } from './shaders.js';
-import { BRICK_SIZE, DATASET_SIZE, NORMALIZED_SIZE } from './config.js';
+import { BRICK_SIZE, getDatasetSize, getNormalizedSize } from './config.js';
 
 export type RenderMode = 'fragment' | 'compute';
 
@@ -91,7 +91,7 @@ export class Renderer {
     this.allocator = new AtlasAllocator();
 
     // Create geometry (normalized proxy based on dataset aspect ratio)
-    const box = createBox(NORMALIZED_SIZE);
+    const box = createBox();
 
     this.vertexBuffer = device.createBuffer({
       size: box.vertices.byteLength,
@@ -443,9 +443,9 @@ export class Renderer {
     uniformData.set(inverseModel, 16);         // 16-31: inverseModel
     uniformData.set(camera.position, 32);      // 32-34: cameraPos
     uniformData[35] = this.useIndirection ? 1.0 : 0.0;  // 35: useIndirection
-    uniformData.set(DATASET_SIZE, 36);         // 36-38: datasetSize
+    uniformData.set(getDatasetSize(), 36);     // 36-38: datasetSize
     // 39: padding
-    uniformData.set(NORMALIZED_SIZE, 40);      // 40-42: normalizedSize
+    uniformData.set(getNormalizedSize(), 40); // 40-42: normalizedSize
     // 43: padding
     this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
 
@@ -506,9 +506,9 @@ export class Renderer {
     computeUniformData.set(inverseViewProj, 0);           // 0-15: inverseViewProj
     computeUniformData.set(camera.position, 16);          // 16-18: cameraPos
     computeUniformData[19] = this.useIndirection ? 1.0 : 0.0;  // 19: useIndirection
-    computeUniformData.set(DATASET_SIZE, 20);             // 20-22: datasetSize
+    computeUniformData.set(getDatasetSize(), 20);         // 20-22: datasetSize
     // 23: padding
-    computeUniformData.set(NORMALIZED_SIZE, 24);          // 24-26: normalizedSize
+    computeUniformData.set(getNormalizedSize(), 24);     // 24-26: normalizedSize
     // 27: padding
     computeUniformData[28] = this.screenWidth;            // 28: screenSize.x
     computeUniformData[29] = this.screenHeight;           // 29: screenSize.y

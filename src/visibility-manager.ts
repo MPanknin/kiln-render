@@ -7,7 +7,7 @@
 
 import { Octree, OctreeNode } from './octree.js';
 import { AtlasSlot } from './atlas-allocator.js';
-import { BRICK_SIZE, NORMALIZED_SIZE } from './config.js';
+import { getNormalizedSize } from './config.js';
 
 export interface VisibilityConfig {
   // Distance thresholds for each LOD transition (in normalized space)
@@ -50,7 +50,10 @@ export class VisibilityManager {
    */
   update(cameraPos: [number, number, number]): void {
     this.lastUpdateStats = { nodesVisited: 0, refinements: 0, coarsenings: 0 };
-    this.updateNode(this.octree.root, cameraPos);
+    // Traverse all roots (supports multi-root octrees)
+    for (const root of this.octree.roots) {
+      this.updateNode(root, cameraPos);
+    }
   }
 
   private updateNode(node: OctreeNode, cameraPos: [number, number, number]): void {
@@ -110,21 +113,21 @@ export class VisibilityManager {
     // LOD 1: 1 brick covers 1/64 of volume (4x4x4 grid)
     // LOD 0: 1 brick covers 1/512 of volume (8x8x8 grid)
 
-    const lodScale = Math.pow(2, node.lod);
+    const normalizedSize = getNormalizedSize();
     const bricksPerAxis = Math.pow(2, this.octree.maxLod - node.lod);
 
     // Size of one brick at this LOD in normalized space
     const brickSizeNorm: [number, number, number] = [
-      NORMALIZED_SIZE[0]! / bricksPerAxis,
-      NORMALIZED_SIZE[1]! / bricksPerAxis,
-      NORMALIZED_SIZE[2]! / bricksPerAxis,
+      normalizedSize[0] / bricksPerAxis,
+      normalizedSize[1] / bricksPerAxis,
+      normalizedSize[2] / bricksPerAxis,
     ];
 
     // Center of this brick (volume is centered at origin)
     const halfSize: [number, number, number] = [
-      NORMALIZED_SIZE[0]! * 0.5,
-      NORMALIZED_SIZE[1]! * 0.5,
-      NORMALIZED_SIZE[2]! * 0.5,
+      normalizedSize[0] * 0.5,
+      normalizedSize[1] * 0.5,
+      normalizedSize[2] * 0.5,
     ];
 
     return [
@@ -158,7 +161,9 @@ export class VisibilityManager {
    */
   getLodDistribution(): Map<number, number> {
     const distribution = new Map<number, number>();
-    this.countLods(this.octree.root, distribution);
+    for (const root of this.octree.roots) {
+      this.countLods(root, distribution);
+    }
     return distribution;
   }
 

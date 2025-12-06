@@ -2,7 +2,7 @@
  * Box geometry for proxy rendering
  */
 
-import { NORMALIZED_SIZE } from './config.js';
+import { getNormalizedSize } from './config.js';
 
 export interface BoxGeometry {
   vertices: Float32Array;
@@ -10,10 +10,12 @@ export interface BoxGeometry {
   wireframeIndices: Uint16Array;
 }
 
-export function createBox(size: [number, number, number] = NORMALIZED_SIZE): BoxGeometry {
+export function createBox(size?: [number, number, number]): BoxGeometry {
+  // Use provided size or get current normalized size from config
+  const actualSize = size ?? getNormalizedSize();
   // Box vertices with normalized dimensions based on dataset aspect ratio
   // Centered at origin: [-size/2, size/2] for each axis
-  const [sx, sy, sz] = size;
+  const [sx, sy, sz] = actualSize;
   const hx = sx / 2, hy = sy / 2, hz = sz / 2;
   const vertices = new Float32Array([
     -hx, -hy, -hz,  // 0

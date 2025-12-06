@@ -8,7 +8,7 @@ import { Camera } from './camera.js';
 import { Octree, OctreeNode } from './octree.js';
 import { AtlasSlot } from './atlas-allocator.js';
 import { generateSphereVolume, generateSolidVolume, writeToCanvas } from './volume.js';
-import { BRICK_SIZE, DATASET_SIZE, DATASET_GRID, NORMALIZED_SIZE, ATLAS_SIZE, CONFIG } from './config.js';
+import { BRICK_SIZE, getDatasetSize, getDatasetGrid, getNormalizedSize, ATLAS_SIZE, CONFIG } from './config.js';
 import { VisibilityManager } from './visibility-manager.js';
 
 type Pyramid = { [level: string]: Map<string, Uint8Array> };
@@ -77,13 +77,14 @@ export function initConsoleTools(ctx: ConsoleToolsContext): void {
       ];
       writeToCanvas(device, renderer.canvas, data, [BRICK_SIZE, BRICK_SIZE, BRICK_SIZE], offset);
 
+      const datasetGrid = getDatasetGrid();
       for (let dz = 0; dz < lodScale; dz++) {
         for (let dy = 0; dy < lodScale; dy++) {
           for (let dx = 0; dx < lodScale; dx++) {
             const vx = bx! * lodScale + dx;
             const vy = by! * lodScale + dy;
             const vz = bz! * lodScale + dz;
-            if (vx < DATASET_GRID[0]! && vy < DATASET_GRID[1]! && vz < DATASET_GRID[2]!) {
+            if (vx < datasetGrid[0] && vy < datasetGrid[1] && vz < datasetGrid[2]) {
               renderer.indirection.setBrick(vx, vy, vz, slot.x, slot.y, slot.z, lod);
             }
           }
@@ -134,6 +135,7 @@ export function initConsoleTools(ctx: ConsoleToolsContext): void {
     ];
     writeToCanvas(device, renderer.canvas, data, [BRICK_SIZE, BRICK_SIZE, BRICK_SIZE], offset);
 
+    const datasetGrid2 = getDatasetGrid();
     const lodScale = Math.pow(2, lod);
     for (let dz = 0; dz < lodScale; dz++) {
       for (let dy = 0; dy < lodScale; dy++) {
@@ -141,7 +143,7 @@ export function initConsoleTools(ctx: ConsoleToolsContext): void {
           const vx = bx * lodScale + dx;
           const vy = by * lodScale + dy;
           const vz = bz * lodScale + dz;
-          if (vx < DATASET_GRID[0]! && vy < DATASET_GRID[1]! && vz < DATASET_GRID[2]!) {
+          if (vx < datasetGrid2[0] && vy < datasetGrid2[1] && vz < datasetGrid2[2]) {
             renderer.indirection.setBrick(vx, vy, vz, slot.x, slot.y, slot.z, lod);
           }
         }
@@ -193,6 +195,7 @@ export function initConsoleTools(ctx: ConsoleToolsContext): void {
   // ========== Octree Functions ==========
 
   const updateIndirectionForNode = (lod: number, bx: number, by: number, bz: number, slot: AtlasSlot) => {
+    const datasetGrid3 = getDatasetGrid();
     const lodScale = Math.pow(2, lod);
     for (let dz = 0; dz < lodScale; dz++) {
       for (let dy = 0; dy < lodScale; dy++) {
@@ -200,7 +203,7 @@ export function initConsoleTools(ctx: ConsoleToolsContext): void {
           const vx = bx * lodScale + dx;
           const vy = by * lodScale + dy;
           const vz = bz * lodScale + dz;
-          if (vx < DATASET_GRID[0]! && vy < DATASET_GRID[1]! && vz < DATASET_GRID[2]!) {
+          if (vx < datasetGrid3[0] && vy < datasetGrid3[1] && vz < datasetGrid3[2]) {
             renderer.indirection.setBrick(vx, vy, vz, slot.x, slot.y, slot.z, lod);
           }
         }
@@ -311,10 +314,11 @@ export function initConsoleTools(ctx: ConsoleToolsContext): void {
   };
 
   const fillDataset = () => {
+    const datasetGrid4 = getDatasetGrid();
     let index = 0;
-    for (let z = 0; z < DATASET_GRID[2]!; z++) {
-      for (let y = 0; y < DATASET_GRID[1]!; y++) {
-        for (let x = 0; x < DATASET_GRID[0]!; x++) {
+    for (let z = 0; z < datasetGrid4[2]; z++) {
+      for (let y = 0; y < datasetGrid4[1]; y++) {
+        for (let x = 0; x < datasetGrid4[0]; x++) {
           const k = key(x, y, z);
           if (loadedBricks.has(k)) continue;
 
@@ -401,18 +405,22 @@ export function initConsoleTools(ctx: ConsoleToolsContext): void {
  * Print initialization stats to console
  */
 export function printStats(renderer: Renderer, loadedBricks: Map<string, AtlasSlot>): void {
+  const datasetSize = getDatasetSize();
+  const datasetGrid = getDatasetGrid();
+  const normalizedSize = getNormalizedSize();
+
   const atlasSizeMB = ((ATLAS_SIZE ** 3) / (1024 * 1024)).toFixed(1);
-  const datasetSizeMB = ((DATASET_SIZE[0]! * DATASET_SIZE[1]! * DATASET_SIZE[2]!) / (1024 * 1024)).toFixed(1);
+  const datasetSizeMB = ((datasetSize[0] * datasetSize[1] * datasetSize[2]) / (1024 * 1024)).toFixed(1);
   const brickSizeKB = ((BRICK_SIZE ** 3) / 1024).toFixed(1);
   const usagePercent = ((renderer.allocator.usedCount / renderer.allocator.totalSlots) * 100).toFixed(1);
-  const datasetBricks = DATASET_GRID[0]! * DATASET_GRID[1]! * DATASET_GRID[2]!;
+  const datasetBricks = datasetGrid[0] * datasetGrid[1] * datasetGrid[2];
 
   console.log('╔═══════════════════════════════════════════════════════╗');
   console.log('║       Kiln Volume Renderer Initialized                ║');
   console.log('╠═══════════════════════════════════════════════════════╣');
-  console.log(`║ Dataset:         ${DATASET_SIZE[0]}×${DATASET_SIZE[1]}×${DATASET_SIZE[2]} (${datasetSizeMB} MB)`.padEnd(58) + '║');
-  console.log(`║ Dataset Grid:    ${DATASET_GRID[0]}×${DATASET_GRID[1]}×${DATASET_GRID[2]} (${datasetBricks} bricks)`.padEnd(58) + '║');
-  console.log(`║ Normalized:      ${NORMALIZED_SIZE[0]!.toFixed(2)}×${NORMALIZED_SIZE[1]!.toFixed(2)}×${NORMALIZED_SIZE[2]!.toFixed(2)}`.padEnd(58) + '║');
+  console.log(`║ Dataset:         ${datasetSize[0]}×${datasetSize[1]}×${datasetSize[2]} (${datasetSizeMB} MB)`.padEnd(58) + '║');
+  console.log(`║ Dataset Grid:    ${datasetGrid[0]}×${datasetGrid[1]}×${datasetGrid[2]} (${datasetBricks} bricks)`.padEnd(58) + '║');
+  console.log(`║ Normalized:      ${normalizedSize[0].toFixed(2)}×${normalizedSize[1].toFixed(2)}×${normalizedSize[2].toFixed(2)}`.padEnd(58) + '║');
   console.log(`║ Atlas Size:      ${ATLAS_SIZE}³ (${atlasSizeMB} MB)`.padEnd(58) + '║');
   console.log(`║ Atlas Grid:      ${CONFIG.GRID_SIZE}×${CONFIG.GRID_SIZE}×${CONFIG.GRID_SIZE} (${CONFIG.TOTAL_BRICK_SLOTS} slots)`.padEnd(58) + '║');
   console.log(`║ Brick Size:      ${BRICK_SIZE}³ (${brickSizeKB} KB)`.padEnd(58) + '║');

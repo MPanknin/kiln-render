@@ -8,7 +8,7 @@ const TARGET: [number, number, number] = [0, 0, 0];
 export class Camera {
   position: Float32Array;
 
-  private distance = 2.4;  // Distance from origin in normalized units
+  private distance = 6.0;  // Distance from origin in normalized units
   private rotationX = 0.3;
   private rotationY = 0.4;
   private isDragging = false;

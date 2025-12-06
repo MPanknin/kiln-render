@@ -234,12 +234,12 @@ export class Octree {
     updateIndirectionFn: (lod: number, bx: number, by: number, bz: number, slot: AtlasSlot) => void
   ): boolean {
     if (!node.children) {
-      console.warn('Node has no children to collapse');
+      // console.warn('Node has no children to collapse');
       return false;
     }
 
     if (!node.slot) {
-      console.warn('Parent node has no slot loaded - cannot collapse');
+      // console.warn('Parent node has no slot loaded - cannot collapse');
       return false;
     }
 

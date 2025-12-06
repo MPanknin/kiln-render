@@ -11,7 +11,7 @@ export const ATLAS_SIZE = 768;   // Volume atlas texture size
 
 // Dataset dimensions (the actual volume being visualized)
 // This defines the virtual volume space, independent of atlas size
-export const DATASET_SIZE: [number, number, number] = [512, 512, 512];
+export const DATASET_SIZE: [number, number, number] = [512, 256, 512];
 
 // Computed constants (derived from core constants)
 export const GRID_SIZE = ATLAS_SIZE / BRICK_SIZE;  // 12 bricks per dimension (atlas capacity)

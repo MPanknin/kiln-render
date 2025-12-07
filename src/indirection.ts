@@ -7,7 +7,7 @@
  * Each entry in the indirection table tells the shader where to find that brick in the atlas.
  */
 
-import { GRID_SIZE, getDatasetGrid } from './config.js';
+import { getDatasetGrid } from './config.js';
 
 export interface BrickLocation {
   // Virtual position (which brick in the logical volume)
@@ -49,10 +49,11 @@ export class IndirectionTable {
     // Dataset grid, 4 bytes per entry (RGBA)
     this.data = new Uint8Array(this.gridX * this.gridY * this.gridZ * 4);
 
-    // Create 3D texture for indirection (dataset grid size, RGBA8)
+    // Create 3D texture for indirection (dataset grid size, RGBA8 unsigned int)
+    // Using rgba8uint for exact integer slot indices (no precision loss)
     this.texture = device.createTexture({
       size: [this.gridX, this.gridY, this.gridZ],
-      format: 'rgba8unorm',
+      format: 'rgba8uint',
       dimension: '3d',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
@@ -63,7 +64,13 @@ export class IndirectionTable {
 
   /**
    * Register a brick mapping: virtual position -> atlas position
-   * Positions are in brick units (0-GRID_SIZE-1), not voxels
+   *
+   * For LOD 0, this sets a single cell in the indirection table.
+   * For coarser LODs, this fills multiple cells (2^lod)³ to cover the
+   * equivalent region in the finest LOD grid.
+   *
+   * @param virtualX/Y/Z - Virtual brick position at this LOD level
+   * @param atlasX/Y/Z - Atlas slot position
    * @param lod - LOD level (0 = full res, 1 = 2x downsample, 2 = 4x, 3 = 8x)
    */
   setBrick(
@@ -71,33 +78,106 @@ export class IndirectionTable {
     atlasX: number, atlasY: number, atlasZ: number,
     lod: number = 0
   ) {
-    const idx = (virtualX + virtualY * this.gridX + virtualZ * this.gridX * this.gridY) * 4;
+    // How many LOD 0 cells does this brick cover?
+    const scale = 1 << lod; // 2^lod: 1, 2, 4, 8 for LOD 0, 1, 2, 3
 
-    // Store atlas position as brick units scaled to 0-255
-    // Scale factor: 256 / GRID_SIZE to map atlas brick coords to [0,1] range
-    const scale = 256 / GRID_SIZE;
-    this.data[idx + 0] = atlasX * scale;
-    this.data[idx + 1] = atlasY * scale;
-    this.data[idx + 2] = atlasZ * scale;
-    // Store LOD level: 0 = not loaded, 1-4 = lod 0-3
-    // Values: 51 = lod0, 102 = lod1, 153 = lod2, 204 = lod3
-    // Using 51 as base so max is 204, safely under 255
-    this.data[idx + 3] = (lod + 1) * 51;
+    // Base position in LOD 0 grid
+    const baseX = virtualX * scale;
+    const baseY = virtualY * scale;
+    const baseZ = virtualZ * scale;
 
-    this.updateBrickGPU(virtualX, virtualY, virtualZ);
+    // Fill all covered cells
+    for (let dz = 0; dz < scale; dz++) {
+      for (let dy = 0; dy < scale; dy++) {
+        for (let dx = 0; dx < scale; dx++) {
+          const x = baseX + dx;
+          const y = baseY + dy;
+          const z = baseZ + dz;
+
+          // Bounds check
+          if (x >= this.gridX || y >= this.gridY || z >= this.gridZ) continue;
+
+          const idx = (x + y * this.gridX + z * this.gridX * this.gridY) * 4;
+
+          // Only overwrite if this LOD is finer (lower number) or equal
+          // LOD stored as lod+1, so higher value = coarser
+          const existingLod = this.data[idx + 3];
+          if (existingLod > 0 && existingLod <= lod + 1) {
+            // A finer or equal LOD brick already occupies this cell, skip
+            continue;
+          }
+
+          // Store raw atlas slot indices
+          this.data[idx + 0] = atlasX;
+          this.data[idx + 1] = atlasY;
+          this.data[idx + 2] = atlasZ;
+          // Store LOD level + 1 (0 = not loaded, 1-4 = lod 0-3)
+          this.data[idx + 3] = lod + 1;
+        }
+      }
+    }
+
+    // Update the GPU region
+    this.updateRegionGPU(baseX, baseY, baseZ, scale);
   }
 
   /**
-   * Clear a brick (mark as not loaded)
+   * Clear a brick region (mark as not loaded)
+   *
+   * For LOD 0, clears a single cell.
+   * For coarser LODs, clears all cells that were covered by this brick,
+   * but only if they still point to this LOD (don't clear finer LOD data).
+   *
+   * @param virtualX/Y/Z - Virtual brick position at this LOD level
+   * @param lod - LOD level of the brick being cleared
+   * @param fallbackAtlas - Optional: atlas position to fall back to (e.g., parent brick)
+   * @param fallbackLod - Optional: LOD of fallback brick
    */
-  clearBrick(virtualX: number, virtualY: number, virtualZ: number) {
-    const idx = (virtualX + virtualY * this.gridX + virtualZ * this.gridX * this.gridY) * 4;
-    this.data[idx + 0] = 0;
-    this.data[idx + 1] = 0;
-    this.data[idx + 2] = 0;
-    this.data[idx + 3] = 0;  // loaded = false
+  clearBrick(
+    virtualX: number, virtualY: number, virtualZ: number,
+    lod: number = 0,
+    fallbackAtlas?: [number, number, number],
+    fallbackLod?: number
+  ) {
+    const scale = 1 << lod;
+    const baseX = virtualX * scale;
+    const baseY = virtualY * scale;
+    const baseZ = virtualZ * scale;
 
-    this.updateBrickGPU(virtualX, virtualY, virtualZ);
+    for (let dz = 0; dz < scale; dz++) {
+      for (let dy = 0; dy < scale; dy++) {
+        for (let dx = 0; dx < scale; dx++) {
+          const x = baseX + dx;
+          const y = baseY + dy;
+          const z = baseZ + dz;
+
+          if (x >= this.gridX || y >= this.gridY || z >= this.gridZ) continue;
+
+          const idx = (x + y * this.gridX + z * this.gridX * this.gridY) * 4;
+
+          // Only clear if this cell is at the LOD we're clearing
+          // Don't clear finer LOD data that may have been loaded since
+          const existingLod = this.data[idx + 3];
+          if (existingLod !== lod + 1) continue;
+
+          if (fallbackAtlas && fallbackLod !== undefined) {
+            // Fall back to parent brick
+            this.data[idx + 0] = fallbackAtlas[0];
+            this.data[idx + 1] = fallbackAtlas[1];
+            this.data[idx + 2] = fallbackAtlas[2];
+            this.data[idx + 3] = fallbackLod + 1;
+          } else {
+            // Clear completely
+            this.data[idx + 0] = 0;
+            this.data[idx + 1] = 0;
+            this.data[idx + 2] = 0;
+            this.data[idx + 3] = 0;
+          }
+        }
+      }
+    }
+
+    this.updateRegionGPU(baseX, baseY, baseZ, scale);
   }
 
   /**
@@ -112,15 +192,58 @@ export class IndirectionTable {
    * Update a single brick entry on the GPU (partial update)
    */
   private updateBrickGPU(x: number, y: number, z: number) {
-    const idx = (x + y * this.gridX + z * this.gridX * this.gridY) * 4;
+    this.updateRegionGPU(x, y, z, 1);
+  }
 
-    // Write just this single texel to the GPU
-    this.device.queue.writeTexture(
-      { texture: this.texture, origin: [x, y, z] },
-      this.data.subarray(idx, idx + 4),
-      { bytesPerRow: 4, rowsPerImage: 1 },
-      [1, 1, 1]
-    );
+  /**
+   * Update a region of the indirection texture on the GPU
+   * Used for multi-cell updates when setting/clearing coarse LOD bricks
+   */
+  private updateRegionGPU(baseX: number, baseY: number, baseZ: number, size: number) {
+    // Clamp region to grid bounds
+    const endX = Math.min(baseX + size, this.gridX);
+    const endY = Math.min(baseY + size, this.gridY);
+    const endZ = Math.min(baseZ + size, this.gridZ);
+    const actualSizeX = endX - baseX;
+    const actualSizeY = endY - baseY;
+    const actualSizeZ = endZ - baseZ;
+
+    if (actualSizeX <= 0 || actualSizeY <= 0 || actualSizeZ <= 0) return;
+
+    // For small regions, write directly
+    // For larger regions, extract the subregion into a contiguous buffer
+    if (size === 1) {
+      const idx = (baseX + baseY * this.gridX + baseZ * this.gridX * this.gridY) * 4;
+      this.device.queue.writeTexture(
+        { texture: this.texture, origin: [baseX, baseY, baseZ] },
+        this.data.subarray(idx, idx + 4),
+        { bytesPerRow: 4, rowsPerImage: 1 },
+        [1, 1, 1]
+      );
+    } else {
+      // Extract contiguous subregion
+      const regionData = new Uint8Array(actualSizeX * actualSizeY * actualSizeZ * 4);
+      let writeIdx = 0;
+
+      for (let z = baseZ; z < endZ; z++) {
+        for (let y = baseY; y < endY; y++) {
+          const rowStart = (baseX + y * this.gridX + z * this.gridX * this.gridY) * 4;
+          for (let x = 0; x < actualSizeX; x++) {
+            regionData[writeIdx++] = this.data[rowStart + x * 4 + 0]!;
+            regionData[writeIdx++] = this.data[rowStart + x * 4 + 1]!;
+            regionData[writeIdx++] = this.data[rowStart + x * 4 + 2]!;
+            regionData[writeIdx++] = this.data[rowStart + x * 4 + 3]!;
+          }
+        }
+      }
+
+      this.device.queue.writeTexture(
+        { texture: this.texture, origin: [baseX, baseY, baseZ] },
+        regionData,
+        { bytesPerRow: actualSizeX * 4, rowsPerImage: actualSizeY },
+        [actualSizeX, actualSizeY, actualSizeZ]
+      );
+    }
   }
 
   /**

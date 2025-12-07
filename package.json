@@ -15,5 +15,9 @@
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
     "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "tweakpane": "^4.0.5",
+    "wgpu-matrix": "^3.4.0"
   }
 }

@@ -14,12 +14,11 @@ export interface VolumeCanvas {
  */
 export function createVolumeCanvas(device: GPUDevice): VolumeCanvas {
   const texture = device.createTexture({
-    size: [ATLAS_SIZE, ATLAS_SIZE, ATLAS_SIZE],
+    size: [ATLAS_SIZE, ATLAS_SIZE, ATLAS_SIZE], // Use 528
     format: 'r8unorm',
     dimension: '3d',
     usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
   });
-
   return { texture, size: ATLAS_SIZE };
 }
 

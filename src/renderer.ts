@@ -5,13 +5,16 @@
 import { Camera } from './camera.js';
 import { VolumeCanvas, createVolumeCanvas, writeToCanvas } from './volume.js';
 import { createBox, createAxis } from './geometry.js';
-import { createTransferFunction } from './transfer-function.js';
+import { TransferFunction } from './transfer-function.js';
 import { IndirectionTable } from './indirection.js';
 import { AtlasAllocator, AtlasSlot } from './atlas-allocator.js';
 import { volumeShader, wireframeShader, axisShader, computeShader, blitShader } from './shaders.js';
-import { BRICK_SIZE, getDatasetSize, getNormalizedSize } from './config.js';
+import { getDatasetSize, getNormalizedSize } from './config.js';
 
 export type RenderMode = 'fragment' | 'compute';
+
+// Volume render mode (shader-side)
+export type VolumeRenderMode = 'dvr' | 'mip' | 'iso' | 'lod';
 
 export class Renderer {
   private device: GPUDevice;
@@ -30,6 +33,12 @@ export class Renderer {
 
   // Rendering mode: 'fragment' (proxy box) or 'compute' (compute shader)
   renderMode: RenderMode = 'compute';
+
+  // Volume render mode: dvr, mip, or iso
+  volumeRenderMode: VolumeRenderMode = 'dvr';
+
+  // ISO surface threshold (0-1)
+  isoValue = 0.5;
 
   // Fragment-based pipelines
   private volumePipeline: GPURenderPipeline;
@@ -66,7 +75,6 @@ export class Renderer {
   // Samplers (reused across bind groups)
   private volumeSampler: GPUSampler;
   private tfSampler: GPUSampler;
-  private indirectionSampler: GPUSampler;
   private blitSampler: GPUSampler;
   private tfTexture: GPUTexture;
 
@@ -77,6 +85,9 @@ export class Renderer {
   // Screen size for compute shader
   private screenWidth = 1;
   private screenHeight = 1;
+
+  // Frame counter for temporal jitter
+  private frameIndex = 0;
 
   constructor(device: GPUDevice, format: GPUTextureFormat) {
     this.device = device;
@@ -123,9 +134,10 @@ export class Renderer {
 
     // Create uniform buffers
     // Volume: mat4 mvp (64) + mat4 inverseModel (64) + vec3 cameraPos (12) + useIndirection (4)
-    //       + vec3 datasetSize (12) + pad (4) + vec3 normalizedSize (12) + pad (4) = 176
+    //       + vec3 datasetSize (12) + renderMode (4) + vec3 normalizedSize (12) + isoValue (4)
+    //       + frameIndex (4) + pad (12) = 192, but WGSL alignment requires 208
     this.uniformBuffer = device.createBuffer({
-      size: 176,
+      size: 208,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -141,8 +153,8 @@ export class Renderer {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    // Create transfer function
-    this.tfTexture = createTransferFunction(device);
+    // Transfer function texture will be set externally
+    this.tfTexture = null!;  // Will be set by setTransferFunction()
 
     // Create samplers (stored as members for reuse)
     this.volumeSampler = device.createSampler({
@@ -154,12 +166,6 @@ export class Renderer {
       magFilter: 'linear',
       minFilter: 'linear',
       addressModeU: 'clamp-to-edge',
-    });
-
-    // Indirection sampler (nearest for discrete brick lookups)
-    this.indirectionSampler = device.createSampler({
-      magFilter: 'nearest',
-      minFilter: 'nearest',
     });
 
     this.blitSampler = device.createSampler({
@@ -235,20 +241,7 @@ export class Renderer {
       depthStencil,
     });
 
-    // Create bind groups
-    this.volumeBindGroup = device.createBindGroup({
-      layout: this.volumePipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: this.uniformBuffer } },
-        { binding: 1, resource: this.volumeSampler },
-        { binding: 2, resource: this.canvas.texture.createView() },
-        { binding: 3, resource: this.tfSampler },
-        { binding: 4, resource: this.tfTexture.createView() },
-        { binding: 5, resource: this.indirectionSampler },
-        { binding: 6, resource: this.indirection.texture.createView() },
-      ],
-    });
-
+    // Wireframe and axis bind groups (don't depend on TF)
     this.wireframeBindGroup = device.createBindGroup({
       layout: this.wireframePipeline.getBindGroupLayout(0),
       entries: [{ binding: 0, resource: { buffer: this.wireframeUniformBuffer } }],
@@ -258,6 +251,9 @@ export class Renderer {
       layout: this.axisPipeline.getBindGroupLayout(0),
       entries: [{ binding: 0, resource: { buffer: this.axisUniformBuffer } }],
     });
+
+    // Volume bind group will be created when TF is set
+    this.volumeBindGroup = null!;
 
     // ===== Compute shader pipeline =====
 
@@ -284,20 +280,8 @@ export class Renderer {
       compute: { module: computeModule, entryPoint: 'main' },
     });
 
-    // Compute bind group (will be recreated on resize)
-    this.computeBindGroup = device.createBindGroup({
-      layout: this.computePipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: this.computeUniformBuffer } },
-        { binding: 1, resource: this.volumeSampler },
-        { binding: 2, resource: this.canvas.texture.createView() },
-        { binding: 3, resource: this.tfSampler },
-        { binding: 4, resource: this.tfTexture.createView() },
-        { binding: 5, resource: this.indirectionSampler },
-        { binding: 6, resource: this.indirection.texture.createView() },
-        { binding: 7, resource: this.computeOutputView },
-      ],
-    });
+    // Compute bind group will be created when TF is set
+    this.computeBindGroup = null!;
 
     // Blit pipeline (fullscreen quad to display compute output)
     const blitModule = device.createShaderModule({ code: blitShader });
@@ -337,11 +321,11 @@ export class Renderer {
 
     // Write brick data to atlas
     const offset: [number, number, number] = [
-      slot.x * BRICK_SIZE,
-      slot.y * BRICK_SIZE,
-      slot.z * BRICK_SIZE
+      slot.x * 66, // Use PHYSICAL_BRICK_SIZE
+      slot.y * 66,
+      slot.z * 66
     ];
-    writeToCanvas(this.device, this.canvas, data, [BRICK_SIZE, BRICK_SIZE, BRICK_SIZE], offset);
+    writeToCanvas(this.device, this.canvas, data, [66, 66, 66], offset);
 
     // Set up indirection mapping with LOD level
     this.indirection.setBrick(virtualX, virtualY, virtualZ, slot.x, slot.y, slot.z, lod);
@@ -351,9 +335,18 @@ export class Renderer {
 
   /**
    * Unload a brick from the atlas
+   * @param lod - LOD level of the brick being unloaded
+   * @param fallbackAtlas - Optional atlas position to fall back to (parent brick)
+   * @param fallbackLod - Optional LOD of fallback brick
    */
-  unloadBrick(virtualX: number, virtualY: number, virtualZ: number, slot: AtlasSlot): void {
-    this.indirection.clearBrick(virtualX, virtualY, virtualZ);
+  unloadBrick(
+    virtualX: number, virtualY: number, virtualZ: number,
+    slot: AtlasSlot,
+    lod: number = 0,
+    fallbackAtlas?: [number, number, number],
+    fallbackLod?: number
+  ): void {
+    this.indirection.clearBrick(virtualX, virtualY, virtualZ, lod, fallbackAtlas, fallbackLod);
     this.allocator.free(slot);
   }
 
@@ -363,6 +356,43 @@ export class Renderer {
   clearAllBricks(): void {
     this.indirection.clearAll();
     this.allocator.reset();
+  }
+
+  /**
+   * Set the transfer function and recreate bind groups
+   */
+  setTransferFunction(tf: TransferFunction): void {
+    this.tfTexture = tf.texture;
+    this.recreateVolumeBindGroups();
+  }
+
+  private recreateVolumeBindGroups(): void {
+    if (!this.tfTexture) return;
+
+    this.volumeBindGroup = this.device.createBindGroup({
+      layout: this.volumePipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.uniformBuffer } },
+        { binding: 1, resource: this.volumeSampler },
+        { binding: 2, resource: this.canvas.texture.createView() },
+        { binding: 3, resource: this.tfSampler },
+        { binding: 4, resource: this.tfTexture.createView() },
+        { binding: 6, resource: this.indirection.texture.createView() },
+      ],
+    });
+
+    this.computeBindGroup = this.device.createBindGroup({
+      layout: this.computePipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.computeUniformBuffer } },
+        { binding: 1, resource: this.volumeSampler },
+        { binding: 2, resource: this.canvas.texture.createView() },
+        { binding: 3, resource: this.tfSampler },
+        { binding: 4, resource: this.tfTexture.createView() },
+        { binding: 6, resource: this.indirection.texture.createView() },
+        { binding: 7, resource: this.computeOutputView },
+      ],
+    });
   }
 
   resize(width: number, height: number) {
@@ -392,6 +422,8 @@ export class Renderer {
   }
 
   private recreateComputeBindGroups() {
+    if (!this.tfTexture) return;
+
     this.computeBindGroup = this.device.createBindGroup({
       layout: this.computePipeline.getBindGroupLayout(0),
       entries: [
@@ -400,7 +432,6 @@ export class Renderer {
         { binding: 2, resource: this.canvas.texture.createView() },
         { binding: 3, resource: this.tfSampler },
         { binding: 4, resource: this.tfTexture.createView() },
-        { binding: 5, resource: this.indirectionSampler },
         { binding: 6, resource: this.indirection.texture.createView() },
         { binding: 7, resource: this.computeOutputView },
       ],
@@ -426,6 +457,17 @@ export class Renderer {
     } else {
       this.renderFragment(colorView, camera, vp);
     }
+
+    this.frameIndex++;
+  }
+
+  private getRenderModeInt(): number {
+    switch (this.volumeRenderMode) {
+      case 'mip': return 1;
+      case 'iso': return 2;
+      case 'lod': return 3;
+      default: return 0;  // dvr
+    }
   }
 
   private renderFragment(colorView: GPUTextureView, camera: Camera, vp: Float32Array) {
@@ -438,15 +480,22 @@ export class Renderer {
     ]);
 
     // Update volume uniforms
-    const uniformData = new Float32Array(44);  // 176 bytes / 4
+    // Layout: mat4 mvp (64) + mat4 inverseModel (64) + vec3 cameraPos (12) + useIndirection (4)
+    //       + vec3 datasetSize (12) + renderMode (4) + vec3 normalizedSize (12) + isoValue (4)
+    //       + frameIndex (4) + pad (12) = 192, WGSL alignment = 208
+    const uniformData = new Float32Array(52);  // 208 bytes / 4
     uniformData.set(vp, 0);                    // 0-15: mvp (model is identity)
     uniformData.set(inverseModel, 16);         // 16-31: inverseModel
     uniformData.set(camera.position, 32);      // 32-34: cameraPos
     uniformData[35] = this.useIndirection ? 1.0 : 0.0;  // 35: useIndirection
     uniformData.set(getDatasetSize(), 36);     // 36-38: datasetSize
-    // 39: padding
+    // renderMode is i32, need to use DataView for proper encoding
+    const uniformDataView = new DataView(uniformData.buffer);
+    uniformDataView.setInt32(39 * 4, this.getRenderModeInt(), true);  // 39: renderMode (i32)
     uniformData.set(getNormalizedSize(), 40); // 40-42: normalizedSize
-    // 43: padding
+    uniformData[43] = this.isoValue;          // 43: isoValue
+    uniformDataView.setUint32(44 * 4, this.frameIndex, true);  // 44: frameIndex (u32)
+    // 45-47: padding
     this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
 
     // Update wireframe uniforms
@@ -494,25 +543,41 @@ export class Renderer {
     this.device.queue.submit([encoder.finish()]);
   }
 
+  /** Get depth view for external renderers (debug wireframes, etc) */
+  getDepthView(): GPUTextureView {
+    return this.depthView;
+  }
+
+  /** Get view-projection matrix for external renderers */
+  getViewProjMatrix(camera: Camera): Float32Array {
+    const aspect = this.depthTexture.width / this.depthTexture.height;
+    const view = camera.getViewMatrix();
+    const proj = camera.getProjectionMatrix(aspect);
+    return multiplyMatrices(proj, view);
+  }
+
   private renderCompute(colorView: GPUTextureView, camera: Camera, vp: Float32Array) {
     // Compute inverse view-projection for ray generation
     const inverseViewProj = invertMatrix(vp);
 
     // Update compute uniforms
     // Layout: mat4 inverseViewProj (64) + vec3 cameraPos (12) + useIndirection (4)
-    //       + vec3 datasetSize (12) + pad (4) + vec3 normalizedSize (12) + pad (4)
-    //       + vec2 screenSize (8) + pad (8) = 128 bytes = 32 floats
+    //       + vec3 datasetSize (12) + renderMode (4) + vec3 normalizedSize (12) + isoValue (4)
+    //       + vec2 screenSize (8) + frameIndex (4) + pad (4) = 128 bytes = 32 floats
     const computeUniformData = new Float32Array(32);
     computeUniformData.set(inverseViewProj, 0);           // 0-15: inverseViewProj
     computeUniformData.set(camera.position, 16);          // 16-18: cameraPos
     computeUniformData[19] = this.useIndirection ? 1.0 : 0.0;  // 19: useIndirection
     computeUniformData.set(getDatasetSize(), 20);         // 20-22: datasetSize
-    // 23: padding
+    // renderMode is i32, need to use DataView for proper encoding
+    const computeDataView = new DataView(computeUniformData.buffer);
+    computeDataView.setInt32(23 * 4, this.getRenderModeInt(), true);  // 23: renderMode (i32)
     computeUniformData.set(getNormalizedSize(), 24);     // 24-26: normalizedSize
-    // 27: padding
+    computeUniformData[27] = this.isoValue;              // 27: isoValue
     computeUniformData[28] = this.screenWidth;            // 28: screenSize.x
     computeUniformData[29] = this.screenHeight;           // 29: screenSize.y
-    // 30-31: padding
+    computeDataView.setUint32(30 * 4, this.frameIndex, true);  // 30: frameIndex (u32)
+    // 31: padding
     this.device.queue.writeBuffer(this.computeUniformBuffer, 0, computeUniformData);
 
     const encoder = this.device.createCommandEncoder();

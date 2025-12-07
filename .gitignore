@@ -6,3 +6,4 @@ dist/
 .env.local
 
 public/volumes/
+public/datasets/

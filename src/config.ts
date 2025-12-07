@@ -5,13 +5,15 @@
  * These values define the structure of the virtual texturing system.
  */
 
-// Core constants (fixed)
-export const BRICK_SIZE = 64;    // Each brick is 64³ voxels
-export const ATLAS_SIZE = 768;   // Volume atlas texture size
+// Core constants
+export const LOGICAL_BRICK_SIZE = 64; 
+export const PHYSICAL_BRICK_SIZE = 66; // 64 + 1 voxel padding on each side
+export const ATLAS_SIZE = 528;         // 8 slots * 66 voxels = 528
 
-// Computed atlas constants (derived from core constants)
-export const GRID_SIZE = ATLAS_SIZE / BRICK_SIZE;  // 12 bricks per dimension (atlas capacity)
-export const TOTAL_BRICK_SLOTS = GRID_SIZE ** 3;   // 1728 slots total
+// For backward compatibility with existing code
+export const BRICK_SIZE = LOGICAL_BRICK_SIZE; 
+export const GRID_SIZE = 8; 
+export const TOTAL_BRICK_SLOTS = 512;
 
 // Dataset dimensions (can be reconfigured dynamically)
 // Default: small test volume

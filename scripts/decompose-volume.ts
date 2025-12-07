@@ -2,9 +2,13 @@
  * Decompose a raw volume file into LOD brick pyramid
  * Uses streaming to handle large files (>2GB)
  *
- * Usage: npx ts-node scripts/decompose-volume.ts <input.vol> <outputDir> [options]
+ * Usage: npx ts-node scripts/decompose-volume.ts <input.raw> <output-dir> [options]
+ *   OR:  npx ts-node scripts/decompose-volume.ts <input.raw> <W> <H> <D> [options]
+ *        (output dir defaults to public/datasets/<input-name>/)
  *
- * Example: npx ts-node scripts/decompose-volume.ts public/volumes/stent_16_512x512x174.raw public/volumes/bricks/stent
+ * Examples:
+ *   npx ts-node scripts/decompose-volume.ts data.raw public/datasets/mydata
+ *   npx ts-node scripts/decompose-volume.ts data.raw 832 832 494 --bits 16
  */
 
 import * as fs from 'fs';
@@ -19,32 +23,55 @@ interface Config {
   brickSize: number;
   maxLod: number;
   bitDepth: 8 | 16;
+  pack: boolean;
 }
 
 function parseArgs(): Config {
   const args = process.argv.slice(2);
 
   if (args.length < 2) {
-    console.error('Usage: npx ts-node scripts/decompose-volume.ts <input.vol> <outputDir> [options]');
+    console.error('Usage: npx ts-node scripts/decompose-volume.ts <input.raw> <output-dir> [options]');
+    console.error('   OR: npx ts-node scripts/decompose-volume.ts <input.raw> <W> <H> <D> [options]');
+    console.error('');
     console.error('Options:');
+    console.error('  --output DIR         Output directory (default: public/datasets/<name>)');
     console.error('  --dimensions WxHxD   Volume dimensions (default: parse from filename)');
-    console.error('  --spacing X,Y,Z      Voxel spacing (default: parse from filename or 1,1,1)');
+    console.error('  --spacing X,Y,Z      Voxel spacing (default: 1,1,1)');
     console.error('  --header N           Header size in bytes (default: 0)');
     console.error('  --brick-size N       Brick size (default: 64)');
     console.error('  --max-lod N          Maximum LOD levels (default: auto)');
-    console.error('  --bits N             Bit depth: 8 or 16 (default: parse from filename or 8)');
+    console.error('  --bits N             Bit depth: 8 or 16 (default: 8)');
     process.exit(1);
   }
 
   const inputPath = args[0]!;
-  const outputDir = args[1]!;
   const filename = path.basename(inputPath);
+  const inputName = filename.replace(/\.[^.]+$/, '').replace(/_\d+x\d+x\d+.*$/, '').replace(/_uint\d+$/, '');
 
-  // Try to parse dimensions from filename (e.g., "name_1952x1817x751.vol")
+  // Check if args[1-3] are dimensions (all numeric) or if args[1] is output dir
+  let outputDir: string;
   let dimensions: [number, number, number] | null = null;
-  const dimMatch = filename.match(/(\d+)x(\d+)x(\d+)/);
-  if (dimMatch) {
-    dimensions = [parseInt(dimMatch[1]!), parseInt(dimMatch[2]!), parseInt(dimMatch[3]!)];
+  let argOffset = 2; // Where to start parsing options
+
+  if (args.length >= 4 &&
+      !isNaN(Number(args[1])) &&
+      !isNaN(Number(args[2])) &&
+      !isNaN(Number(args[3]))) {
+    // Dimensions provided as positional args: <input> <W> <H> <D>
+    dimensions = [parseInt(args[1]!), parseInt(args[2]!), parseInt(args[3]!)];
+    outputDir = `public/datasets/${inputName}`;
+    argOffset = 4;
+  } else {
+    // Output dir provided: <input> <output-dir>
+    outputDir = args[1]!;
+  }
+
+  // Try to parse dimensions from filename if not already set (e.g., "name_1952x1817x751.vol")
+  if (!dimensions) {
+    const dimMatch = filename.match(/(\d+)x(\d+)x(\d+)/);
+    if (dimMatch) {
+      dimensions = [parseInt(dimMatch[1]!), parseInt(dimMatch[2]!), parseInt(dimMatch[3]!)];
+    }
   }
 
   // Try to parse voxel spacing from filename (e.g., "name_0,83x0,82x3,2.raw")
@@ -61,18 +88,22 @@ function parseArgs(): Config {
 
   // Try to parse bit depth from filename (e.g., "name_16_512x512x174.raw")
   let bitDepth: 8 | 16 = 8;
-  if (filename.includes('_16_') || filename.includes('_16.') || filename.includes('16bit')) {
+  if (filename.includes('_16_') || filename.includes('_16.') || filename.includes('16bit') || filename.includes('uint16')) {
     bitDepth = 16;
-  } else if (filename.includes('_8_') || filename.includes('_8.') || filename.includes('8bit')) {
+  } else if (filename.includes('_8_') || filename.includes('_8.') || filename.includes('8bit') || filename.includes('uint8')) {
     bitDepth = 8;
   }
 
   let headerSize = 0;
   let brickSize = 64;
   let maxLod = -1; // Auto
+  let pack = false;
 
-  for (let i = 2; i < args.length; i++) {
-    if (args[i] === '--dimensions' && args[i + 1]) {
+  for (let i = argOffset; i < args.length; i++) {
+    if (args[i] === '--output' && args[i + 1]) {
+      outputDir = args[i + 1]!;
+      i++;
+    } else if (args[i] === '--dimensions' && args[i + 1]) {
       const parts = args[i + 1]!.split('x').map(Number);
       if (parts.length === 3) {
         dimensions = [parts[0]!, parts[1]!, parts[2]!];
@@ -97,6 +128,8 @@ function parseArgs(): Config {
       const bits = parseInt(args[i + 1]!);
       if (bits === 8 || bits === 16) bitDepth = bits;
       i++;
+    } else if (args[i] === '--pack') {
+      pack = true;
     }
   }
 
@@ -112,7 +145,7 @@ function parseArgs(): Config {
     maxLod = Math.max(0, Math.min(maxLod, 4)); // Cap at 4 levels
   }
 
-  return { inputPath, outputDir, dimensions, voxelSpacing, headerSize, brickSize, maxLod, bitDepth };
+  return { inputPath, outputDir, dimensions, voxelSpacing, headerSize, brickSize, maxLod, bitDepth, pack };
 }
 
 /**
@@ -198,43 +231,54 @@ function readZSlice(
 }
 
 /**
- * Extract a brick from a z-slice buffer
+ * Extract a brick from a z-slice buffer with proper border handling
+ * @param sliceData - The slice data buffer
+ * @param dims - Volume dimensions [w, h, d]
+ * @param zBufferStart - The actual start z of the slice buffer (clamped to 0)
+ * @param zRequestedStart - The requested start z (may be -1 for first brick)
+ * @param brickX, brickY, brickZ - Brick coordinates
+ * @param brickSize - Logical brick size (64)
  */
-function extractBrickFromSlices(
+function extractBrickFromSlicesWithBorder(
   sliceData: Uint8Array,
   dims: [number, number, number],
-  zOffset: number,
+  zBufferStart: number,
+  zRequestedStart: number,
   brickX: number,
   brickY: number,
   brickZ: number,
   brickSize: number
 ): Uint8Array {
-  const brick = new Uint8Array(brickSize * brickSize * brickSize);
+  const physicalSize = brickSize + 2; // 66
+  const brick = new Uint8Array(physicalSize ** 3);
   const [w, h, d] = dims;
+
+  // Logical start in the volume
   const startX = brickX * brickSize;
   const startY = brickY * brickSize;
   const startZ = brickZ * brickSize;
-  const sliceSize = w * h;
 
-  for (let z = 0; z < brickSize; z++) {
-    const globalZ = startZ + z;
-    const localZ = globalZ - zOffset;
+  for (let lz = 0; lz < physicalSize; lz++) {
+    // Map local 0..65 to global -1..64 relative to brick start
+    const globalZ = startZ + lz - 1;
+    for (let ly = 0; ly < physicalSize; ly++) {
+      const globalY = startY + ly - 1;
+      for (let lx = 0; lx < physicalSize; lx++) {
+        const globalX = startX + lx - 1;
 
-    for (let y = 0; y < brickSize; y++) {
-      const globalY = startY + y;
+        // Clamp to volume edges for border voxels
+        const cx = Math.max(0, Math.min(w - 1, globalX));
+        const cy = Math.max(0, Math.min(h - 1, globalY));
+        const cz = Math.max(0, Math.min(d - 1, globalZ));
 
-      for (let x = 0; x < brickSize; x++) {
-        const globalX = startX + x;
-
-        let value = 0;
-        if (globalX < w && globalY < h && globalZ < d && localZ >= 0 && localZ * sliceSize < sliceData.length) {
-          value = sliceData[globalX + globalY * w + localZ * sliceSize]!;
-        }
-        brick[x + y * brickSize + z * brickSize * brickSize] = value;
+        // localZ is relative to the buffer start, not the requested start
+        const localZ = cz - zBufferStart;
+        const sliceSize = w * h;
+        brick[lx + ly * physicalSize + lz * physicalSize * physicalSize] =
+          sliceData[cx + cy * w + localZ * sliceSize]!;
       }
     }
   }
-
   return brick;
 }
 
@@ -279,6 +323,7 @@ function downsampleVolumeOptimized(
     return null;
   };
 
+  const physicalSize = brickSize + 2;
   const sampleInput = (gx: number, gy: number, gz: number): number => {
     if (gx >= w || gy >= h || gz >= d) return 0;
     const bx = Math.floor(gx / brickSize);
@@ -286,14 +331,17 @@ function downsampleVolumeOptimized(
     const bz = Math.floor(gz / brickSize);
     const brick = loadBrick(bx, by, bz);
     if (!brick) return 0;
-    const lx = gx % brickSize;
-    const ly = gy % brickSize;
-    const lz = gz % brickSize;
-    return brick[lx + ly * brickSize + lz * brickSize * brickSize]!;
+    // +1 to skip border
+    const lx = (gx % brickSize) + 1;
+    const ly = (gy % brickSize) + 1;
+    const lz = (gz % brickSize) + 1;
+    return brick[lx + ly * physicalSize + lz * physicalSize * physicalSize]!;
   };
 
   let savedCount = 0;
   const totalBricks = outBricksX * outBricksY * outBricksZ;
+
+  const outPhysicalSize = brickSize + 2;
 
   for (let oz = 0; oz < outBricksZ; oz++) {
     // Clear cache between z-slabs to limit memory usage
@@ -301,33 +349,36 @@ function downsampleVolumeOptimized(
 
     for (let oy = 0; oy < outBricksY; oy++) {
       for (let ox = 0; ox < outBricksX; ox++) {
-        const outputBrick = new Uint8Array(brickSize * brickSize * brickSize);
+        const outputBrick = new Uint8Array(outPhysicalSize ** 3);
 
-        for (let z = 0; z < brickSize; z++) {
-          for (let y = 0; y < brickSize; y++) {
-            for (let x = 0; x < brickSize; x++) {
-              const outVoxelX = ox * brickSize + x;
-              const outVoxelY = oy * brickSize + y;
-              const outVoxelZ = oz * brickSize + z;
+        // Output physical brick includes 1-voxel border on each side
+        for (let lz = 0; lz < outPhysicalSize; lz++) {
+          for (let ly = 0; ly < outPhysicalSize; ly++) {
+            for (let lx = 0; lx < outPhysicalSize; lx++) {
+              // Map local 0..65 to global -1..64 relative to brick start
+              const outVoxelX = ox * brickSize + (lx - 1);
+              const outVoxelY = oy * brickSize + (ly - 1);
+              const outVoxelZ = oz * brickSize + (lz - 1);
 
               const inVoxelX = outVoxelX * 2;
               const inVoxelY = outVoxelY * 2;
               const inVoxelZ = outVoxelZ * 2;
 
-              // Average 2x2x2 block
+              // Average 2x2x2 block (sampleInput clamps out-of-bounds)
               let sum = 0;
-              let count = 0;
               for (let dz = 0; dz < 2; dz++) {
                 for (let dy = 0; dy < 2; dy++) {
                   for (let dx = 0; dx < 2; dx++) {
-                    const v = sampleInput(inVoxelX + dx, inVoxelY + dy, inVoxelZ + dz);
-                    sum += v;
-                    count++;
+                    sum += sampleInput(
+                      Math.max(0, Math.min(w - 1, inVoxelX + dx)),
+                      Math.max(0, Math.min(h - 1, inVoxelY + dy)),
+                      Math.max(0, Math.min(d - 1, inVoxelZ + dz))
+                    );
                   }
                 }
               }
 
-              outputBrick[x + y * brickSize + z * brickSize * brickSize] = Math.round(sum / count);
+              outputBrick[lx + ly * outPhysicalSize + lz * outPhysicalSize * outPhysicalSize] = Math.round(sum / 8);
             }
           }
         }
@@ -344,7 +395,7 @@ function downsampleVolumeOptimized(
   return newDims;
 }
 
-function decompose(config: Config): void {
+function decompose(config: Config): { outputDir: string; lodInfo: { lod: number; dimensions: [number, number, number]; bricks: [number, number, number]; brickCount: number }[]; brickSize: number } {
   const { inputPath, outputDir, dimensions, voxelSpacing, headerSize, brickSize, maxLod, bitDepth } = config;
 
   // Create output directory
@@ -391,16 +442,22 @@ function decompose(config: Config): void {
   });
 
   // Process bricks z-slab by z-slab to limit memory usage
+  // Need to read extra slices for border (1 before, 1 after = physicalSize total)
+  const physicalSize = brickSize + 2; // 66 for border
   let savedCount = 0;
   for (let bz = 0; bz < bricksZ; bz++) {
-    // Read z-slices for this brick z-level
-    const zStart = bz * brickSize;
-    const zCount = Math.min(brickSize, d - zStart);
+    // Read z-slices for this brick z-level, including border slices
+    // We need slices from (bz * brickSize - 1) to (bz * brickSize + brickSize)
+    const zStartRaw = bz * brickSize - 1;
+    const zStart = Math.max(0, zStartRaw);
+    const zEndRaw = bz * brickSize + brickSize + 1; // +1 for the far border
+    const zEnd = Math.min(d, zEndRaw);
+    const zCount = zEnd - zStart;
     const sliceData = readZSlice(fd, headerSize, dimensions, zStart, zCount, bitDepth, globalRange);
 
     for (let by = 0; by < bricksY; by++) {
       for (let bx = 0; bx < bricksX; bx++) {
-        const brick = extractBrickFromSlices(sliceData, dimensions, zStart, bx, by, bz, brickSize);
+        const brick = extractBrickFromSlicesWithBorder(sliceData, dimensions, zStart, zStartRaw, bx, by, bz, brickSize);
         const brickPath = path.join(lod0Dir, `brick-${bx}-${by}-${bz}.raw`);
         fs.writeFileSync(brickPath, brick);
         savedCount++;
@@ -469,6 +526,139 @@ function decompose(config: Config): void {
   }
   console.log(`Total bricks: ${totalFiles}`);
   console.log(`Total size: ${(totalSize / 1024 / 1024).toFixed(1)} MB`);
+
+  // Return output dir and lodInfo for pack step
+  return { outputDir, lodInfo, brickSize };
+}
+
+/**
+ * Pack brick files into binary sharded format
+ */
+function packVolume(outputDir: string, lodInfo: { lod: number; bricks: [number, number, number] }[], brickSize: number): void {
+  const physicalSize = brickSize + 2;
+  const brickBytes = physicalSize ** 3;
+
+  console.log('\n=== Packing into binary sharded format ===');
+
+  for (const level of lodInfo) {
+    const lod = level.lod;
+    const [nx, ny, nz] = level.bricks;
+    const totalBricks = nx * ny * nz;
+
+    console.log(`\nPacking LOD ${lod}: ${nx}x${ny}x${nz} = ${totalBricks} bricks`);
+
+    const lodInputDir = path.join(outputDir, `lod${lod}`);
+    const binPath = path.join(outputDir, `lod${lod}.bin`);
+    const indexPath = path.join(outputDir, `lod${lod}_index.json`);
+
+    const fd = fs.openSync(binPath, 'w');
+
+    const index = {
+      lod,
+      brickSize,
+      physicalSize,
+      bricks: level.bricks,
+      totalBricks,
+      totalBytes: 0,
+      entries: {} as Record<string, { offset: number; size: number; min: number; max: number; avg: number }>,
+    };
+
+    let offset = 0;
+    let processed = 0;
+
+    for (let z = 0; z < nz; z++) {
+      for (let y = 0; y < ny; y++) {
+        for (let x = 0; x < nx; x++) {
+          const brickPath = path.join(lodInputDir, `brick-${x}-${y}-${z}.raw`);
+
+          if (!fs.existsSync(brickPath)) {
+            console.warn(`  Warning: Missing brick ${x}-${y}-${z}`);
+            continue;
+          }
+
+          const data = new Uint8Array(fs.readFileSync(brickPath));
+
+          // Calculate stats for the 64³ logical core
+          const logicalSize = physicalSize - 2;
+          let min = 255, max = 0, sum = 0, count = 0;
+          for (let lz = 1; lz <= logicalSize; lz++) {
+            for (let ly = 1; ly <= logicalSize; ly++) {
+              for (let lx = 1; lx <= logicalSize; lx++) {
+                const idx = lx + ly * physicalSize + lz * physicalSize * physicalSize;
+                const val = data[idx]!;
+                if (val < min) min = val;
+                if (val > max) max = val;
+                sum += val;
+                count++;
+              }
+            }
+          }
+          const avg = Math.round(sum / count);
+
+          // Write to bin file
+          fs.writeSync(fd, data, 0, data.length, offset);
+
+          // Record in index
+          index.entries[`${x}/${y}/${z}`] = { offset, size: brickBytes, min, max, avg };
+
+          offset += brickBytes;
+          processed++;
+
+          if (processed % 100 === 0 || processed === totalBricks) {
+            process.stdout.write(`\r  Packed ${processed}/${totalBricks} bricks`);
+          }
+        }
+      }
+    }
+
+    fs.closeSync(fd);
+    index.totalBytes = offset;
+
+    fs.writeFileSync(indexPath, JSON.stringify(index, null, 2));
+    console.log(`\n  Output: ${binPath} (${(offset / 1024 / 1024).toFixed(1)} MB)`);
+
+    // Remove individual brick files
+    for (let z = 0; z < nz; z++) {
+      for (let y = 0; y < ny; y++) {
+        for (let x = 0; x < nx; x++) {
+          const brickPath = path.join(lodInputDir, `brick-${x}-${y}-${z}.raw`);
+          if (fs.existsSync(brickPath)) {
+            fs.unlinkSync(brickPath);
+          }
+        }
+      }
+    }
+    fs.rmdirSync(lodInputDir);
+  }
+
+  // Remove brick.json and write volume.json
+  const brickJsonPath = path.join(outputDir, 'brick.json');
+  const brickJson = JSON.parse(fs.readFileSync(brickJsonPath, 'utf-8'));
+
+  const volumeJson = {
+    name: brickJson.name,
+    originalDimensions: brickJson.originalDimensions,
+    voxelSpacing: brickJson.voxelSpacing || [1, 1, 1],
+    brickSize: brickJson.brickSize,
+    physicalSize,
+    maxLod: brickJson.maxLod,
+    levels: brickJson.levels.map((l: { lod: number; dimensions: number[]; bricks: number[]; brickCount: number }) => ({
+      lod: l.lod,
+      dimensions: l.dimensions,
+      bricks: l.bricks,
+      brickCount: l.brickCount,
+      binFile: `lod${l.lod}.bin`,
+      indexFile: `lod${l.lod}_index.json`,
+    })),
+    format: brickJson.format,
+    packed: true,
+    createdAt: new Date().toISOString(),
+  };
+
+  fs.writeFileSync(path.join(outputDir, 'volume.json'), JSON.stringify(volumeJson, null, 2));
+  fs.unlinkSync(brickJsonPath);
+
+  console.log('\nPacking complete. Individual brick files removed.');
 }
 
 // Main
@@ -482,5 +672,10 @@ console.log(`  Header size: ${config.headerSize}`);
 console.log(`  Brick size: ${config.brickSize}`);
 console.log(`  Max LOD: ${config.maxLod}`);
 console.log(`  Bit depth: ${config.bitDepth}`);
+console.log(`  Pack: ${config.pack}`);
 
-decompose(config);
+const result = decompose(config);
+
+if (config.pack) {
+  packVolume(result.outputDir, result.lodInfo, result.brickSize);
+}

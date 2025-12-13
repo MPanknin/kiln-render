@@ -1,7 +1,9 @@
 /**
  * Atlas Allocator - manages free/used brick slots in the atlas texture
  *
- * Simple free-list allocator. When full, caller must evict before allocating.
+ * Uses LRU (Least Recently Used) eviction when the atlas is full.
+ * Each slot tracks the brick metadata so we can properly clear the
+ * indirection table when evicting.
  */
 
 import { GRID_SIZE } from './config.js';
@@ -12,12 +14,32 @@ export interface AtlasSlot {
   z: number;
 }
 
+export interface BrickMetadata {
+  lod: number;
+  bx: number;
+  by: number;
+  bz: number;
+  key: string; // For quick lookup in loadedBricks map
+}
+
+export interface AllocationResult {
+  slot: AtlasSlot;
+  slotIndex: number;
+  evicted: BrickMetadata | null;
+}
+
 export class AtlasAllocator {
   // Track which slots are used (flat index -> boolean)
   private used: Set<number>;
 
   // Free list for O(1) allocation
   private freeList: number[];
+
+  // LRU tracking: frame number when each slot was last used
+  private lastUsedFrame: Uint32Array;
+
+  // Reverse mapping: slot index -> brick metadata (for eviction)
+  private slotMetadata: (BrickMetadata | null)[];
 
   // Total slots available (8x8x8 = 512)
   readonly totalSlots: number;
@@ -26,6 +48,8 @@ export class AtlasAllocator {
     this.totalSlots = GRID_SIZE * GRID_SIZE * GRID_SIZE;
     this.used = new Set();
     this.freeList = [];
+    this.lastUsedFrame = new Uint32Array(this.totalSlots);
+    this.slotMetadata = new Array(this.totalSlots).fill(null);
 
     // Initialize free list with all slots
     for (let i = this.totalSlots - 1; i >= 0; i--) {
@@ -34,22 +58,94 @@ export class AtlasAllocator {
   }
 
   /**
-   * Allocate a free slot in the atlas
-   * Returns null if atlas is full
+   * Touch a slot to mark it as recently used
+   * Call this for every brick in the current desired set
    */
-  allocate(): AtlasSlot | null {
-    if (this.freeList.length === 0) {
-      return null;
-    }
-
-    const idx = this.freeList.pop()!;
-    this.used.add(idx);
-
-    return this.indexToSlot(idx);
+  touch(slotIndex: number, frame: number): void {
+    this.lastUsedFrame[slotIndex] = frame;
   }
 
   /**
-   * Free a slot back to the pool
+   * Touch a slot by its coordinates
+   */
+  touchSlot(slot: AtlasSlot, frame: number): void {
+    this.touch(this.slotToIndex(slot), frame);
+  }
+
+  /**
+   * Set metadata for a slot (call after loading a brick)
+   */
+  setMetadata(slotIndex: number, meta: BrickMetadata): void {
+    this.slotMetadata[slotIndex] = meta;
+  }
+
+  /**
+   * Get metadata for a slot
+   */
+  getMetadata(slotIndex: number): BrickMetadata | null {
+    return this.slotMetadata[slotIndex];
+  }
+
+  /**
+   * Allocate a slot in the atlas
+   * If atlas is full, evicts the least recently used slot
+   *
+   * @param frame - Current frame number for LRU tracking
+   * @returns AllocationResult with slot and any evicted brick metadata
+   */
+  allocate(frame: number = 0): AllocationResult | null {
+    // Try free list first
+    if (this.freeList.length > 0) {
+      const idx = this.freeList.pop()!;
+      this.used.add(idx);
+      this.lastUsedFrame[idx] = frame;
+
+      return {
+        slot: this.indexToSlot(idx),
+        slotIndex: idx,
+        evicted: null
+      };
+    }
+
+    // Atlas is full - find LRU slot to evict
+    const victim = this.findLRUSlot();
+    if (victim === -1) {
+      // This shouldn't happen if atlas has slots
+      return null;
+    }
+
+    const evicted = this.slotMetadata[victim];
+
+    // Update tracking for the reused slot
+    this.lastUsedFrame[victim] = frame;
+    this.slotMetadata[victim] = null;
+
+    return {
+      slot: this.indexToSlot(victim),
+      slotIndex: victim,
+      evicted
+    };
+  }
+
+  /**
+   * Find the least recently used slot
+   */
+  private findLRUSlot(): number {
+    let oldestFrame = Infinity;
+    let victimIdx = -1;
+
+    for (let i = 0; i < this.totalSlots; i++) {
+      if (this.used.has(i) && this.lastUsedFrame[i] < oldestFrame) {
+        oldestFrame = this.lastUsedFrame[i];
+        victimIdx = i;
+      }
+    }
+
+    return victimIdx;
+  }
+
+  /**
+   * Free a slot back to the pool (explicit free, not LRU eviction)
    */
   free(slot: AtlasSlot): void {
     const idx = this.slotToIndex(slot);
@@ -60,6 +156,8 @@ export class AtlasAllocator {
     }
 
     this.used.delete(idx);
+    this.slotMetadata[idx] = null;
+    this.lastUsedFrame[idx] = 0;
     this.freeList.push(idx);
   }
 
@@ -97,6 +195,9 @@ export class AtlasAllocator {
   reset(): void {
     this.used.clear();
     this.freeList = [];
+    this.lastUsedFrame.fill(0);
+    this.slotMetadata.fill(null);
+
     for (let i = this.totalSlots - 1; i >= 0; i--) {
       this.freeList.push(i);
     }
@@ -109,11 +210,17 @@ export class AtlasAllocator {
     return Array.from(this.used).map(idx => this.indexToSlot(idx));
   }
 
-  private slotToIndex(slot: AtlasSlot): number {
+  /**
+   * Convert slot coordinates to flat index
+   */
+  slotToIndex(slot: AtlasSlot): number {
     return slot.x + slot.y * GRID_SIZE + slot.z * GRID_SIZE * GRID_SIZE;
   }
 
-  private indexToSlot(idx: number): AtlasSlot {
+  /**
+   * Convert flat index to slot coordinates
+   */
+  indexToSlot(idx: number): AtlasSlot {
     const x = idx % GRID_SIZE;
     const y = Math.floor(idx / GRID_SIZE) % GRID_SIZE;
     const z = Math.floor(idx / (GRID_SIZE * GRID_SIZE));

@@ -100,16 +100,19 @@ async function main() {
   new ResizeObserver(resize).observe(canvas);
   resize();
 
-  // Track loaded bricks
-  const loadedBricks = new Map<string, AtlasSlot>();
+  // Track loaded bricks: key -> { slot, slotIndex }
+  const loadedBricks = new Map<string, { slot: AtlasSlot; slotIndex: number }>();
+
+  // Frame counter for LRU tracking
+  let frameCount = 0;
 
   /**
    * Clear all loaded bricks - empties atlas and resets indirection
    */
   function clearLod(): void {
     // Free all atlas slots
-    for (const slot of loadedBricks.values()) {
-      renderer.allocator.free(slot);
+    for (const entry of loadedBricks.values()) {
+      renderer.allocator.free(entry.slot);
     }
     loadedBricks.clear();
 
@@ -205,50 +208,65 @@ async function main() {
     console.log(`Loading LOD ${lod}: ${bricks.length} bricks available, sorted by distance`);
 
     let loaded = 0;
+    let evicted = 0;
     for (const brick of bricks) {
-      // Check if atlas is full
-      if (renderer.allocator.isFull) {
-        console.log(`Atlas full after ${loaded} bricks`);
+      const key = `lod${lod}:${brick.bz}/${brick.by}/${brick.bx}`;
+
+      // Skip if already loaded
+      if (loadedBricks.has(key)) {
+        continue;
+      }
+
+      // Allocate slot (will evict LRU if full)
+      const result = renderer.allocator.allocate(frameCount);
+      if (!result) {
+        console.log(`Allocation failed after ${loaded} bricks`);
         break;
       }
 
-      // Allocate slot
-      const slot = renderer.allocator.allocate();
-      if (!slot) {
-        console.log(`Allocation failed after ${loaded} bricks`);
-        break;
+      // Handle eviction: clear old brick from indirection table
+      if (result.evicted) {
+        renderer.indirection.clearBrick(
+          result.evicted.bx, result.evicted.by, result.evicted.bz,
+          result.evicted.lod
+        );
+        loadedBricks.delete(result.evicted.key);
+        evicted++;
       }
 
       // Load brick data
       const data = await brickLoader.loadBrick(lod, brick.bx, brick.by, brick.bz);
       if (!data) {
-        renderer.allocator.free(slot);
+        renderer.allocator.free(result.slot);
         continue;
       }
 
       // Upload to atlas (use physical brick size for positioning)
       const offset: [number, number, number] = [
-        slot.x * PHYSICAL_BRICK_SIZE,
-        slot.y * PHYSICAL_BRICK_SIZE,
-        slot.z * PHYSICAL_BRICK_SIZE
+        result.slot.x * PHYSICAL_BRICK_SIZE,
+        result.slot.y * PHYSICAL_BRICK_SIZE,
+        result.slot.z * PHYSICAL_BRICK_SIZE
       ];
       writeToCanvas(device, renderer.canvas, data, [PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE], offset);
 
       // Update indirection - setBrick handles multi-cell fill for coarse LODs
-      renderer.indirection.setBrick(brick.bx, brick.by, brick.bz, slot.x, slot.y, slot.z, lod);
+      renderer.indirection.setBrick(brick.bx, brick.by, brick.bz, result.slot.x, result.slot.y, result.slot.z, lod);
+
+      // Set metadata for future eviction
+      renderer.allocator.setMetadata(result.slotIndex, { lod, bx: brick.bx, by: brick.by, bz: brick.bz, key });
 
       // Track
-      const key = `lod${lod}:${brick.bz}/${brick.by}/${brick.bx}`;
-      loadedBricks.set(key, slot);
+      loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
       loaded++;
     }
 
-    console.log(`Loaded ${loaded} bricks at LOD ${lod}`);
+    console.log(`Loaded ${loaded} bricks at LOD ${lod} (evicted ${evicted})`);
     console.log(`Atlas: ${renderer.allocator.usedCount}/${renderer.allocator.totalSlots} slots used`);
   }
 
   // Render loop
   function frame() {
+    frameCount++;
     const view = context.getCurrentTexture().createView();
     renderer.render(view, camera);
     requestAnimationFrame(frame);
@@ -289,6 +307,13 @@ async function main() {
 
   (window as any).loadSingleBrick = async (lod: number, bx: number, by: number, bz: number) => {
     console.log(`Loading brick: LOD ${lod} at (${bx},${by},${bz})`);
+    const key = `lod${lod}:${bz}/${by}/${bx}`;
+
+    // Already loaded?
+    if (loadedBricks.has(key)) {
+      console.log('Brick already loaded');
+      return;
+    }
 
     try {
       const data = await brickLoader.loadBrick(lod, bx, by, bz);
@@ -297,24 +322,41 @@ async function main() {
         return;
       }
 
-      const slot = renderer.allocator.allocate();
-      if (!slot) {
-        console.error('No atlas slots available!');
+      // Allocate with LRU eviction
+      const result = renderer.allocator.allocate(frameCount);
+      if (!result) {
+        console.error('Allocation failed!');
         return;
+      }
+
+      // Handle eviction
+      if (result.evicted) {
+        console.log(`Evicted: LOD ${result.evicted.lod} brick (${result.evicted.bx},${result.evicted.by},${result.evicted.bz})`);
+        renderer.indirection.clearBrick(
+          result.evicted.bx, result.evicted.by, result.evicted.bz,
+          result.evicted.lod
+        );
+        loadedBricks.delete(result.evicted.key);
       }
 
       // Upload to atlas
       const offset: [number, number, number] = [
-        slot.x * PHYSICAL_BRICK_SIZE,
-        slot.y * PHYSICAL_BRICK_SIZE,
-        slot.z * PHYSICAL_BRICK_SIZE
+        result.slot.x * PHYSICAL_BRICK_SIZE,
+        result.slot.y * PHYSICAL_BRICK_SIZE,
+        result.slot.z * PHYSICAL_BRICK_SIZE
       ];
       writeToCanvas(device, renderer.canvas, data, [PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE], offset);
 
       // Update indirection table - this now fills multiple cells for coarse LODs
-      renderer.indirection.setBrick(bx, by, bz, slot.x, slot.y, slot.z, lod);
+      renderer.indirection.setBrick(bx, by, bz, result.slot.x, result.slot.y, result.slot.z, lod);
 
-      console.log(`Loaded LOD ${lod} brick (${bx},${by},${bz}) into atlas slot (${slot.x},${slot.y},${slot.z})`);
+      // Set metadata for future eviction
+      renderer.allocator.setMetadata(result.slotIndex, { lod, bx, by, bz, key });
+
+      // Track
+      loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
+
+      console.log(`Loaded LOD ${lod} brick (${bx},${by},${bz}) into atlas slot (${result.slot.x},${result.slot.y},${result.slot.z})`);
       console.log(`This brick covers ${Math.pow(2, lod)}³ = ${Math.pow(Math.pow(2, lod), 3)} cells in the indirection table`);
     } catch (e) {
       console.error('Failed to load brick:', e);
@@ -340,13 +382,18 @@ async function main() {
   };
 
   // LOD selection test - coarse-to-fine traversal based on distance + frustum
-  (window as any).testLodSelection = async () => {
-    console.log('=== LOD Selection Test (Coarse-to-Fine) ===');
+  // Now with differential updates - doesn't clear, just loads what's needed and evicts what's not
+  (window as any).testLodSelection = async (clear: boolean = false) => {
+    console.log('=== LOD Selection Test (Coarse-to-Fine with LRU) ===');
     console.log('Switch to LOD render mode to see the results clearly');
 
-    // Clear everything
-    clearLod();
-    loadedBricks.clear();
+    // Optionally clear (default: differential update)
+    if (clear) {
+      clearLod();
+      console.log('Cleared atlas for fresh start');
+    } else {
+      console.log('Differential update mode - keeping existing bricks');
+    }
 
     // Get the actual LOD range from metadata
     const maxLod = Math.max(...metadata.levels.map(l => l.lod));
@@ -425,31 +472,60 @@ async function main() {
       return Math.sqrt(dx * dx + dy * dy + dz * dz);
     };
 
-    // Load a single brick
-    const loadBrick = async (bx: number, by: number, bz: number, lod: number): Promise<boolean> => {
-      const data = await brickLoader.loadBrick(lod, bx, by, bz);
-      if (!data) return false;
+    // Stats for eviction
+    let totalEvicted = 0;
 
-      const slot = renderer.allocator.allocate();
-      if (!slot) {
-        console.warn('Atlas full!');
+    // Load a single brick (with LRU eviction support)
+    const loadBrickWithEviction = async (bx: number, by: number, bz: number, lod: number): Promise<boolean> => {
+      const key = `lod${lod}:${bz}/${by}/${bx}`;
+
+      // Already loaded? Just touch it
+      if (loadedBricks.has(key)) {
+        const entry = loadedBricks.get(key)!;
+        renderer.allocator.touch(entry.slotIndex, frameCount);
+        return true;
+      }
+
+      // Allocate slot (will evict LRU if full)
+      const result = renderer.allocator.allocate(frameCount);
+      if (!result) {
+        console.warn('Allocation failed!');
+        return false;
+      }
+
+      // Handle eviction: clear old brick from indirection table
+      if (result.evicted) {
+        renderer.indirection.clearBrick(
+          result.evicted.bx, result.evicted.by, result.evicted.bz,
+          result.evicted.lod
+        );
+        loadedBricks.delete(result.evicted.key);
+        totalEvicted++;
+      }
+
+      // Load brick data
+      const data = await brickLoader.loadBrick(lod, bx, by, bz);
+      if (!data) {
+        renderer.allocator.free(result.slot);
         return false;
       }
 
       // Upload to atlas
       const offset: [number, number, number] = [
-        slot.x * PHYSICAL_BRICK_SIZE,
-        slot.y * PHYSICAL_BRICK_SIZE,
-        slot.z * PHYSICAL_BRICK_SIZE
+        result.slot.x * PHYSICAL_BRICK_SIZE,
+        result.slot.y * PHYSICAL_BRICK_SIZE,
+        result.slot.z * PHYSICAL_BRICK_SIZE
       ];
       writeToCanvas(device, renderer.canvas, data, [PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE], offset);
 
       // Update indirection
-      renderer.indirection.setBrick(bx, by, bz, slot.x, slot.y, slot.z, lod);
+      renderer.indirection.setBrick(bx, by, bz, result.slot.x, result.slot.y, result.slot.z, lod);
+
+      // Set metadata for future eviction
+      renderer.allocator.setMetadata(result.slotIndex, { lod, bx, by, bz, key });
 
       // Track
-      const key = `lod${lod}:${bz}/${by}/${bx}`;
-      loadedBricks.set(key, slot);
+      loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
 
       return true;
     };
@@ -494,8 +570,8 @@ async function main() {
           }
         }
       } else {
-        // Load this brick
-        if (await loadBrick(bx, by, bz, lod)) {
+        // Load this brick (with eviction support)
+        if (await loadBrickWithEviction(bx, by, bz, lod)) {
           totalLoaded++;
           lodCounts[lod] = (lodCounts[lod] || 0) + 1;
         }
@@ -519,7 +595,7 @@ async function main() {
     }
 
     console.log('=== Results ===');
-    console.log(`Total loaded: ${totalLoaded} bricks`);
+    console.log(`Total loaded: ${totalLoaded} bricks (${totalEvicted} evicted)`);
     console.log(`Total culled: ${totalCulled} bricks (frustum)`);
     const lodSummary = Object.entries(lodCounts).map(([lod, count]) => `LOD${lod}=${count}`).join(', ');
     console.log(`By LOD: ${lodSummary}`);

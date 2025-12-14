@@ -14,7 +14,9 @@ import { VolumeUI } from './ui.js';
 
 // Volume source configuration
 // const VOLUME_SOURCE = '/volumes/bricks/stagbeetle';
-const VOLUME_SOURCE = '/datasets/chameleon';
+// const VOLUME_SOURCE = '/datasets/chameleon';
+// const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/stagbeetle-binary';
+const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-binary';
 
 async function main() {
   const canvas = document.querySelector('canvas');
@@ -209,11 +211,19 @@ async function main() {
 
     let loaded = 0;
     let evicted = 0;
+    let skippedEmpty = 0;
     for (const brick of bricks) {
       const key = `lod${lod}:${brick.bz}/${brick.by}/${brick.bx}`;
 
       // Skip if already loaded
       if (loadedBricks.has(key)) {
+        continue;
+      }
+
+      // Skip empty bricks (min=0, max=0, avg=0) - mark as empty in indirection
+      if (await brickLoader.isBrickEmpty(lod, brick.bx, brick.by, brick.bz)) {
+        renderer.indirection.setEmpty(brick.bx, brick.by, brick.bz, lod);
+        skippedEmpty++;
         continue;
       }
 
@@ -260,7 +270,7 @@ async function main() {
       loaded++;
     }
 
-    console.log(`Loaded ${loaded} bricks at LOD ${lod} (evicted ${evicted})`);
+    console.log(`Loaded ${loaded} bricks at LOD ${lod} (evicted ${evicted}, skipped ${skippedEmpty} empty)`);
     console.log(`Atlas: ${renderer.allocator.usedCount}/${renderer.allocator.totalSlots} slots used`);
   }
 
@@ -474,6 +484,7 @@ async function main() {
 
     // Stats for eviction
     let totalEvicted = 0;
+    let totalSkippedEmpty = 0;
 
     // Load a single brick (with LRU eviction support)
     const loadBrickWithEviction = async (bx: number, by: number, bz: number, lod: number): Promise<boolean> => {
@@ -484,6 +495,14 @@ async function main() {
         const entry = loadedBricks.get(key)!;
         renderer.allocator.touch(entry.slotIndex, frameCount);
         return true;
+      }
+
+      // Skip empty bricks (min=0, max=0, avg=0) - mark as empty in indirection
+      const isEmpty = await brickLoader.isBrickEmpty(lod, bx, by, bz);
+      if (isEmpty) {
+        renderer.indirection.setEmpty(bx, by, bz, lod);
+        totalSkippedEmpty++;
+        return true; // Consider it "loaded" - nothing to display
       }
 
       // Allocate slot (will evict LRU if full)
@@ -595,7 +614,7 @@ async function main() {
     }
 
     console.log('=== Results ===');
-    console.log(`Total loaded: ${totalLoaded} bricks (${totalEvicted} evicted)`);
+    console.log(`Total loaded: ${totalLoaded} bricks (${totalEvicted} evicted, ${totalSkippedEmpty} empty skipped)`);
     console.log(`Total culled: ${totalCulled} bricks (frustum)`);
     const lodSummary = Object.entries(lodCounts).map(([lod, count]) => `LOD${lod}=${count}`).join(', ');
     console.log(`By LOD: ${lodSummary}`);

@@ -122,6 +122,54 @@ export class IndirectionTable {
   }
 
   /**
+   * Mark a brick region as empty (known to have no data)
+   *
+   * Unlike clearBrick (which reverts to unloaded), this marks cells as
+   * "loaded but empty" so coarser LOD data doesn't show through.
+   * Uses a special marker: LOD 255 means "empty brick, don't render".
+   *
+   * @param virtualX/Y/Z - Virtual brick position at this LOD level
+   * @param lod - LOD level of the empty brick
+   */
+  setEmpty(
+    virtualX: number, virtualY: number, virtualZ: number,
+    lod: number = 0
+  ) {
+    const scale = 1 << lod;
+    const baseX = virtualX * scale;
+    const baseY = virtualY * scale;
+    const baseZ = virtualZ * scale;
+
+    for (let dz = 0; dz < scale; dz++) {
+      for (let dy = 0; dy < scale; dy++) {
+        for (let dx = 0; dx < scale; dx++) {
+          const x = baseX + dx;
+          const y = baseY + dy;
+          const z = baseZ + dz;
+
+          if (x >= this.gridX || y >= this.gridY || z >= this.gridZ) continue;
+
+          const idx = (x + y * this.gridX + z * this.gridX * this.gridY) * 4;
+
+          // Only overwrite if this LOD is finer or equal (same logic as setBrick)
+          const existingLod = this.data[idx + 3];
+          if (existingLod > 0 && existingLod < 255 && existingLod <= lod + 1) {
+            continue;
+          }
+
+          // Mark as empty: atlas coords don't matter, LOD = 255 means empty
+          this.data[idx + 0] = 0;
+          this.data[idx + 1] = 0;
+          this.data[idx + 2] = 0;
+          this.data[idx + 3] = 255; // Special marker for "empty"
+        }
+      }
+    }
+
+    this.updateRegionGPU(baseX, baseY, baseZ, scale);
+  }
+
+  /**
    * Clear a brick region (mark as not loaded)
    *
    * For LOD 0, clears a single cell.

@@ -146,7 +146,8 @@ fn composeSample(density: f32, stepSize: f32, maxDim: f32, color: ptr<function, 
 fn sampleWithIndirection(voxelPos: vec3f) -> f32 {
     let brickIndex = floor(voxelPos / LOGICAL_BRICK_SIZE);
     let indirection = lookupIndirection(brickIndex);
-    if (indirection.w == 0u) { return 0.0; }
+    // w=0: not loaded, w=255: known empty brick - both return 0
+    if (indirection.w == 0u || indirection.w == 255u) { return 0.0; }
     let lodScale = getLodScale(indirection);
     return sampleAtlas(voxelPos, indirection, lodScale);
 }
@@ -218,7 +219,8 @@ fn setupBrick(
     info.tEnd = min(tBrick.y, tEnd);
 
     info.indirection = lookupIndirection(brickIndex);
-    info.valid = info.indirection.w > 0u;  // w=0 means not loaded
+    // w=0 means not loaded, w=255 means known empty - both are invalid
+    info.valid = info.indirection.w > 0u && info.indirection.w < 255u;
 
     if (info.valid) {
         info.lodScale = getLodScale(info.indirection);

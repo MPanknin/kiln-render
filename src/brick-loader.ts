@@ -179,6 +179,19 @@ export class BrickLoader {
   }
 
   /**
+   * Check if a brick is empty or below threshold
+   * Returns true if brick has max intensity below threshold
+   * Returns false if stats unavailable (legacy format) - assume non-empty
+   *
+   * TODO: Make threshold dynamic based on dataset intensity distribution
+   */
+  async isBrickEmpty(lod: number, bx: number, by: number, bz: number, maxThreshold: number = 1): Promise<boolean> {
+    const stats = await this.getBrickStats(lod, bx, by, bz);
+    if (!stats) return false; // Unknown = assume non-empty
+    return stats.max < maxThreshold;
+  }
+
+  /**
    * Load a single brick using range request (packed) or individual file (legacy)
    */
   async loadBrick(lod: number, bx: number, by: number, bz: number): Promise<Uint8Array | null> {

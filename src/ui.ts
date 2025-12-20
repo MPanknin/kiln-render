@@ -31,6 +31,8 @@ export class VolumeUI {
     tfPreset: 'coolwarm' as TFPreset,
     upAxis: 'y' as UpAxis,
     useIndirection: true,
+    showWireframe: true,
+    showAxis: true,
   };
 
   // Folder references for visibility toggling
@@ -51,6 +53,8 @@ export class VolumeUI {
     // Sync initial values from camera/renderer
     this.params.upAxis = camera.getUpAxis();
     this.params.useIndirection = renderer.useIndirection;
+    this.params.showWireframe = renderer.showWireframe;
+    this.params.showAxis = renderer.showAxis;
 
     this.pane = new Pane({
       title: 'Volume Controls',
@@ -101,6 +105,20 @@ export class VolumeUI {
       label: 'Indirection',
     }).on('change', (ev) => {
       this.renderer.useIndirection = ev.value;
+    });
+
+    // Wireframe toggle
+    this.pane.addBinding(this.params, 'showWireframe', {
+      label: 'Wireframe',
+    }).on('change', (ev) => {
+      this.renderer.showWireframe = ev.value;
+    });
+
+    // Axis toggle
+    this.pane.addBinding(this.params, 'showAxis', {
+      label: 'Axis',
+    }).on('change', (ev) => {
+      this.renderer.showAxis = ev.value;
     });
 
     // Isosurface folder

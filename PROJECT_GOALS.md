@@ -22,19 +22,26 @@ A production-quality, brick-based WebGPU volume renderer for out-of-core renderi
 ```
 ┌─────────────────────────────────────────────┐
 │  Renderer (core)                            │
-│  - Atlas texture                            │
-│  - Indirection table                        │
-│  - loadBrick() / unloadBrick() API          │
+│  - Atlas texture (512³)                     │
+│  - Indirection table with multi-LOD         │
+│  - LRU eviction                             │
+│  - Multiple render modes                    │
 └─────────────────────────────────────────────┘
                     ▲
-                    │ simple data-in API
                     │
 ┌─────────────────────────────────────────────┐
-│  External Systems (user responsibility)     │
-│  - BrickManager (LRU, eviction)             │
-│  - TileFetcher (network/disk loading)       │
-│  - ViewManager (LOD, priority)              │
-│  - Dataset abstraction                      │
+│  BrickLoader                                │
+│  - Binary sharded format + Range requests   │
+│  - Brick stats for empty detection          │
+│  - In-memory cache                          │
+└─────────────────────────────────────────────┘
+                    ▲
+                    │
+┌─────────────────────────────────────────────┐
+│  LOD Selection                              │
+│  - Distance-based coarse-to-fine traversal  │
+│  - Frustum culling                          │
+│  - Differential updates                     │
 └─────────────────────────────────────────────┘
 ```
 
@@ -43,41 +50,45 @@ A production-quality, brick-based WebGPU volume renderer for out-of-core renderi
 ### Phase 1: Core Renderer ✓
 - [x] Proxy box geometry raycasting
 - [x] Volume atlas (512³)
-- [x] Indirection table (8x8x8)
-- [x] Atlas allocator
+- [x] Indirection table (multi-LOD)
+- [x] Atlas allocator with LRU eviction
 - [x] Basic transfer function
 - [x] Unit tests
 
-### Phase 2: Rendering Quality
-- [ ] Configurable step count
-- [ ] Runtime transfer function updates
-- [ ] Maximum Intensity Projection (MIP)
-- [ ] Isosurface rendering
-- [ ] Early ray termination tuning
+### Phase 2: Rendering Quality ✓
+- [x] Transfer function presets and runtime editing
+- [x] Maximum Intensity Projection (MIP)
+- [x] Isosurface rendering with Phong shading
+- [x] LOD visualization mode
+- [x] Early ray termination
 
-### Phase 3: Streaming Infrastructure
-- [ ] BrickManager with LRU eviction
-- [ ] Async TileFetcher
-- [ ] ViewManager (frustum culling, LOD selection)
-- [ ] Priority queue for loading
+### Phase 3: Streaming Infrastructure ✓
+- [x] BrickLoader with HTTP Range requests
+- [x] Binary sharded data format
+- [x] LRU eviction when atlas is full
+- [x] Frustum culling
+- [x] Empty brick skipping
 
-### Phase 4: LOD Support
-- [ ] Multi-resolution bricks (64³, 32³, 16³)
-- [ ] LOD selection based on screen coverage
-- [ ] Fallback rendering while loading
+### Phase 4: LOD Support ✓
+- [x] Multi-resolution bricks (LOD 0-4)
+- [x] Distance-based LOD selection
+- [x] Coarse-to-fine octree traversal
+- [x] Differential updates (load only what's needed)
+- [x] Multi-slot indirection for coarse LODs
 
-### Phase 5: Production Features
-- [ ] Brick padding for seamless filtering
+### Phase 5: Production Features (IN PROGRESS)
+- [x] 66³ physical bricks (1-voxel overlap for seamless filtering)
+- [x] UI controls (Tweakpane)
+- [ ] Automatic continuous streaming during navigation
+- [ ] Dynamic empty brick threshold
 - [ ] Multiple datasets
 - [ ] Segmentation/labeling support
-- [ ] Performance profiling tools
 
 ## Non-Goals (for now)
 
 - Legacy WebGL fallback
 - Mobile-specific optimizations
-- Built-in dataset loading (users bring their own fetcher)
-- GUI/UI components (users build their own)
+- Built-in dataset conversion tools
 
 ## References
 

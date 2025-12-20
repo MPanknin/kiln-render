@@ -31,6 +31,12 @@ export class Renderer {
   // Debug: toggle indirection on/off
   useIndirection = true;
 
+  // Show wireframe box
+  showWireframe = true;
+
+  // Show axis helper
+  showAxis = true;
+
   // Rendering mode: 'fragment' (proxy box) or 'compute' (compute shader)
   renderMode: RenderMode = 'compute';
 
@@ -526,18 +532,22 @@ export class Renderer {
     pass.drawIndexed(this.indexCount);
 
     // Draw wireframe
-    pass.setPipeline(this.wireframePipeline);
-    pass.setBindGroup(0, this.wireframeBindGroup);
-    pass.setVertexBuffer(0, this.vertexBuffer);
-    pass.setIndexBuffer(this.wireframeIndexBuffer, 'uint16');
-    pass.drawIndexed(this.wireframeIndexCount);
+    if (this.showWireframe) {
+      pass.setPipeline(this.wireframePipeline);
+      pass.setBindGroup(0, this.wireframeBindGroup);
+      pass.setVertexBuffer(0, this.vertexBuffer);
+      pass.setIndexBuffer(this.wireframeIndexBuffer, 'uint16');
+      pass.drawIndexed(this.wireframeIndexCount);
+    }
 
     // Draw axis
-    this.device.queue.writeBuffer(this.axisUniformBuffer, 0, vp);
-    pass.setPipeline(this.axisPipeline);
-    pass.setBindGroup(0, this.axisBindGroup);
-    pass.setVertexBuffer(0, this.axisVertexBuffer);
-    pass.draw(6); // 6 vertices (2 per axis)
+    if (this.showAxis) {
+      this.device.queue.writeBuffer(this.axisUniformBuffer, 0, vp);
+      pass.setPipeline(this.axisPipeline);
+      pass.setBindGroup(0, this.axisBindGroup);
+      pass.setVertexBuffer(0, this.axisVertexBuffer);
+      pass.draw(6); // 6 vertices (2 per axis)
+    }
 
     pass.end();
     this.device.queue.submit([encoder.finish()]);
@@ -626,18 +636,22 @@ export class Renderer {
     });
 
     // Draw wireframe
-    overlayPass.setPipeline(this.wireframePipeline);
-    overlayPass.setBindGroup(0, this.wireframeBindGroup);
-    overlayPass.setVertexBuffer(0, this.vertexBuffer);
-    overlayPass.setIndexBuffer(this.wireframeIndexBuffer, 'uint16');
-    overlayPass.drawIndexed(this.wireframeIndexCount);
+    if (this.showWireframe) {
+      overlayPass.setPipeline(this.wireframePipeline);
+      overlayPass.setBindGroup(0, this.wireframeBindGroup);
+      overlayPass.setVertexBuffer(0, this.vertexBuffer);
+      overlayPass.setIndexBuffer(this.wireframeIndexBuffer, 'uint16');
+      overlayPass.drawIndexed(this.wireframeIndexCount);
+    }
 
     // Draw axis
-    this.device.queue.writeBuffer(this.axisUniformBuffer, 0, vp);
-    overlayPass.setPipeline(this.axisPipeline);
-    overlayPass.setBindGroup(0, this.axisBindGroup);
-    overlayPass.setVertexBuffer(0, this.axisVertexBuffer);
-    overlayPass.draw(6);
+    if (this.showAxis) {
+      this.device.queue.writeBuffer(this.axisUniformBuffer, 0, vp);
+      overlayPass.setPipeline(this.axisPipeline);
+      overlayPass.setBindGroup(0, this.axisBindGroup);
+      overlayPass.setVertexBuffer(0, this.axisVertexBuffer);
+      overlayPass.draw(6);
+    }
 
     overlayPass.end();
 

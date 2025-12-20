@@ -11,12 +11,13 @@ import { AtlasSlot } from './atlas-allocator.js';
 import { BrickLoader } from './brick-loader.js';
 import { TransferFunction } from './transfer-function.js';
 import { VolumeUI } from './ui.js';
+import { StreamingManager } from './streaming-manager.js';
 
 // Volume source configuration
 // const VOLUME_SOURCE = '/volumes/bricks/stagbeetle';
 // const VOLUME_SOURCE = '/datasets/chameleon';
-// const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/stagbeetle-binary';
-const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-binary';
+const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/stagbeetle-binary';
+// const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-binary';
 
 async function main() {
   const canvas = document.querySelector('canvas');
@@ -64,6 +65,12 @@ async function main() {
 
   // Create camera
   const camera = new Camera(canvas);
+
+  // Create streaming manager
+  const streamingManager = new StreamingManager(renderer, brickLoader, metadata, device);
+
+  // Streaming mode toggle
+  let streamingEnabled = false;
 
   /**
    * Set camera up axis
@@ -277,6 +284,12 @@ async function main() {
   // Render loop
   function frame() {
     frameCount++;
+
+    // Update streaming manager if enabled
+    if (streamingEnabled) {
+      streamingManager.update(camera, canvas);
+    }
+
     const view = context.getCurrentTexture().createView();
     renderer.render(view, camera);
     requestAnimationFrame(frame);
@@ -288,6 +301,34 @@ async function main() {
     onLoadLod: loadLod,
     onClearLod: clearLod,
   });
+
+  // Streaming control functions
+  function startStreaming(): void {
+    if (streamingEnabled) {
+      console.log('Streaming already enabled');
+      return;
+    }
+    streamingEnabled = true;
+    streamingManager.forceUpdate(camera, canvas);
+    console.log('Streaming enabled - bricks will load automatically as you navigate');
+  }
+
+  function stopStreaming(): void {
+    streamingEnabled = false;
+    console.log('Streaming disabled');
+  }
+
+  function streamingStats(): void {
+    const stats = streamingManager.getStats();
+    console.log('=== Streaming Stats ===');
+    console.log(`  Desired: ${stats.desiredCount} bricks`);
+    console.log(`  Loaded: ${stats.loadedCount} bricks`);
+    console.log(`  Pending: ${stats.pendingCount} bricks`);
+    console.log(`  Culled: ${stats.culledCount} bricks (frustum)`);
+    console.log(`  Empty: ${stats.emptyCount} bricks (skipped)`);
+    console.log(`  Evicted: ${stats.evictedCount} bricks`);
+    console.log(`  Atlas: ${stats.atlasUsage}/${stats.atlasCapacity} slots`);
+  }
 
   // Expose API
   (window as any).loadLod = loadLod;
@@ -301,6 +342,10 @@ async function main() {
   (window as any).transferFunction = transferFunction;
   (window as any).ui = ui;
   (window as any).loader = brickLoader;
+  (window as any).streamingManager = streamingManager;
+  (window as any).startStreaming = startStreaming;
+  (window as any).stopStreaming = stopStreaming;
+  (window as any).streamingStats = streamingStats;
 
   // Test helpers for multi-LOD indirection
   (window as any).testMultiLod = async () => {
@@ -630,11 +675,15 @@ async function main() {
 
   console.log('\n🎮 Controls available in UI panel (top-right)');
   console.log('Console API: loadLod(), clearLod(), setRenderMode(), setIsoValue()');
-  console.log('\n🧪 Multi-LOD test helpers:');
+  console.log('\n🔄 Streaming:');
+  console.log('  startStreaming()         - Enable continuous streaming (auto-loads as you navigate)');
+  console.log('  stopStreaming()          - Disable streaming');
+  console.log('  streamingStats()         - Print streaming statistics');
+  console.log('\n🧪 Manual test helpers:');
   console.log('  testMultiLod()           - Load LOD2, then manually add LOD0 brick');
   console.log('  loadSingleBrick(lod,x,y,z) - Load one brick at specific LOD');
   console.log('  dumpIndirection(z)       - Print indirection table slice');
-  console.log('  testLodSelection()       - Coarse-to-fine LOD selection (or press T)');
+  console.log('  testLodSelection()       - One-shot coarse-to-fine LOD selection (or press T)');
 }
 
 function showError(message: string) {

@@ -8,9 +8,10 @@
  * - Desired set calculation
  * - Priority queue for async loading
  * - Touch loop for LRU management
+ * - Request cancellation for stale bricks
  */
 
-import { Camera, extractFrustumPlanes, isAABBInFrustum, multiplyMatrices, FrustumPlanes } from './camera.js';
+import { Camera, extractFrustumPlanes, isAABBInFrustum, multiplyMatrices } from './camera.js';
 import { Renderer } from './renderer.js';
 import { BrickLoader, BrickMetadata } from './brick-loader.js';
 import { AtlasSlot } from './atlas-allocator.js';
@@ -38,6 +39,7 @@ export interface StreamingStats {
   culledCount: number;
   emptyCount: number;
   evictedCount: number;
+  cancelledCount: number;
   atlasUsage: number;
   atlasCapacity: number;
 }
@@ -54,11 +56,14 @@ export class StreamingManager {
   // Track empty bricks (so we don't re-check them)
   private emptyBricks = new Set<string>();
 
+  // Current desired set (keys) - updated each computeDesiredSet
+  private desiredKeys = new Set<string>();
+
   // Priority queue for pending loads (sorted by distance, closest first)
   private loadQueue: BrickRequest[] = [];
 
-  // Currently in-flight requests
-  private inFlightRequests = new Set<string>();
+  // Currently in-flight requests with AbortControllers
+  private inFlightRequests = new Map<string, AbortController>();
 
   // Max concurrent requests
   private maxConcurrentRequests = 4;
@@ -77,6 +82,7 @@ export class StreamingManager {
     culledCount: 0,
     emptyCount: 0,
     evictedCount: 0,
+    cancelledCount: 0,
     atlasUsage: 0,
     atlasCapacity: 512,
   };
@@ -130,14 +136,20 @@ export class StreamingManager {
    * Clear all state
    */
   clear(): void {
+    // Cancel all in-flight requests
+    for (const controller of this.inFlightRequests.values()) {
+      controller.abort();
+    }
+    this.inFlightRequests.clear();
+
     // Free all atlas slots
     for (const entry of this.loadedBricks.values()) {
       this.renderer.allocator.free(entry.slot);
     }
     this.loadedBricks.clear();
     this.emptyBricks.clear();
+    this.desiredKeys.clear();
     this.loadQueue = [];
-    this.inFlightRequests.clear();
     this.renderer.indirection.clearAll();
     console.log('StreamingManager: cleared all bricks');
   }
@@ -166,8 +178,6 @@ export class StreamingManager {
     const viewProj = multiplyMatrices(projMatrix, viewMatrix);
     const frustum = extractFrustumPlanes(viewProj);
 
-    const normalizedSize = getNormalizedSize();
-
     // Get LOD range from metadata
     const maxLod = Math.max(...this.metadata.levels.map(l => l.lod));
 
@@ -182,7 +192,9 @@ export class StreamingManager {
       if (!level) return;
 
       const [gridX, gridY, gridZ] = level.bricks as [number, number, number];
-      if (bx >= gridX || by >= gridY || bz >= gridZ) return;
+
+      // Bounds check - handles non-power-of-two grids
+      if (bx < 0 || bx >= gridX || by < 0 || by >= gridY || bz < 0 || bz >= gridZ) return;
 
       // Get brick AABB
       const aabb = this.getBrickAABB(bx, by, bz, lod);
@@ -201,27 +213,50 @@ export class StreamingManager {
       const shouldSplit = lod > 0 && dist < this.lodThresholds[lod - 1]!;
 
       if (shouldSplit) {
-        // Recurse to 8 children at finer LOD
+        // Check if finer LOD exists
+        const finerLevel = this.metadata.levels.find(l => l.lod === lod - 1);
+        if (!finerLevel) {
+          // No finer LOD available, use current
+          this.addDesiredBrick(desiredBricks, bx, by, bz, lod, dist);
+          return;
+        }
+
+        // Compute child coordinates for non-power-of-two grids
+        // The relationship is: parent brick covers a 2x2x2 region at finer LOD
+        // But we need to check bounds at the finer level
+        const [finerGridX, finerGridY, finerGridZ] = finerLevel.bricks as [number, number, number];
         const nextLod = lod - 1;
+
         for (let dz = 0; dz < 2; dz++) {
           for (let dy = 0; dy < 2; dy++) {
             for (let dx = 0; dx < 2; dx++) {
-              traverse(bx * 2 + dx, by * 2 + dy, bz * 2 + dz, nextLod);
+              const cx = bx * 2 + dx;
+              const cy = by * 2 + dy;
+              const cz = bz * 2 + dz;
+
+              // Only traverse if within finer grid bounds
+              if (cx < finerGridX && cy < finerGridY && cz < finerGridZ) {
+                traverse(cx, cy, cz, nextLod);
+              }
             }
           }
         }
       } else {
-        // This brick is desired
-        const key = `lod${lod}:${bz}/${by}/${bx}`;
-
-        // Check if known empty
-        if (this.emptyBricks.has(key)) {
-          emptyCount++;
-          return;
-        }
-
-        desiredBricks.push({ lod, bx, by, bz, distance: dist, key });
+        this.addDesiredBrick(desiredBricks, bx, by, bz, lod, dist);
       }
+    };
+
+    // Helper to add a brick to desired set
+    this.addDesiredBrick = (bricks: BrickRequest[], bx: number, by: number, bz: number, lod: number, dist: number) => {
+      const key = `lod${lod}:${bz}/${by}/${bx}`;
+
+      // Check if known empty
+      if (this.emptyBricks.has(key)) {
+        emptyCount++;
+        return;
+      }
+
+      bricks.push({ lod, bx, by, bz, distance: dist, key });
     };
 
     // Start from coarsest LOD
@@ -237,6 +272,22 @@ export class StreamingManager {
       }
     }
 
+    // Update desired keys set (used for stale check)
+    this.desiredKeys.clear();
+    for (const brick of desiredBricks) {
+      this.desiredKeys.add(brick.key);
+    }
+
+    // Cancel in-flight requests that are no longer desired
+    let cancelledCount = 0;
+    for (const [key, controller] of this.inFlightRequests.entries()) {
+      if (!this.desiredKeys.has(key)) {
+        controller.abort();
+        this.inFlightRequests.delete(key);
+        cancelledCount++;
+      }
+    }
+
     // Touch all desired bricks that are already loaded
     let loadedCount = 0;
     for (const brick of desiredBricks) {
@@ -248,14 +299,15 @@ export class StreamingManager {
     }
 
     // Find missing bricks and add to load queue
-    const missingBricks = desiredBricks.filter(b => !this.loadedBricks.has(b.key));
+    const missingBricks = desiredBricks.filter(
+      b => !this.loadedBricks.has(b.key) && !this.inFlightRequests.has(b.key)
+    );
 
     // Sort by distance (closest first)
     missingBricks.sort((a, b) => a.distance - b.distance);
 
     // Replace load queue with new desired set
-    // (remove any requests that are no longer desired)
-    this.loadQueue = missingBricks.filter(b => !this.inFlightRequests.has(b.key));
+    this.loadQueue = missingBricks;
 
     // Update stats
     this.lastStats = {
@@ -264,16 +316,20 @@ export class StreamingManager {
       pendingCount: this.loadQueue.length + this.inFlightRequests.size,
       culledCount,
       emptyCount,
-      evictedCount: 0, // Updated during processLoadQueue
+      evictedCount: 0, // Reset, updated during loadBrick
+      cancelledCount,
       atlasUsage: this.renderer.allocator.usedCount,
       atlasCapacity: this.renderer.allocator.totalSlots,
     };
   }
 
+  // Helper method reference (assigned in computeDesiredSet)
+  private addDesiredBrick: (bricks: BrickRequest[], bx: number, by: number, bz: number, lod: number, dist: number) => void = () => {};
+
   /**
    * Process pending load requests (non-blocking)
    */
-  private async processLoadQueue(): Promise<void> {
+  private processLoadQueue(): void {
     // Start new requests up to max concurrent
     while (
       this.inFlightRequests.size < this.maxConcurrentRequests &&
@@ -287,24 +343,47 @@ export class StreamingManager {
       // Skip if already in flight
       if (this.inFlightRequests.has(request.key)) continue;
 
-      this.inFlightRequests.add(request.key);
-      this.loadBrick(request).finally(() => {
+      // Skip if no longer desired
+      if (!this.desiredKeys.has(request.key)) continue;
+
+      // Create AbortController for this request
+      const controller = new AbortController();
+      this.inFlightRequests.set(request.key, controller);
+
+      this.loadBrick(request, controller.signal).finally(() => {
         this.inFlightRequests.delete(request.key);
       });
     }
   }
 
   /**
-   * Load a single brick
+   * Load a single brick with abort support
    */
-  private async loadBrick(request: BrickRequest): Promise<void> {
+  private async loadBrick(request: BrickRequest, signal: AbortSignal): Promise<void> {
     const { lod, bx, by, bz, key } = request;
+
+    // Check if aborted before starting
+    if (signal.aborted) return;
 
     // Check if empty
     const isEmpty = await this.brickLoader.isBrickEmpty(lod, bx, by, bz);
+    if (signal.aborted) return;
+
     if (isEmpty) {
       this.emptyBricks.add(key);
       this.renderer.indirection.setEmpty(bx, by, bz, lod);
+      return;
+    }
+
+    // Load brick data
+    const data = await this.brickLoader.loadBrick(lod, bx, by, bz);
+    if (signal.aborted) return;
+
+    if (!data) return;
+
+    // CRITICAL: Check if still desired before uploading to GPU
+    if (!this.desiredKeys.has(key)) {
+      // Brick is no longer needed - camera moved
       return;
     }
 
@@ -325,13 +404,6 @@ export class StreamingManager {
       );
       this.loadedBricks.delete(result.evicted.key);
       this.lastStats.evictedCount++;
-    }
-
-    // Load brick data
-    const data = await this.brickLoader.loadBrick(lod, bx, by, bz);
-    if (!data) {
-      this.renderer.allocator.free(result.slot);
-      return;
     }
 
     // Upload to atlas

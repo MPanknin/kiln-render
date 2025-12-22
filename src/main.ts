@@ -16,8 +16,8 @@ import { StreamingManager } from './streaming-manager.js';
 // Volume source configuration
 // const VOLUME_SOURCE = '/volumes/bricks/stagbeetle';
 // const VOLUME_SOURCE = '/datasets/chameleon';
-const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/stagbeetle-binary';
-// const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-binary';
+// const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/stagbeetle-binary';
+const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-binary';
 
 async function main() {
   const canvas = document.querySelector('canvas');
@@ -327,6 +327,7 @@ async function main() {
     console.log(`  Culled: ${stats.culledCount} bricks (frustum)`);
     console.log(`  Empty: ${stats.emptyCount} bricks (skipped)`);
     console.log(`  Evicted: ${stats.evictedCount} bricks`);
+    console.log(`  Cancelled: ${stats.cancelledCount} bricks (stale)`);
     console.log(`  Atlas: ${stats.atlasUsage}/${stats.atlasCapacity} slots`);
   }
 

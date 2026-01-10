@@ -1,6 +1,8 @@
 /**
- * Decompose a raw volume file into LOD brick pyramid
- * Uses streaming to handle large files (>2GB)
+ * Convert a raw volume file into binary sharded streaming format
+ *
+ * Decomposes the volume into a multi-LOD brick pyramid and packs into
+ * binary sharded format (volume.json + lodN.bin + lodN_index.json).
  *
  * Usage: npx ts-node scripts/decompose-volume.ts <input.raw> <output-dir> [options]
  *   OR:  npx ts-node scripts/decompose-volume.ts <input.raw> <W> <H> <D> [options]
@@ -13,6 +15,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { gzipSync } from 'zlib';
 
 interface Config {
   inputPath: string;
@@ -23,7 +26,6 @@ interface Config {
   brickSize: number;
   maxLod: number;
   bitDepth: 8 | 16;
-  pack: boolean;
 }
 
 function parseArgs(): Config {
@@ -97,7 +99,6 @@ function parseArgs(): Config {
   let headerSize = 0;
   let brickSize = 64;
   let maxLod = -1; // Auto
-  let pack = false;
 
   for (let i = argOffset; i < args.length; i++) {
     if (args[i] === '--output' && args[i + 1]) {
@@ -128,8 +129,6 @@ function parseArgs(): Config {
       const bits = parseInt(args[i + 1]!);
       if (bits === 8 || bits === 16) bitDepth = bits;
       i++;
-    } else if (args[i] === '--pack') {
-      pack = true;
     }
   }
 
@@ -145,7 +144,7 @@ function parseArgs(): Config {
     maxLod = Math.max(0, Math.min(maxLod, 4)); // Cap at 4 levels
   }
 
-  return { inputPath, outputDir, dimensions, voxelSpacing, headerSize, brickSize, maxLod, bitDepth, pack };
+  return { inputPath, outputDir, dimensions, voxelSpacing, headerSize, brickSize, maxLod, bitDepth };
 }
 
 /**
@@ -532,13 +531,16 @@ function decompose(config: Config): { outputDir: string; lodInfo: { lod: number;
 }
 
 /**
- * Pack brick files into binary sharded format
+ * Pack brick files into binary sharded format with gzip compression
  */
 function packVolume(outputDir: string, lodInfo: { lod: number; bricks: [number, number, number] }[], brickSize: number): void {
   const physicalSize = brickSize + 2;
-  const brickBytes = physicalSize ** 3;
+  const uncompressedBrickBytes = physicalSize ** 3; // 287,496 for 66³
 
-  console.log('\n=== Packing into binary sharded format ===');
+  console.log('\n=== Packing into compressed binary sharded format ===');
+
+  let totalUncompressed = 0;
+  let totalCompressed = 0;
 
   for (const level of lodInfo) {
     const lod = level.lod;
@@ -560,11 +562,14 @@ function packVolume(outputDir: string, lodInfo: { lod: number; bricks: [number, 
       bricks: level.bricks,
       totalBricks,
       totalBytes: 0,
+      compressed: true, // Flag indicating bricks are gzip compressed
       entries: {} as Record<string, { offset: number; size: number; min: number; max: number; avg: number }>,
     };
 
     let offset = 0;
     let processed = 0;
+    let lodUncompressed = 0;
+    let lodCompressed = 0;
 
     for (let z = 0; z < nz; z++) {
       for (let y = 0; y < ny; y++) {
@@ -595,13 +600,19 @@ function packVolume(outputDir: string, lodInfo: { lod: number; bricks: [number, 
           }
           const avg = Math.round(sum / count);
 
-          // Write to bin file
-          fs.writeSync(fd, data, 0, data.length, offset);
+          // Compress the brick data with gzip (level 6 for good balance)
+          const compressed = gzipSync(Buffer.from(data), { level: 6 });
+          const compressedSize = compressed.length;
 
-          // Record in index
-          index.entries[`${x}/${y}/${z}`] = { offset, size: brickBytes, min, max, avg };
+          // Write compressed data to bin file
+          fs.writeSync(fd, compressed, 0, compressedSize, offset);
 
-          offset += brickBytes;
+          // Record in index - size is the COMPRESSED size for range reads
+          index.entries[`${x}/${y}/${z}`] = { offset, size: compressedSize, min, max, avg };
+
+          offset += compressedSize;
+          lodUncompressed += uncompressedBrickBytes;
+          lodCompressed += compressedSize;
           processed++;
 
           if (processed % 100 === 0 || processed === totalBricks) {
@@ -614,8 +625,14 @@ function packVolume(outputDir: string, lodInfo: { lod: number; bricks: [number, 
     fs.closeSync(fd);
     index.totalBytes = offset;
 
+    totalUncompressed += lodUncompressed;
+    totalCompressed += lodCompressed;
+
+    const ratio = ((1 - lodCompressed / lodUncompressed) * 100).toFixed(1);
     fs.writeFileSync(indexPath, JSON.stringify(index, null, 2));
-    console.log(`\n  Output: ${binPath} (${(offset / 1024 / 1024).toFixed(1)} MB)`);
+    console.log(`\n  Output: ${binPath}`);
+    console.log(`    Uncompressed: ${(lodUncompressed / 1024 / 1024).toFixed(1)} MB`);
+    console.log(`    Compressed:   ${(lodCompressed / 1024 / 1024).toFixed(1)} MB (${ratio}% reduction)`);
 
     // Remove individual brick files
     for (let z = 0; z < nz; z++) {
@@ -630,6 +647,13 @@ function packVolume(outputDir: string, lodInfo: { lod: number; bricks: [number, 
     }
     fs.rmdirSync(lodInputDir);
   }
+
+  // Print total compression stats
+  const totalRatio = ((1 - totalCompressed / totalUncompressed) * 100).toFixed(1);
+  console.log(`\n=== Compression Summary ===`);
+  console.log(`  Total uncompressed: ${(totalUncompressed / 1024 / 1024).toFixed(1)} MB`);
+  console.log(`  Total compressed:   ${(totalCompressed / 1024 / 1024).toFixed(1)} MB`);
+  console.log(`  Reduction:          ${totalRatio}%`);
 
   // Remove brick.json and write volume.json
   const brickJsonPath = path.join(outputDir, 'brick.json');
@@ -652,6 +676,7 @@ function packVolume(outputDir: string, lodInfo: { lod: number; bricks: [number, 
     })),
     format: brickJson.format,
     packed: true,
+    compressed: true, // Bricks are gzip compressed
     createdAt: new Date().toISOString(),
   };
 
@@ -672,10 +697,6 @@ console.log(`  Header size: ${config.headerSize}`);
 console.log(`  Brick size: ${config.brickSize}`);
 console.log(`  Max LOD: ${config.maxLod}`);
 console.log(`  Bit depth: ${config.bitDepth}`);
-console.log(`  Pack: ${config.pack}`);
 
 const result = decompose(config);
-
-if (config.pack) {
-  packVolume(result.outputDir, result.lodInfo, result.brickSize);
-}
+packVolume(result.outputDir, result.lodInfo, result.brickSize);

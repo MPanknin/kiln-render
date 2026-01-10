@@ -1,7 +1,16 @@
 {
   "name": "kiln",
   "version": "0.1.0",
-  "description": "Brick-based WebGPU volume renderer with virtual texturing",
+  "description": "A WebGPU-native out-of-core renderer for large virtualized volumetric data",
+  "author": {
+    "name": "Martin Panknin",
+    "email": "martinpanknin@gmail.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mpanknin/kiln"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -17,6 +26,7 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
+    "fflate": "^0.8.2",
     "tweakpane": "^4.0.5",
     "wgpu-matrix": "^3.4.0"
   }

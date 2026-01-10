@@ -101,7 +101,7 @@ export class IndirectionTable {
 
           // Only overwrite if this LOD is finer (lower number) or equal
           // LOD stored as lod+1, so higher value = coarser
-          const existingLod = this.data[idx + 3];
+          const existingLod = this.data[idx + 3] ?? 0;
           if (existingLod > 0 && existingLod <= lod + 1) {
             // A finer or equal LOD brick already occupies this cell, skip
             continue;
@@ -152,7 +152,7 @@ export class IndirectionTable {
           const idx = (x + y * this.gridX + z * this.gridX * this.gridY) * 4;
 
           // Only overwrite if this LOD is finer or equal (same logic as setBrick)
-          const existingLod = this.data[idx + 3];
+          const existingLod = this.data[idx + 3] ?? 0;
           if (existingLod > 0 && existingLod < 255 && existingLod <= lod + 1) {
             continue;
           }
@@ -237,13 +237,6 @@ export class IndirectionTable {
   }
 
   /**
-   * Update a single brick entry on the GPU (partial update)
-   */
-  private updateBrickGPU(x: number, y: number, z: number) {
-    this.updateRegionGPU(x, y, z, 1);
-  }
-
-  /**
    * Update a region of the indirection texture on the GPU
    * Used for multi-cell updates when setting/clearing coarse LOD bricks
    */
@@ -264,7 +257,7 @@ export class IndirectionTable {
       const idx = (baseX + baseY * this.gridX + baseZ * this.gridX * this.gridY) * 4;
       this.device.queue.writeTexture(
         { texture: this.texture, origin: [baseX, baseY, baseZ] },
-        this.data.subarray(idx, idx + 4),
+        new Uint8Array(this.data.buffer as ArrayBuffer, idx, 4),
         { bytesPerRow: 4, rowsPerImage: 1 },
         [1, 1, 1]
       );
@@ -287,7 +280,7 @@ export class IndirectionTable {
 
       this.device.queue.writeTexture(
         { texture: this.texture, origin: [baseX, baseY, baseZ] },
-        regionData,
+        regionData as Uint8Array<ArrayBuffer>,
         { bytesPerRow: actualSizeX * 4, rowsPerImage: actualSizeY },
         [actualSizeX, actualSizeY, actualSizeZ]
       );
@@ -300,7 +293,7 @@ export class IndirectionTable {
   private updateFullGPU() {
     this.device.queue.writeTexture(
       { texture: this.texture },
-      this.data,
+      this.data as Uint8Array<ArrayBuffer>,
       { bytesPerRow: this.gridX * 4, rowsPerImage: this.gridY },
       [this.gridX, this.gridY, this.gridZ]
     );

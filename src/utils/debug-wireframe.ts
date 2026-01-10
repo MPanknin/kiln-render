@@ -5,7 +5,7 @@
  * Each LOD level gets a different color.
  */
 
-import { getNormalizedSize } from './config.js';
+import { getNormalizedSize } from '../core/config.js';
 
 // LOD colors (from finest to coarsest)
 const LOD_COLORS: [number, number, number, number][] = [
@@ -261,7 +261,7 @@ export class DebugWireframe {
     }
 
     // Update uniform buffer
-    this.device.queue.writeBuffer(this.uniformBuffer, 0, viewProjMatrix);
+    this.device.queue.writeBuffer(this.uniformBuffer, 0, viewProjMatrix as Float32Array<ArrayBuffer>);
 
     // Create render pass
     const pass = encoder.beginRenderPass({

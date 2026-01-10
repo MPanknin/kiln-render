@@ -2,7 +2,7 @@
  * Box geometry for proxy rendering
  */
 
-import { getNormalizedSize } from './config.js';
+import { getNormalizedSize } from '../core/config.js';
 
 export interface BoxGeometry {
   vertices: Float32Array;

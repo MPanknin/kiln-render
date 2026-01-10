@@ -11,12 +11,12 @@
  * - Request cancellation for stale bricks
  */
 
-import { Camera, extractFrustumPlanes, isAABBInFrustum, multiplyMatrices } from './camera.js';
-import { Renderer } from './renderer.js';
+import { Camera, extractFrustumPlanes, isAABBInFrustum, multiplyMatrices } from '../core/camera.js';
+import { Renderer } from '../core/renderer.js';
 import { BrickLoader, BrickMetadata } from './brick-loader.js';
 import { AtlasSlot } from './atlas-allocator.js';
-import { PHYSICAL_BRICK_SIZE, getNormalizedSize } from './config.js';
-import { writeToCanvas } from './volume.js';
+import { PHYSICAL_BRICK_SIZE, getNormalizedSize } from '../core/config.js';
+import { writeToCanvas } from '../core/volume.js';
 
 export interface BrickRequest {
   lod: number;
@@ -53,8 +53,19 @@ export class StreamingManager {
   // Track loaded bricks: key -> { slot, slotIndex }
   private loadedBricks = new Map<string, LoadedBrickInfo>();
 
+  // Track pinned bricks (never evicted, always loaded first)
+  private pinnedBricks = new Set<string>();
+
   // Track empty bricks (so we don't re-check them)
   private emptyBricks = new Set<string>();
+
+  // Whether base LOD has been loaded
+  private _baseLodLoaded = false;
+
+  /** Check if base LOD is loaded */
+  get baseLodLoaded(): boolean {
+    return this._baseLodLoaded;
+  }
 
   // Current desired set (keys) - updated each computeDesiredSet
   private desiredKeys = new Set<string>();
@@ -72,7 +83,12 @@ export class StreamingManager {
   private frameCount = 0;
 
   // LOD thresholds (distance to split from LOD N to LOD N-1)
-  public lodThresholds = [0.3, 0.5, 0.8, 1.2, 2.0];
+  // Index 0 = threshold to split LOD1 -> LOD0, etc.
+  // Lower values = finer LODs only load when very close
+  public lodThresholds = [0.5, 1, 2, 3.0, 4.0];
+
+  // Max bricks to request at once (prevents runaway loading)
+  private maxDesiredBricks = 256;
 
   // Stats from last update
   private lastStats: StreamingStats = {
@@ -91,6 +107,12 @@ export class StreamingManager {
   private lastUpdateFrame = -1;
   private updateInterval = 10; // frames between full updates
 
+  // Camera movement detection
+  private lastCameraPos: [number, number, number] = [0, 0, 0];
+  private cameraStillFrames = 0;
+  private cameraMovementThreshold = 0.001; // Min movement to consider "moving"
+  private cameraStillThreshold = 5; // Frames of stillness before re-prioritizing
+
   constructor(
     renderer: Renderer,
     brickLoader: BrickLoader,
@@ -101,6 +123,75 @@ export class StreamingManager {
     this.brickLoader = brickLoader;
     this.metadata = metadata;
     this.device = device;
+
+    // Load coarsest LOD immediately as base layer
+    this.loadBaseLod();
+  }
+
+  /**
+   * Load and pin the coarsest LOD level (ensures no holes)
+   */
+  private async loadBaseLod(): Promise<void> {
+    const maxLod = Math.max(...this.metadata.levels.map(l => l.lod));
+    const level = this.metadata.levels.find(l => l.lod === maxLod);
+    if (!level) return;
+
+    const [gridX, gridY, gridZ] = level.bricks as [number, number, number];
+    console.log(`Loading base LOD ${maxLod} (${gridX}x${gridY}x${gridZ} = ${level.brickCount} bricks)...`);
+
+    for (let bz = 0; bz < gridZ; bz++) {
+      for (let by = 0; by < gridY; by++) {
+        for (let bx = 0; bx < gridX; bx++) {
+          const key = `lod${maxLod}:${bz}/${by}/${bx}`;
+
+          // Check if empty
+          const isEmpty = await this.brickLoader.isBrickEmpty(maxLod, bx, by, bz);
+          if (isEmpty) {
+            this.emptyBricks.add(key);
+            this.renderer.indirection.setEmpty(bx, by, bz, maxLod);
+            continue;
+          }
+
+          // Load brick data
+          const data = await this.brickLoader.loadBrick(maxLod, bx, by, bz);
+          if (!data) continue;
+
+          // Allocate slot
+          const result = this.renderer.allocator.allocate(this.frameCount);
+          if (!result) {
+            console.warn('Failed to allocate slot for base LOD brick');
+            continue;
+          }
+
+          // Upload to atlas
+          const offset: [number, number, number] = [
+            result.slot.x * PHYSICAL_BRICK_SIZE,
+            result.slot.y * PHYSICAL_BRICK_SIZE,
+            result.slot.z * PHYSICAL_BRICK_SIZE,
+          ];
+          writeToCanvas(
+            this.device,
+            this.renderer.canvas,
+            data,
+            [PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE],
+            offset
+          );
+
+          // Update indirection
+          this.renderer.indirection.setBrick(bx, by, bz, result.slot.x, result.slot.y, result.slot.z, maxLod);
+
+          // Set metadata
+          this.renderer.allocator.setMetadata(result.slotIndex, { lod: maxLod, bx, by, bz, key });
+
+          // Track as loaded AND pinned
+          this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
+          this.pinnedBricks.add(key);
+        }
+      }
+    }
+
+    this._baseLodLoaded = true;
+    console.log(`Base LOD ${maxLod} loaded (${this.pinnedBricks.size} pinned bricks)`);
   }
 
   /**
@@ -110,10 +201,29 @@ export class StreamingManager {
   update(camera: Camera, canvas: HTMLCanvasElement): boolean {
     this.frameCount++;
 
-    // Throttle full traversal (expensive)
-    const shouldRecompute = (this.frameCount - this.lastUpdateFrame) >= this.updateInterval;
+    const cameraPos: [number, number, number] = [
+      camera.position[0]!,
+      camera.position[1]!,
+      camera.position[2]!,
+    ];
 
-    if (shouldRecompute) {
+    // Detect camera movement
+    const cameraMoved = this.hasCameraMoved(cameraPos);
+
+    if (cameraMoved) {
+      this.cameraStillFrames = 0;
+      this.lastCameraPos = cameraPos;
+    } else {
+      this.cameraStillFrames++;
+    }
+
+    // Decide when to recompute:
+    // 1. Regular interval (every N frames while moving)
+    // 2. Immediately when camera comes to rest (after stillness threshold)
+    const regularUpdate = (this.frameCount - this.lastUpdateFrame) >= this.updateInterval;
+    const cameraJustStopped = this.cameraStillFrames === this.cameraStillThreshold;
+
+    if (regularUpdate || cameraJustStopped) {
       this.lastUpdateFrame = this.frameCount;
       this.computeDesiredSet(camera, canvas);
     }
@@ -122,6 +232,17 @@ export class StreamingManager {
     this.processLoadQueue();
 
     return this.inFlightRequests.size > 0 || this.loadQueue.length > 0;
+  }
+
+  /**
+   * Check if camera has moved significantly
+   */
+  private hasCameraMoved(currentPos: [number, number, number]): boolean {
+    const dx = currentPos[0] - this.lastCameraPos[0];
+    const dy = currentPos[1] - this.lastCameraPos[1];
+    const dz = currentPos[2] - this.lastCameraPos[2];
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    return dist > this.cameraMovementThreshold;
   }
 
   /**
@@ -147,11 +268,16 @@ export class StreamingManager {
       this.renderer.allocator.free(entry.slot);
     }
     this.loadedBricks.clear();
+    this.pinnedBricks.clear();
     this.emptyBricks.clear();
     this.desiredKeys.clear();
     this.loadQueue = [];
+    this._baseLodLoaded = false;
     this.renderer.indirection.clearAll();
     console.log('StreamingManager: cleared all bricks');
+
+    // Reload base LOD
+    this.loadBaseLod();
   }
 
   /**
@@ -298,6 +424,14 @@ export class StreamingManager {
       }
     }
 
+    // Always touch pinned bricks to keep them at the front of LRU
+    for (const key of this.pinnedBricks) {
+      const entry = this.loadedBricks.get(key);
+      if (entry) {
+        this.renderer.allocator.touch(entry.slotIndex, this.frameCount);
+      }
+    }
+
     // Find missing bricks and add to load queue
     const missingBricks = desiredBricks.filter(
       b => !this.loadedBricks.has(b.key) && !this.inFlightRequests.has(b.key)
@@ -306,8 +440,9 @@ export class StreamingManager {
     // Sort by distance (closest first)
     missingBricks.sort((a, b) => a.distance - b.distance);
 
-    // Replace load queue with new desired set
-    this.loadQueue = missingBricks;
+    // Limit queue size to prevent runaway loading
+    // Only queue the closest N bricks
+    this.loadQueue = missingBricks.slice(0, this.maxDesiredBricks);
 
     // Update stats
     this.lastStats = {
@@ -394,8 +529,21 @@ export class StreamingManager {
       return;
     }
 
-    // Handle eviction
+    // Handle eviction - but never evict pinned bricks
     if (result.evicted) {
+      if (this.pinnedBricks.has(result.evicted.key)) {
+        // Can't evict a pinned brick - put the slot back and skip
+        // Touch the pinned brick to keep it at the front of LRU
+        const pinnedEntry = this.loadedBricks.get(result.evicted.key);
+        if (pinnedEntry) {
+          this.renderer.allocator.touch(pinnedEntry.slotIndex, this.frameCount);
+        }
+        // Re-add to free list by freeing the slot we just got
+        // Actually, the slot is the same as the evicted one, so just restore metadata
+        this.renderer.allocator.setMetadata(result.slotIndex, result.evicted);
+        return;
+      }
+
       this.renderer.indirection.clearBrick(
         result.evicted.bx,
         result.evicted.by,

@@ -11,7 +11,7 @@ export class Camera {
   position: Float32Array;
 
   private target: [number, number, number] = [0, 0, 0];  // Pan target
-  private distance = 10.0;  // Distance from target in normalized units
+  private distance = 5.0;  // Distance from target in normalized units
   private rotationX = 0.3;
   private rotationY = 0.4;
   private isDragging = false;

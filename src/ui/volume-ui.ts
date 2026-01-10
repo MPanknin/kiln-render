@@ -2,15 +2,22 @@
  * Volume Renderer UI Controls using Tweakpane
  */
 
-// @ts-expect-error - Tweakpane types don't fully export FolderApi methods
-import { Pane, FolderApi } from 'tweakpane';
-import { TransferFunction, TFPreset } from './transfer-function.js';
-import { Renderer, VolumeRenderMode } from './renderer.js';
-import { Camera, UpAxis } from './camera.js';
+import { Pane } from 'tweakpane';
+import { TransferFunction, TFPreset } from '../core/transfer-function.js';
+import { Renderer, VolumeRenderMode } from '../core/renderer.js';
+import { Camera, UpAxis } from '../core/camera.js';
 
-export interface UICallbacks {
-  onLoadLod: (level: number) => void;
-  onClearLod: () => void;
+// Tweakpane's types don't fully export FolderApi, so use a minimal interface
+interface TweakpaneFolder {
+  hidden: boolean;
+  element: HTMLElement;
+  addBinding: (obj: object, key: string, params?: object) => { on: (event: string, cb: (ev: { value: unknown }) => void) => void };
+}
+
+// Extended Pane type with methods that exist at runtime but aren't in types
+interface ExtendedPane extends Pane {
+  addBinding: (obj: object, key: string, params?: object) => { on: (event: string, cb: (ev: { value: unknown }) => void) => void };
+  addFolder: (params: { title: string }) => TweakpaneFolder;
 }
 
 export class VolumeUI {
@@ -18,7 +25,6 @@ export class VolumeUI {
   private renderer: Renderer;
   private camera: Camera;
   private transferFunction: TransferFunction;
-  private callbacks: UICallbacks;
 
   private tfCanvas: HTMLCanvasElement;
   private isDraggingPoint = false;
@@ -36,19 +42,17 @@ export class VolumeUI {
   };
 
   // Folder references for visibility toggling
-  private isoFolder: FolderApi | null = null;
-  private tfFolder: FolderApi | null = null;
+  private isoFolder: TweakpaneFolder | null = null;
+  private tfFolder: TweakpaneFolder | null = null;
 
   constructor(
     renderer: Renderer,
     camera: Camera,
-    transferFunction: TransferFunction,
-    callbacks: UICallbacks
+    transferFunction: TransferFunction
   ) {
     this.renderer = renderer;
     this.camera = camera;
     this.transferFunction = transferFunction;
-    this.callbacks = callbacks;
 
     // Sync initial values from camera/renderer
     this.params.upAxis = camera.getUpAxis();
@@ -71,8 +75,10 @@ export class VolumeUI {
   }
 
   private setupControls(): void {
+    const pane = this.pane as unknown as ExtendedPane;
+
     // Render Mode
-    this.pane.addBinding(this.params, 'renderMode', {
+    pane.addBinding(this.params, 'renderMode', {
       label: 'Mode',
       options: {
         DVR: 'dvr',
@@ -80,13 +86,13 @@ export class VolumeUI {
         ISO: 'iso',
         LOD: 'lod',
       },
-    }).on('change', (ev) => {
-      this.renderer.volumeRenderMode = ev.value;
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.volumeRenderMode = ev.value as VolumeRenderMode;
       this.updateVisibility();
     });
 
     // Camera Up Axis
-    this.pane.addBinding(this.params, 'upAxis', {
+    pane.addBinding(this.params, 'upAxis', {
       label: 'Up Axis',
       options: {
         'X': 'x',
@@ -96,33 +102,33 @@ export class VolumeUI {
         '-Y': '-y',
         '-Z': '-z',
       },
-    }).on('change', (ev) => {
-      this.camera.setUpAxis(ev.value);
+    }).on('change', (ev: { value: unknown }) => {
+      this.camera.setUpAxis(ev.value as UpAxis);
     });
 
     // Indirection toggle
-    this.pane.addBinding(this.params, 'useIndirection', {
+    pane.addBinding(this.params, 'useIndirection', {
       label: 'Indirection',
-    }).on('change', (ev) => {
-      this.renderer.useIndirection = ev.value;
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.useIndirection = ev.value as boolean;
     });
 
     // Wireframe toggle
-    this.pane.addBinding(this.params, 'showWireframe', {
+    pane.addBinding(this.params, 'showWireframe', {
       label: 'Wireframe',
-    }).on('change', (ev) => {
-      this.renderer.showWireframe = ev.value;
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.showWireframe = ev.value as boolean;
     });
 
     // Axis toggle
-    this.pane.addBinding(this.params, 'showAxis', {
+    pane.addBinding(this.params, 'showAxis', {
       label: 'Axis',
-    }).on('change', (ev) => {
-      this.renderer.showAxis = ev.value;
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.showAxis = ev.value as boolean;
     });
 
     // Isosurface folder
-    this.isoFolder = this.pane.addFolder({
+    this.isoFolder = pane.addFolder({
       title: 'Isosurface',
     });
 
@@ -131,12 +137,12 @@ export class VolumeUI {
       min: 0,
       max: 1,
       step: 0.01,
-    }).on('change', (ev) => {
-      this.renderer.isoValue = ev.value;
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.isoValue = ev.value as number;
     });
 
     // Transfer Function folder
-    this.tfFolder = this.pane.addFolder({
+    this.tfFolder = pane.addFolder({
       title: 'Transfer Function',
     });
 
@@ -150,8 +156,8 @@ export class VolumeUI {
         'Viridis': 'viridis',
         'Plasma': 'plasma',
       },
-    }).on('change', (ev) => {
-      this.transferFunction.setPreset(ev.value);
+    }).on('change', (ev: { value: unknown }) => {
+      this.transferFunction.setPreset(ev.value as TFPreset);
       this.updateTFPreview();
     });
 
@@ -179,70 +185,6 @@ export class VolumeUI {
     const containerEl = tfFolderElement.querySelector('.tp-fldv_c');
     if (containerEl) {
       containerEl.appendChild(canvasContainer);
-    }
-
-    // LOD folder
-    const lodFolder = this.pane.addFolder({
-      title: 'LOD Level',
-    });
-
-    // LOD buttons using blade API
-    const lodContainer = document.createElement('div');
-    lodContainer.style.cssText = 'display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 4px 0;';
-
-    for (let i = 0; i <= 3; i++) {
-      const btn = document.createElement('button');
-      btn.textContent = String(i);
-      btn.style.cssText = `
-        padding: 6px;
-        background: #363636;
-        border: 1px solid #4a4a4a;
-        border-radius: 4px;
-        color: #b0b0b0;
-        font-size: 12px;
-        cursor: pointer;
-      `;
-      btn.addEventListener('mouseenter', () => {
-        btn.style.background = '#4a4a4a';
-      });
-      btn.addEventListener('mouseleave', () => {
-        btn.style.background = '#363636';
-      });
-      btn.addEventListener('click', () => {
-        this.callbacks.onLoadLod(i);
-      });
-      lodContainer.appendChild(btn);
-    }
-
-    // Clear button spans 2 columns
-    const clearBtn = document.createElement('button');
-    clearBtn.textContent = 'Clear';
-    clearBtn.style.cssText = `
-      grid-column: span 2;
-      padding: 6px;
-      background: #4a3636;
-      border: 1px solid #5a4444;
-      border-radius: 4px;
-      color: #b0b0b0;
-      font-size: 12px;
-      cursor: pointer;
-    `;
-    clearBtn.addEventListener('mouseenter', () => {
-      clearBtn.style.background = '#5a4444';
-    });
-    clearBtn.addEventListener('mouseleave', () => {
-      clearBtn.style.background = '#4a3636';
-    });
-    clearBtn.addEventListener('click', () => {
-      this.callbacks.onClearLod();
-    });
-    lodContainer.appendChild(clearBtn);
-
-    // Inject LOD buttons into folder
-    const lodFolderElement = lodFolder.element;
-    const lodContainerEl = lodFolderElement.querySelector('.tp-fldv_c');
-    if (lodContainerEl) {
-      lodContainerEl.appendChild(lodContainer);
     }
   }
 

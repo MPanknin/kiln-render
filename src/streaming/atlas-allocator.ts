@@ -6,7 +6,7 @@
  * indirection table when evicting.
  */
 
-import { GRID_SIZE } from './config.js';
+import { GRID_SIZE } from '../core/config.js';
 
 export interface AtlasSlot {
   x: number;
@@ -83,7 +83,7 @@ export class AtlasAllocator {
    * Get metadata for a slot
    */
   getMetadata(slotIndex: number): BrickMetadata | null {
-    return this.slotMetadata[slotIndex];
+    return this.slotMetadata[slotIndex] ?? null;
   }
 
   /**
@@ -114,7 +114,7 @@ export class AtlasAllocator {
       return null;
     }
 
-    const evicted = this.slotMetadata[victim];
+    const evicted = this.slotMetadata[victim] ?? null;
 
     // Update tracking for the reused slot
     this.lastUsedFrame[victim] = frame;
@@ -135,8 +135,9 @@ export class AtlasAllocator {
     let victimIdx = -1;
 
     for (let i = 0; i < this.totalSlots; i++) {
-      if (this.used.has(i) && this.lastUsedFrame[i] < oldestFrame) {
-        oldestFrame = this.lastUsedFrame[i];
+      const frameNum = this.lastUsedFrame[i] ?? 0;
+      if (this.used.has(i) && frameNum < oldestFrame) {
+        oldestFrame = frameNum;
         victimIdx = i;
       }
     }

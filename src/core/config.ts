@@ -6,13 +6,13 @@
  */
 
 // Core constants
-export const LOGICAL_BRICK_SIZE = 64; 
+export const LOGICAL_BRICK_SIZE = 64;
 export const PHYSICAL_BRICK_SIZE = 66; // 64 + 1 voxel padding on each side
 export const ATLAS_SIZE = 528;         // 8 slots * 66 voxels = 528
 
 // For backward compatibility with existing code
-export const BRICK_SIZE = LOGICAL_BRICK_SIZE; 
-export const GRID_SIZE = 8; 
+export const BRICK_SIZE = LOGICAL_BRICK_SIZE;
+export const GRID_SIZE = 8;
 export const TOTAL_BRICK_SLOTS = 512;
 
 // Dataset dimensions (can be reconfigured dynamically)

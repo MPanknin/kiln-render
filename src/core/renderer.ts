@@ -4,11 +4,11 @@
 
 import { Camera } from './camera.js';
 import { VolumeCanvas, createVolumeCanvas, writeToCanvas } from './volume.js';
-import { createBox, createAxis } from './geometry.js';
+import { createBox, createAxis } from '../utils/geometry.js';
 import { TransferFunction } from './transfer-function.js';
 import { IndirectionTable } from './indirection.js';
-import { AtlasAllocator, AtlasSlot } from './atlas-allocator.js';
-import { volumeShader, wireframeShader, axisShader, computeShader, blitShader } from './shaders.js';
+import { AtlasAllocator, AtlasSlot } from '../streaming/atlas-allocator.js';
+import { volumeShader, wireframeShader, axisShader, computeShader, blitShader } from '../shaders/index.js';
 import { getDatasetSize, getNormalizedSize } from './config.js';
 
 export type RenderMode = 'fragment' | 'compute';
@@ -114,20 +114,20 @@ export class Renderer {
       size: box.vertices.byteLength,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
-    device.queue.writeBuffer(this.vertexBuffer, 0, box.vertices);
+    device.queue.writeBuffer(this.vertexBuffer, 0, box.vertices as Float32Array<ArrayBuffer>);
 
     this.indexBuffer = device.createBuffer({
       size: box.indices.byteLength,
       usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
     });
-    device.queue.writeBuffer(this.indexBuffer, 0, box.indices);
+    device.queue.writeBuffer(this.indexBuffer, 0, box.indices as Uint16Array<ArrayBuffer>);
     this.indexCount = box.indices.length;
 
     this.wireframeIndexBuffer = device.createBuffer({
       size: box.wireframeIndices.byteLength,
       usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
     });
-    device.queue.writeBuffer(this.wireframeIndexBuffer, 0, box.wireframeIndices);
+    device.queue.writeBuffer(this.wireframeIndexBuffer, 0, box.wireframeIndices as Uint16Array<ArrayBuffer>);
     this.wireframeIndexCount = box.wireframeIndices.length;
 
     // Create axis geometry (slightly larger than normalized proxy for visibility)
@@ -136,7 +136,7 @@ export class Renderer {
       size: axis.vertices.byteLength,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
-    device.queue.writeBuffer(this.axisVertexBuffer, 0, axis.vertices);
+    device.queue.writeBuffer(this.axisVertexBuffer, 0, axis.vertices as Float32Array<ArrayBuffer>);
 
     // Create uniform buffers
     // Volume: mat4 mvp (64) + mat4 inverseModel (64) + vec3 cameraPos (12) + useIndirection (4)
@@ -319,11 +319,13 @@ export class Renderer {
     data: Uint8Array,
     lod: number = 0
   ): AtlasSlot | null {
-    const slot = this.allocator.allocate();
-    if (!slot) {
+    const result = this.allocator.allocate();
+    if (!result) {
       console.warn('Atlas full, cannot load brick');
       return null;
     }
+
+    const slot = result.slot;
 
     // Write brick data to atlas
     const offset: [number, number, number] = [
@@ -502,10 +504,10 @@ export class Renderer {
     uniformData[43] = this.isoValue;          // 43: isoValue
     uniformDataView.setUint32(44 * 4, this.frameIndex, true);  // 44: frameIndex (u32)
     // 45-47: padding
-    this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
+    this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData as Float32Array<ArrayBuffer>);
 
     // Update wireframe uniforms
-    this.device.queue.writeBuffer(this.wireframeUniformBuffer, 0, vp);
+    this.device.queue.writeBuffer(this.wireframeUniformBuffer, 0, vp as Float32Array<ArrayBuffer>);
 
     // Render
     const encoder = this.device.createCommandEncoder();
@@ -542,7 +544,7 @@ export class Renderer {
 
     // Draw axis
     if (this.showAxis) {
-      this.device.queue.writeBuffer(this.axisUniformBuffer, 0, vp);
+      this.device.queue.writeBuffer(this.axisUniformBuffer, 0, vp as Float32Array<ArrayBuffer>);
       pass.setPipeline(this.axisPipeline);
       pass.setBindGroup(0, this.axisBindGroup);
       pass.setVertexBuffer(0, this.axisVertexBuffer);
@@ -588,7 +590,7 @@ export class Renderer {
     computeUniformData[29] = this.screenHeight;           // 29: screenSize.y
     computeDataView.setUint32(30 * 4, this.frameIndex, true);  // 30: frameIndex (u32)
     // 31: padding
-    this.device.queue.writeBuffer(this.computeUniformBuffer, 0, computeUniformData);
+    this.device.queue.writeBuffer(this.computeUniformBuffer, 0, computeUniformData as Float32Array<ArrayBuffer>);
 
     const encoder = this.device.createCommandEncoder();
 
@@ -618,7 +620,7 @@ export class Renderer {
     blitPass.end();
 
     // Update wireframe uniforms for overlay pass
-    this.device.queue.writeBuffer(this.wireframeUniformBuffer, 0, vp);
+    this.device.queue.writeBuffer(this.wireframeUniformBuffer, 0, vp as Float32Array<ArrayBuffer>);
 
     // Separate pass for wireframe and axis with depth
     const overlayPass = encoder.beginRenderPass({
@@ -646,7 +648,7 @@ export class Renderer {
 
     // Draw axis
     if (this.showAxis) {
-      this.device.queue.writeBuffer(this.axisUniformBuffer, 0, vp);
+      this.device.queue.writeBuffer(this.axisUniformBuffer, 0, vp as Float32Array<ArrayBuffer>);
       overlayPass.setPipeline(this.axisPipeline);
       overlayPass.setBindGroup(0, this.axisBindGroup);
       overlayPass.setVertexBuffer(0, this.axisVertexBuffer);

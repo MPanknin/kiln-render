@@ -185,7 +185,7 @@ export class BrickLoader {
    *
    * TODO: Make threshold dynamic based on dataset intensity distribution
    */
-  async isBrickEmpty(lod: number, bx: number, by: number, bz: number, maxThreshold: number = 1): Promise<boolean> {
+  async isBrickEmpty(lod: number, bx: number, by: number, bz: number, maxThreshold: number = 100): Promise<boolean> {
     const stats = await this.getBrickStats(lod, bx, by, bz);
     if (!stats) return false; // Unknown = assume non-empty
     return stats.max < maxThreshold;

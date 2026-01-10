@@ -34,7 +34,7 @@ export function writeToCanvas(
 ) {
   device.queue.writeTexture(
     { texture: canvas.texture, origin: offset },
-    data,
+    data as Uint8Array<ArrayBuffer>,
     { bytesPerRow: size[0], rowsPerImage: size[1] },
     size
   );

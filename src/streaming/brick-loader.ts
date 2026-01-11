@@ -3,14 +3,11 @@
  *
  * Uses HTTP Range requests to efficiently stream individual bricks from
  * lodN.bin files, guided by lodN_index.json index files.
- * Supports gzip-compressed bricks with off-main-thread decompression.
  */
-
-import { getDecompressionPool } from './decompression-pool.js';
 
 export interface BrickStats {
   offset: number;
-  size: number; // Compressed size (for range reads)
+  size: number;
   min: number;
   max: number;
   avg: number;
@@ -23,7 +20,6 @@ export interface LodIndex {
   bricks: [number, number, number];
   totalBricks: number;
   totalBytes: number;
-  compressed?: boolean; // Whether bricks are gzip compressed
   entries: Record<string, BrickStats>;
 }
 
@@ -44,7 +40,6 @@ export interface BrickMetadata {
   }[];
   format: string;
   packed: true;
-  compressed?: boolean; // Whether bricks are gzip compressed
   createdAt: string;
 }
 
@@ -180,7 +175,7 @@ export class BrickLoader {
    *
    * TODO: Make threshold dynamic based on dataset intensity distribution
    */
-  async isBrickEmpty(lod: number, bx: number, by: number, bz: number, maxThreshold: number = 1): Promise<boolean> {
+  async isBrickEmpty(lod: number, bx: number, by: number, bz: number, maxThreshold: number = 100): Promise<boolean> {
     const stats = await this.getBrickStats(lod, bx, by, bz);
     if (!stats) return false; // Unknown = assume non-empty
     return stats.max < maxThreshold;
@@ -188,12 +183,11 @@ export class BrickLoader {
 
   /**
    * Load a single brick using HTTP Range request
-   * Handles gzip decompression via worker pool if data is compressed
    */
   async loadBrick(lod: number, bx: number, by: number, bz: number): Promise<Uint8Array | null> {
     const key = `lod${lod}:${bx}-${by}-${bz}`;
 
-    // Check cache first (cache stores decompressed data)
+    // Check cache first
     if (this.cache.has(key)) {
       return this.cache.get(key)!;
     }
@@ -235,20 +229,7 @@ export class BrickLoader {
 
       const buffer = await response.arrayBuffer();
       this.recordDownload(buffer.byteLength);
-
-      // Check if data is compressed (from index or metadata)
-      const isCompressed = index.compressed ?? meta.compressed ?? false;
-
-      let data: Uint8Array;
-      if (isCompressed) {
-        // Decompress using worker pool (off main thread)
-        const pool = getDecompressionPool();
-        data = await pool.decompress(buffer);
-      } else {
-        // Uncompressed - use directly
-        data = new Uint8Array(buffer);
-      }
-
+      const data = new Uint8Array(buffer);
       this.cache.set(key, data);
       return data;
     } catch (e) {

@@ -104,7 +104,6 @@ export class VolumeUI {
     this.statsPane = new Pane({
       title: 'Dataset Stats',
       container: statsContainer,
-      expanded: false,
     });
 
     this.tfCanvas = document.createElement('canvas');

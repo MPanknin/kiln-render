@@ -14,11 +14,10 @@ import { VolumeUI } from './ui/volume-ui.js';
 import { StreamingManager } from './streaming/streaming-manager.js';
 
 // Volume source configuration
+// const VOLUME_SOURCE = '/volumes/bricks/stagbeetle';
 // const VOLUME_SOURCE = '/datasets/chameleon';
-const VOLUME_SOURCE = 'datasets/stag_beetle_compressed';
 // const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/stagbeetle-binary';
-// const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-binary';
-// const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-binary';
+const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-binary';
 
 // Capture page load start time for time-to-first-render metric
 const PAGE_LOAD_START = performance.now();

@@ -15,14 +15,13 @@ export class TransferFunction {
   texture: GPUTexture;
   private colorData: Uint8Array;  // RGB only, no alpha
   private opacityPoints: OpacityPoint[];
-  preset: TFPreset = 'grayscale';
+  preset: TFPreset = 'coolwarm';
 
   constructor(device: GPUDevice) {
     this.device = device;
     this.colorData = new Uint8Array(this.size * 3);
     this.opacityPoints = [
       { x: 0.0, y: 0.0 },
-      { x: 0.25, y: 0.0 },
       { x: 1.0, y: 1.0 }
     ];
 
@@ -33,7 +32,7 @@ export class TransferFunction {
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
 
-    this.setPreset('grayscale');
+    this.setPreset('coolwarm');
   }
 
   setPreset(preset: TFPreset): void {

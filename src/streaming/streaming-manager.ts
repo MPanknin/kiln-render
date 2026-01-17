@@ -42,12 +42,6 @@ export interface StreamingStats {
   cancelledCount: number;
   atlasUsage: number;
   atlasCapacity: number;
-  // Network stats
-  totalBytesDownloaded: number;
-  bytesPerSecond: number;
-  requestCount: number;
-  // Timing
-  timeToFirstRender: number | null; // ms, null if not yet loaded
 }
 
 export class StreamingManager {
@@ -68,18 +62,9 @@ export class StreamingManager {
   // Whether base LOD has been loaded
   private _baseLodLoaded = false;
 
-  // Timing for first render
-  private loadStartTime: number = 0;
-  private _timeToFirstRender: number | null = null;
-
   /** Check if base LOD is loaded */
   get baseLodLoaded(): boolean {
     return this._baseLodLoaded;
-  }
-
-  /** Get time to first render in ms (null if not yet loaded) */
-  get timeToFirstRender(): number | null {
-    return this._timeToFirstRender;
   }
 
   // Current desired set (keys) - updated each computeDesiredSet
@@ -116,10 +101,6 @@ export class StreamingManager {
     cancelledCount: 0,
     atlasUsage: 0,
     atlasCapacity: 512,
-    totalBytesDownloaded: 0,
-    bytesPerSecond: 0,
-    requestCount: 0,
-    timeToFirstRender: null,
   };
 
   // Throttle updates (don't recompute every frame)
@@ -136,16 +117,12 @@ export class StreamingManager {
     renderer: Renderer,
     brickLoader: BrickLoader,
     metadata: BrickMetadata,
-    device: GPUDevice,
-    pageLoadStartTime?: number
+    device: GPUDevice
   ) {
     this.renderer = renderer;
     this.brickLoader = brickLoader;
     this.metadata = metadata;
     this.device = device;
-
-    // Use page load start time if provided for true time-to-first-render
-    this.loadStartTime = pageLoadStartTime ?? performance.now();
 
     // Load coarsest LOD immediately as base layer
     this.loadBaseLod();
@@ -214,8 +191,7 @@ export class StreamingManager {
     }
 
     this._baseLodLoaded = true;
-    this._timeToFirstRender = performance.now() - this.loadStartTime;
-    console.log(`Base LOD ${maxLod} loaded (${this.pinnedBricks.size} pinned bricks) in ${this._timeToFirstRender.toFixed(0)}ms`);
+    console.log(`Base LOD ${maxLod} loaded (${this.pinnedBricks.size} pinned bricks)`);
   }
 
   /**
@@ -308,15 +284,7 @@ export class StreamingManager {
    * Get current stats
    */
   getStats(): StreamingStats {
-    // Get live network stats from BrickLoader
-    const networkStats = this.brickLoader.getNetworkStats();
-    return {
-      ...this.lastStats,
-      totalBytesDownloaded: networkStats.totalBytesDownloaded,
-      bytesPerSecond: networkStats.recentBytesPerSecond,
-      requestCount: networkStats.requestCount,
-      timeToFirstRender: this._timeToFirstRender,
-    };
+    return { ...this.lastStats };
   }
 
   /**
@@ -476,7 +444,7 @@ export class StreamingManager {
     // Only queue the closest N bricks
     this.loadQueue = missingBricks.slice(0, this.maxDesiredBricks);
 
-    // Update stats (network stats and timing are fetched live in getStats())
+    // Update stats
     this.lastStats = {
       desiredCount: desiredBricks.length,
       loadedCount,
@@ -487,11 +455,6 @@ export class StreamingManager {
       cancelledCount,
       atlasUsage: this.renderer.allocator.usedCount,
       atlasCapacity: this.renderer.allocator.totalSlots,
-      // Network stats placeholders - actual values come from getStats()
-      totalBytesDownloaded: 0,
-      bytesPerSecond: 0,
-      requestCount: 0,
-      timeToFirstRender: null, // Actual value comes from getStats()
     };
   }
 

@@ -1,7 +1,6 @@
 /**
- * Simple arcball camera with mouse and touch interaction
- * Mouse: Left drag = orbit, Right drag = pan, Wheel = zoom
- * Touch: One finger = orbit, Two finger = pan + pinch zoom
+ * Simple arcball camera with mouse interaction
+ * Left mouse: orbit, Right mouse: pan, Wheel: zoom
  */
 
 import { mat4 } from 'wgpu-matrix';
@@ -12,23 +11,17 @@ export class Camera {
   position: Float32Array;
 
   private target: [number, number, number] = [0, 0, 0];  // Pan target
-  private distance = 3.0;  // Distance from target in normalized units
+  private distance = 5.0;  // Distance from target in normalized units
   private rotationX = 0.3;
-  private rotationY = 3.5;
+  private rotationY = 0.4;
   private isDragging = false;
   private isPanning = false;
   private lastX = 0;
   private lastY = 0;
 
-  // Touch state tracking
-  private activeTouches: Map<number, { x: number; y: number }> = new Map();
-  private lastPinchDistance = 0;
-  private lastTouchCenter = { x: 0, y: 0 };
-  private isTouchPanning = false;
-
   // Up vector configuration
-  private upAxis: UpAxis = '-y';
-  private upVector: [number, number, number] = [0, -1, 0];
+  private upAxis: UpAxis = 'y';
+  private upVector: [number, number, number] = [0, 1, 0];
 
   constructor(canvas: HTMLCanvasElement) {
     this.position = new Float32Array(3);
@@ -94,138 +87,6 @@ export class Camera {
       this.distance = Math.max(0.5, Math.min(10, this.distance));
       this.updatePosition();
     }, { passive: false });
-
-    // Touch controls
-    canvas.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-
-      // Update active touches map
-      for (const touch of Array.from(e.changedTouches)) {
-        this.activeTouches.set(touch.identifier, { x: touch.clientX, y: touch.clientY });
-      }
-
-      if (e.touches.length === 1) {
-        // Single finger: start orbit
-        const touch = e.touches[0]!;
-        this.lastX = touch.clientX;
-        this.lastY = touch.clientY;
-        this.isDragging = true;
-        this.isTouchPanning = false;
-      } else if (e.touches.length === 2) {
-        // Two fingers: initialize pinch/pan state
-        const t1 = e.touches[0]!;
-        const t2 = e.touches[1]!;
-        this.lastPinchDistance = this.getTouchDistance(t1, t2);
-        this.lastTouchCenter = this.getTouchCenter(t1, t2);
-        this.isDragging = false;
-        this.isTouchPanning = true;
-      }
-    }, { passive: false });
-
-    canvas.addEventListener('touchmove', (e) => {
-      e.preventDefault();
-
-      // Update positions in map
-      for (const touch of Array.from(e.changedTouches)) {
-        if (this.activeTouches.has(touch.identifier)) {
-          this.activeTouches.set(touch.identifier, { x: touch.clientX, y: touch.clientY });
-        }
-      }
-
-      if (e.touches.length === 1 && this.isDragging) {
-        // Single finger orbit
-        const touch = e.touches[0]!;
-        const dx = touch.clientX - this.lastX;
-        const dy = touch.clientY - this.lastY;
-        this.lastX = touch.clientX;
-        this.lastY = touch.clientY;
-
-        // Orbit logic (same as mouse)
-        const baseAxis = this.upAxis.replace('-', '');
-        const isNegative = this.upAxis.startsWith('-');
-        let hSign = baseAxis === 'z' ? 1 : -1;
-        if (baseAxis === 'y' && isNegative) hSign = 1;
-        this.rotationY += hSign * dx * 0.01;
-        this.rotationX += dy * 0.01;
-        this.rotationX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.rotationX));
-
-        this.updatePosition();
-
-      } else if (e.touches.length === 2 && this.isTouchPanning) {
-        const t1 = e.touches[0]!;
-        const t2 = e.touches[1]!;
-
-        // Pinch zoom
-        const currentDistance = this.getTouchDistance(t1, t2);
-        if (this.lastPinchDistance > 0) {
-          const pinchRatio = this.lastPinchDistance / currentDistance;
-          this.distance *= pinchRatio;
-          this.distance = Math.max(0.5, Math.min(10, this.distance));
-        }
-        this.lastPinchDistance = currentDistance;
-
-        // Two-finger pan
-        const currentCenter = this.getTouchCenter(t1, t2);
-        const dx = currentCenter.x - this.lastTouchCenter.x;
-        const dy = currentCenter.y - this.lastTouchCenter.y;
-
-        if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
-          const panSpeed = this.distance * 0.002;
-          const right = this.getRightVector();
-          const up = this.getUpVectorLocal();
-          this.target[0] -= (dx * right[0] - dy * up[0]) * panSpeed;
-          this.target[1] -= (dx * right[1] - dy * up[1]) * panSpeed;
-          this.target[2] -= (dx * right[2] - dy * up[2]) * panSpeed;
-        }
-        this.lastTouchCenter = currentCenter;
-
-        this.updatePosition();
-      }
-    }, { passive: false });
-
-    const handleTouchEnd = (e: TouchEvent) => {
-      e.preventDefault();
-
-      // Remove ended touches from map
-      for (const touch of Array.from(e.changedTouches)) {
-        this.activeTouches.delete(touch.identifier);
-      }
-
-      // Handle transition from 2 fingers to 1 finger
-      if (e.touches.length === 1) {
-        const touch = e.touches[0]!;
-        this.lastX = touch.clientX;
-        this.lastY = touch.clientY;
-        this.isDragging = true;
-        this.isTouchPanning = false;
-        this.lastPinchDistance = 0;
-      } else if (e.touches.length === 0) {
-        // All fingers lifted: reset all state
-        this.isDragging = false;
-        this.isPanning = false;
-        this.isTouchPanning = false;
-        this.lastPinchDistance = 0;
-        this.activeTouches.clear();
-      }
-    };
-
-    canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
-    canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false });
-  }
-
-  /** Calculate distance between two touch points */
-  private getTouchDistance(t1: Touch, t2: Touch): number {
-    const dx = t2.clientX - t1.clientX;
-    const dy = t2.clientY - t1.clientY;
-    return Math.sqrt(dx * dx + dy * dy);
-  }
-
-  /** Calculate midpoint between two touch points */
-  private getTouchCenter(t1: Touch, t2: Touch): { x: number; y: number } {
-    return {
-      x: (t1.clientX + t2.clientX) / 2,
-      y: (t1.clientY + t2.clientY) / 2,
-    };
   }
 
   private updatePosition() {

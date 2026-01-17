@@ -1,8 +1,11 @@
 /**
- * BrickLoader - Loads volume bricks from binary sharded format
+ * BrickLoader - Loads decomposed volume bricks
  *
- * Uses HTTP Range requests to efficiently stream individual bricks from
- * lodN.bin files, guided by lodN_index.json index files.
+ * Supports two formats:
+ * 1. Legacy: Individual .raw files per brick (brick.json + lodN/brick-X-Y-Z.raw)
+ * 2. Packed: Binary sharded format (volume.json + lodN.bin + lodN_index.json)
+ *
+ * The packed format uses HTTP Range requests for efficient streaming.
  */
 
 export interface BrickStats {
@@ -23,7 +26,24 @@ export interface LodIndex {
   entries: Record<string, BrickStats>;
 }
 
-export interface BrickMetadata {
+export interface LegacyMetadata {
+  name: string;
+  originalDimensions: [number, number, number];
+  voxelSpacing?: [number, number, number];
+  brickSize: number;
+  maxLod: number;
+  levels: {
+    lod: number;
+    dimensions: [number, number, number];
+    bricks: [number, number, number];
+    brickCount: number;
+  }[];
+  format: string;
+  createdAt: string;
+  packed?: false;
+}
+
+export interface PackedMetadata {
   name: string;
   originalDimensions: [number, number, number];
   voxelSpacing: [number, number, number];
@@ -43,10 +63,10 @@ export interface BrickMetadata {
   createdAt: string;
 }
 
-export interface NetworkStats {
-  totalBytesDownloaded: number;
-  recentBytesPerSecond: number;
-  requestCount: number;
+export type BrickMetadata = LegacyMetadata | PackedMetadata;
+
+function isPacked(meta: BrickMetadata): meta is PackedMetadata {
+  return (meta as PackedMetadata).packed === true;
 }
 
 export class BrickLoader {
@@ -55,61 +75,36 @@ export class BrickLoader {
   private cache = new Map<string, Uint8Array>();
   private lodIndices = new Map<number, LodIndex>();
 
-  // Network tracking
-  private totalBytesDownloaded = 0;
-  private requestCount = 0;
-  private recentDownloads: { timestamp: number; bytes: number }[] = [];
-
   constructor(basePath: string) {
     this.basePath = basePath;
   }
 
   /**
-   * Get network statistics
-   */
-  getNetworkStats(): NetworkStats {
-    // Calculate bytes per second from recent downloads (last 2 seconds)
-    const now = performance.now();
-    const windowMs = 2000;
-    const cutoff = now - windowMs;
-
-    // Clean old entries and sum recent bytes
-    this.recentDownloads = this.recentDownloads.filter(d => d.timestamp > cutoff);
-    const recentBytes = this.recentDownloads.reduce((sum, d) => sum + d.bytes, 0);
-    const recentBytesPerSecond = (recentBytes / windowMs) * 1000;
-
-    return {
-      totalBytesDownloaded: this.totalBytesDownloaded,
-      recentBytesPerSecond,
-      requestCount: this.requestCount,
-    };
-  }
-
-  /**
-   * Record a download for network stats
-   */
-  private recordDownload(bytes: number): void {
-    this.totalBytesDownloaded += bytes;
-    this.requestCount++;
-    this.recentDownloads.push({
-      timestamp: performance.now(),
-      bytes,
-    });
-  }
-
-  /**
-   * Load metadata from volume.json
+   * Load metadata - tries volume.json first (packed), falls back to brick.json (legacy)
    */
   async loadMetadata(): Promise<BrickMetadata> {
     if (this.metadata) return this.metadata;
 
-    const response = await fetch(`${this.basePath}/volume.json`);
+    // Try packed format first
+    try {
+      const response = await fetch(`${this.basePath}/volume.json`);
+      if (response.ok) {
+        this.metadata = await response.json();
+        console.log(`Loaded packed volume: ${this.metadata!.name}`);
+        return this.metadata!;
+      }
+    } catch {
+      // Fall through to legacy
+    }
+
+    // Try legacy format
+    const response = await fetch(`${this.basePath}/brick.json`);
     if (!response.ok) {
-      throw new Error(`Failed to load volume metadata: ${response.statusText}`);
+      throw new Error(`Failed to load brick metadata: ${response.statusText}`);
     }
 
     this.metadata = await response.json();
-    console.log(`Loaded volume: ${this.metadata!.name}`);
+    console.log(`Loaded legacy volume: ${this.metadata!.name}`);
     return this.metadata!;
   }
 
@@ -124,7 +119,14 @@ export class BrickLoader {
   }
 
   /**
-   * Load the index for a LOD level
+   * Check if this is a packed volume
+   */
+  isPacked(): boolean {
+    return this.metadata !== null && isPacked(this.metadata);
+  }
+
+  /**
+   * Load the index for a LOD level (packed format only)
    */
   private async loadLodIndex(lod: number): Promise<LodIndex> {
     if (this.lodIndices.has(lod)) {
@@ -132,6 +134,10 @@ export class BrickLoader {
     }
 
     const meta = this.getMetadata();
+    if (!isPacked(meta)) {
+      throw new Error('loadLodIndex called on non-packed volume');
+    }
+
     const level = meta.levels.find(l => l.lod === lod);
     if (!level) {
       throw new Error(`LOD level ${lod} not found`);
@@ -160,10 +166,13 @@ export class BrickLoader {
   }
 
   /**
-   * Get brick stats (min/max/avg) for a brick
-   * Returns null if brick doesn't exist
+   * Get brick stats (min/max/avg) for a brick (packed format only)
+   * Returns null if not available or brick doesn't exist
    */
   async getBrickStats(lod: number, bx: number, by: number, bz: number): Promise<BrickStats | null> {
+    const meta = this.getMetadata();
+    if (!isPacked(meta)) return null;
+
     const index = await this.loadLodIndex(lod);
     const key = `${bx}/${by}/${bz}`;
     return index.entries[key] || null;
@@ -172,6 +181,7 @@ export class BrickLoader {
   /**
    * Check if a brick is empty or below threshold
    * Returns true if brick has max intensity below threshold
+   * Returns false if stats unavailable (legacy format) - assume non-empty
    *
    * TODO: Make threshold dynamic based on dataset intensity distribution
    */
@@ -182,7 +192,7 @@ export class BrickLoader {
   }
 
   /**
-   * Load a single brick using HTTP Range request
+   * Load a single brick using range request (packed) or individual file (legacy)
    */
   async loadBrick(lod: number, bx: number, by: number, bz: number): Promise<Uint8Array | null> {
     const key = `lod${lod}:${bx}-${by}-${bz}`;
@@ -204,6 +214,33 @@ export class BrickLoader {
       return null;
     }
 
+    let data: Uint8Array | null = null;
+
+    if (isPacked(meta)) {
+      // Packed format: use range request
+      data = await this.loadBrickPacked(lod, bx, by, bz, level as PackedMetadata['levels'][0]);
+    } else {
+      // Legacy format: individual files
+      data = await this.loadBrickLegacy(lod, bx, by, bz);
+    }
+
+    if (data) {
+      this.cache.set(key, data);
+    }
+
+    return data;
+  }
+
+  /**
+   * Load brick from packed binary using Range request
+   */
+  private async loadBrickPacked(
+    lod: number,
+    bx: number,
+    by: number,
+    bz: number,
+    level: PackedMetadata['levels'][0]
+  ): Promise<Uint8Array | null> {
     try {
       const index = await this.loadLodIndex(lod);
       const brickKey = `${bx}/${by}/${bz}`;
@@ -228,12 +265,35 @@ export class BrickLoader {
       }
 
       const buffer = await response.arrayBuffer();
-      this.recordDownload(buffer.byteLength);
-      const data = new Uint8Array(buffer);
-      this.cache.set(key, data);
-      return data;
+      return new Uint8Array(buffer);
     } catch (e) {
-      console.warn(`Error loading brick lod${lod}:${bx}-${by}-${bz}:`, e);
+      console.warn(`Error loading packed brick lod${lod}:${bx}-${by}-${bz}:`, e);
+      return null;
+    }
+  }
+
+  /**
+   * Load brick from individual file (legacy format)
+   */
+  private async loadBrickLegacy(
+    lod: number,
+    bx: number,
+    by: number,
+    bz: number
+  ): Promise<Uint8Array | null> {
+    const url = `${this.basePath}/lod${lod}/brick-${bx}-${by}-${bz}.raw`;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        return null;
+      }
+
+      const buffer = await response.arrayBuffer();
+      return new Uint8Array(buffer);
+    } catch (e) {
+      if (e instanceof TypeError && (e.message.includes('fetch') || e.message.includes('network'))) {
+        console.warn(`Network error loading brick:`, e.message);
+      }
       return null;
     }
   }

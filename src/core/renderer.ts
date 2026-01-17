@@ -32,10 +32,10 @@ export class Renderer {
   useIndirection = true;
 
   // Show wireframe box
-  showWireframe = false;
+  showWireframe = true;
 
   // Show axis helper
-  showAxis = false;
+  showAxis = true;
 
   // Rendering mode: 'fragment' (proxy box) or 'compute' (compute shader)
   renderMode: RenderMode = 'compute';
@@ -44,7 +44,7 @@ export class Renderer {
   volumeRenderMode: VolumeRenderMode = 'dvr';
 
   // ISO surface threshold (0-1)
-  isoValue = 0.2;
+  isoValue = 0.5;
 
   // Fragment-based pipelines
   private volumePipeline: GPURenderPipeline;

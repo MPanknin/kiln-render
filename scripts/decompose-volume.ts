@@ -1,8 +1,6 @@
 /**
- * Convert a raw volume file into binary sharded streaming format
- *
- * Decomposes the volume into a multi-LOD brick pyramid and packs into
- * binary sharded format (volume.json + lodN.bin + lodN_index.json).
+ * Decompose a raw volume file into LOD brick pyramid
+ * Uses streaming to handle large files (>2GB)
  *
  * Usage: npx ts-node scripts/decompose-volume.ts <input.raw> <output-dir> [options]
  *   OR:  npx ts-node scripts/decompose-volume.ts <input.raw> <W> <H> <D> [options]
@@ -25,6 +23,7 @@ interface Config {
   brickSize: number;
   maxLod: number;
   bitDepth: 8 | 16;
+  pack: boolean;
 }
 
 function parseArgs(): Config {
@@ -98,6 +97,7 @@ function parseArgs(): Config {
   let headerSize = 0;
   let brickSize = 64;
   let maxLod = -1; // Auto
+  let pack = false;
 
   for (let i = argOffset; i < args.length; i++) {
     if (args[i] === '--output' && args[i + 1]) {
@@ -128,6 +128,8 @@ function parseArgs(): Config {
       const bits = parseInt(args[i + 1]!);
       if (bits === 8 || bits === 16) bitDepth = bits;
       i++;
+    } else if (args[i] === '--pack') {
+      pack = true;
     }
   }
 
@@ -143,7 +145,7 @@ function parseArgs(): Config {
     maxLod = Math.max(0, Math.min(maxLod, 4)); // Cap at 4 levels
   }
 
-  return { inputPath, outputDir, dimensions, voxelSpacing, headerSize, brickSize, maxLod, bitDepth };
+  return { inputPath, outputDir, dimensions, voxelSpacing, headerSize, brickSize, maxLod, bitDepth, pack };
 }
 
 /**
@@ -670,6 +672,10 @@ console.log(`  Header size: ${config.headerSize}`);
 console.log(`  Brick size: ${config.brickSize}`);
 console.log(`  Max LOD: ${config.maxLod}`);
 console.log(`  Bit depth: ${config.bitDepth}`);
+console.log(`  Pack: ${config.pack}`);
 
 const result = decompose(config);
-packVolume(result.outputDir, result.lodInfo, result.brickSize);
+
+if (config.pack) {
+  packVolume(result.outputDir, result.lodInfo, result.brickSize);
+}

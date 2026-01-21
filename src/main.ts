@@ -14,10 +14,15 @@ import { VolumeUI } from './ui/volume-ui.js';
 import { StreamingManager } from './streaming/streaming-manager.js';
 
 // Volume source configuration
-// const VOLUME_SOURCE = '/volumes/bricks/stagbeetle';
 // const VOLUME_SOURCE = '/datasets/chameleon';
+// const VOLUME_SOURCE = 'datasets/stag_beetle_compressed';
+const VOLUME_SOURCE = 'datasets/chameleon_compressed';
 // const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/stagbeetle-binary';
-const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-binary';
+// const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-binary';
+// const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-binary';
+
+// Capture page load start time for time-to-first-render metric
+const PAGE_LOAD_START = performance.now();
 
 async function main() {
   const canvas = document.querySelector('canvas') as HTMLCanvasElement | null;
@@ -66,8 +71,8 @@ async function main() {
   // Create camera
   const camera = new Camera(canvas);
 
-  // Create streaming manager
-  const streamingManager = new StreamingManager(renderer, brickLoader, metadata, device);
+  // Create streaming manager (pass page load start time for accurate time-to-first-render)
+  const streamingManager = new StreamingManager(renderer, brickLoader, metadata, device, PAGE_LOAD_START);
 
   // Streaming mode toggle - enabled by default
   let streamingEnabled = true;
@@ -280,9 +285,16 @@ async function main() {
     console.log(`Atlas: ${renderer.allocator.usedCount}/${renderer.allocator.totalSlots} slots used`);
   }
 
+  // Create UI
+  const ui = new VolumeUI(renderer, camera, transferFunction);
+  ui.setStreamingManager(streamingManager, metadata);
+
   // Render loop
   function frame() {
     frameCount++;
+
+    // Record frame timing for stats
+    ui.recordFrame();
 
     // Update streaming manager if enabled
     if (streamingEnabled) {
@@ -294,10 +306,6 @@ async function main() {
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
-
-  // Create UI
-  const ui = new VolumeUI(renderer, camera, transferFunction);
-  ui.setStreamingManager(streamingManager, metadata);
 
   // Streaming control functions
   function startStreaming(): void {

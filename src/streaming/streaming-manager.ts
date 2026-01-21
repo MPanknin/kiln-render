@@ -42,6 +42,12 @@ export interface StreamingStats {
   cancelledCount: number;
   atlasUsage: number;
   atlasCapacity: number;
+  // Network stats
+  totalBytesDownloaded: number;
+  bytesPerSecond: number;
+  requestCount: number;
+  // Timing
+  timeToFirstRender: number | null; // ms, null if not yet loaded
 }
 
 export class StreamingManager {
@@ -62,9 +68,18 @@ export class StreamingManager {
   // Whether base LOD has been loaded
   private _baseLodLoaded = false;
 
+  // Timing for first render
+  private loadStartTime: number = 0;
+  private _timeToFirstRender: number | null = null;
+
   /** Check if base LOD is loaded */
   get baseLodLoaded(): boolean {
     return this._baseLodLoaded;
+  }
+
+  /** Get time to first render in ms (null if not yet loaded) */
+  get timeToFirstRender(): number | null {
+    return this._timeToFirstRender;
   }
 
   // Current desired set (keys) - updated each computeDesiredSet
@@ -101,6 +116,10 @@ export class StreamingManager {
     cancelledCount: 0,
     atlasUsage: 0,
     atlasCapacity: 512,
+    totalBytesDownloaded: 0,
+    bytesPerSecond: 0,
+    requestCount: 0,
+    timeToFirstRender: null,
   };
 
   // Throttle updates (don't recompute every frame)
@@ -117,12 +136,16 @@ export class StreamingManager {
     renderer: Renderer,
     brickLoader: BrickLoader,
     metadata: BrickMetadata,
-    device: GPUDevice
+    device: GPUDevice,
+    pageLoadStartTime?: number
   ) {
     this.renderer = renderer;
     this.brickLoader = brickLoader;
     this.metadata = metadata;
     this.device = device;
+
+    // Use page load start time if provided for true time-to-first-render
+    this.loadStartTime = pageLoadStartTime ?? performance.now();
 
     // Load coarsest LOD immediately as base layer
     this.loadBaseLod();
@@ -180,8 +203,9 @@ export class StreamingManager {
           // Update indirection
           this.renderer.indirection.setBrick(bx, by, bz, result.slot.x, result.slot.y, result.slot.z, maxLod);
 
-          // Set metadata
+          // Set metadata and pin the slot (base LOD is never evicted)
           this.renderer.allocator.setMetadata(result.slotIndex, { lod: maxLod, bx, by, bz, key });
+          this.renderer.allocator.pin(result.slotIndex);
 
           // Track as loaded AND pinned
           this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
@@ -191,7 +215,8 @@ export class StreamingManager {
     }
 
     this._baseLodLoaded = true;
-    console.log(`Base LOD ${maxLod} loaded (${this.pinnedBricks.size} pinned bricks)`);
+    this._timeToFirstRender = performance.now() - this.loadStartTime;
+    console.log(`Base LOD ${maxLod} loaded (${this.pinnedBricks.size} pinned bricks) in ${this._timeToFirstRender.toFixed(0)}ms`);
   }
 
   /**
@@ -284,7 +309,15 @@ export class StreamingManager {
    * Get current stats
    */
   getStats(): StreamingStats {
-    return { ...this.lastStats };
+    // Get live network stats from BrickLoader
+    const networkStats = this.brickLoader.getNetworkStats();
+    return {
+      ...this.lastStats,
+      totalBytesDownloaded: networkStats.totalBytesDownloaded,
+      bytesPerSecond: networkStats.recentBytesPerSecond,
+      requestCount: networkStats.requestCount,
+      timeToFirstRender: this._timeToFirstRender,
+    };
   }
 
   /**
@@ -444,7 +477,7 @@ export class StreamingManager {
     // Only queue the closest N bricks
     this.loadQueue = missingBricks.slice(0, this.maxDesiredBricks);
 
-    // Update stats
+    // Update stats (network stats and timing are fetched live in getStats())
     this.lastStats = {
       desiredCount: desiredBricks.length,
       loadedCount,
@@ -455,6 +488,11 @@ export class StreamingManager {
       cancelledCount,
       atlasUsage: this.renderer.allocator.usedCount,
       atlasCapacity: this.renderer.allocator.totalSlots,
+      // Network stats placeholders - actual values come from getStats()
+      totalBytesDownloaded: 0,
+      bytesPerSecond: 0,
+      requestCount: 0,
+      timeToFirstRender: null, // Actual value comes from getStats()
     };
   }
 
@@ -522,34 +560,37 @@ export class StreamingManager {
       return;
     }
 
-    // Allocate slot (will evict LRU if full)
+    // Allocate slot (will evict LRU if full, but never pinned slots)
     const result = this.renderer.allocator.allocate(this.frameCount);
     if (!result) {
-      console.warn('StreamingManager: allocation failed');
+      console.warn('StreamingManager: allocation failed (all slots pinned?)');
       return;
     }
 
-    // Handle eviction - but never evict pinned bricks
+    // Handle eviction - allocator already skips pinned slots
     if (result.evicted) {
-      if (this.pinnedBricks.has(result.evicted.key)) {
-        // Can't evict a pinned brick - put the slot back and skip
-        // Touch the pinned brick to keep it at the front of LRU
-        const pinnedEntry = this.loadedBricks.get(result.evicted.key);
-        if (pinnedEntry) {
-          this.renderer.allocator.touch(pinnedEntry.slotIndex, this.frameCount);
-        }
-        // Re-add to free list by freeing the slot we just got
-        // Actually, the slot is the same as the evicted one, so just restore metadata
-        this.renderer.allocator.setMetadata(result.slotIndex, result.evicted);
-        return;
+      // Find parent brick to fall back to
+      const fallback = this.findParentBrick(result.evicted.bx, result.evicted.by, result.evicted.bz, result.evicted.lod);
+
+      if (fallback) {
+        this.renderer.indirection.clearBrick(
+          result.evicted.bx,
+          result.evicted.by,
+          result.evicted.bz,
+          result.evicted.lod,
+          [fallback.slot.x, fallback.slot.y, fallback.slot.z],
+          fallback.lod
+        );
+      } else {
+        // No parent found - clear completely (shouldn't happen if base LOD is loaded)
+        this.renderer.indirection.clearBrick(
+          result.evicted.bx,
+          result.evicted.by,
+          result.evicted.bz,
+          result.evicted.lod
+        );
       }
 
-      this.renderer.indirection.clearBrick(
-        result.evicted.bx,
-        result.evicted.by,
-        result.evicted.bz,
-        result.evicted.lod
-      );
       this.loadedBricks.delete(result.evicted.key);
       this.lastStats.evictedCount++;
     }
@@ -627,5 +668,36 @@ export class StreamingManager {
     const dy = a[1] - b[1];
     const dz = a[2] - b[2];
     return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  /**
+   * Find the parent (coarser LOD) brick that covers the same region
+   * Used to restore fallback data when evicting a finer LOD brick
+   */
+  private findParentBrick(
+    bx: number,
+    by: number,
+    bz: number,
+    lod: number
+  ): { slot: AtlasSlot; lod: number } | null {
+    const maxLod = Math.max(...this.metadata.levels.map(l => l.lod));
+
+    // Walk up the LOD hierarchy to find a loaded parent
+    for (let parentLod = lod + 1; parentLod <= maxLod; parentLod++) {
+      // Parent coordinates are halved for each LOD level up
+      const scale = 1 << (parentLod - lod);
+      const parentBx = Math.floor(bx / scale);
+      const parentBy = Math.floor(by / scale);
+      const parentBz = Math.floor(bz / scale);
+
+      const parentKey = `lod${parentLod}:${parentBz}/${parentBy}/${parentBx}`;
+      const parentEntry = this.loadedBricks.get(parentKey);
+
+      if (parentEntry) {
+        return { slot: parentEntry.slot, lod: parentLod };
+      }
+    }
+
+    return null;
   }
 }

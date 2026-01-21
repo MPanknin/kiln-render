@@ -20,6 +20,11 @@ export const TOTAL_BRICK_SLOTS = 512;
 let datasetSize: [number, number, number] = [512, 256, 512];
 let voxelSpacing: [number, number, number] = [1, 1, 1];
 
+// Empty brick threshold: bricks with max intensity below this are skipped
+// Lower values = more conservative (fewer skipped bricks)
+// Higher values = more aggressive culling (may miss low-intensity data)
+let emptyBrickThreshold = 100;
+
 // Computed dataset properties
 function computeDatasetGrid(): [number, number, number] {
   return [
@@ -59,6 +64,15 @@ export function getDatasetGrid(): [number, number, number] {
 
 export function getNormalizedSize(): [number, number, number] {
   return computeNormalizedSize();
+}
+
+export function getEmptyBrickThreshold(): number {
+  return emptyBrickThreshold;
+}
+
+export function setEmptyBrickThreshold(threshold: number): void {
+  emptyBrickThreshold = threshold;
+  console.log(`Empty brick threshold set to ${threshold}`);
 }
 
 /**

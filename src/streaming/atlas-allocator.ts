@@ -32,6 +32,9 @@ export class AtlasAllocator {
   // Track which slots are used (flat index -> boolean)
   private used: Set<number>;
 
+  // Track which slots are pinned (never evicted)
+  private pinned: Set<number>;
+
   // Free list for O(1) allocation
   private freeList: number[];
 
@@ -47,6 +50,7 @@ export class AtlasAllocator {
   constructor() {
     this.totalSlots = GRID_SIZE * GRID_SIZE * GRID_SIZE;
     this.used = new Set();
+    this.pinned = new Set();
     this.freeList = [];
     this.lastUsedFrame = new Uint32Array(this.totalSlots);
     this.slotMetadata = new Array(this.totalSlots).fill(null);
@@ -77,6 +81,34 @@ export class AtlasAllocator {
    */
   setMetadata(slotIndex: number, meta: BrickMetadata): void {
     this.slotMetadata[slotIndex] = meta;
+  }
+
+  /**
+   * Pin a slot so it will never be evicted
+   */
+  pin(slotIndex: number): void {
+    this.pinned.add(slotIndex);
+  }
+
+  /**
+   * Unpin a slot so it can be evicted again
+   */
+  unpin(slotIndex: number): void {
+    this.pinned.delete(slotIndex);
+  }
+
+  /**
+   * Check if a slot is pinned
+   */
+  isPinned(slotIndex: number): boolean {
+    return this.pinned.has(slotIndex);
+  }
+
+  /**
+   * Get count of pinned slots
+   */
+  get pinnedCount(): number {
+    return this.pinned.size;
   }
 
   /**
@@ -128,13 +160,16 @@ export class AtlasAllocator {
   }
 
   /**
-   * Find the least recently used slot
+   * Find the least recently used slot (skips pinned slots)
    */
   private findLRUSlot(): number {
     let oldestFrame = Infinity;
     let victimIdx = -1;
 
     for (let i = 0; i < this.totalSlots; i++) {
+      // Never evict pinned slots
+      if (this.pinned.has(i)) continue;
+
       const frameNum = this.lastUsedFrame[i] ?? 0;
       if (this.used.has(i) && frameNum < oldestFrame) {
         oldestFrame = frameNum;
@@ -195,6 +230,7 @@ export class AtlasAllocator {
    */
   reset(): void {
     this.used.clear();
+    this.pinned.clear();
     this.freeList = [];
     this.lastUsedFrame.fill(0);
     this.slotMetadata.fill(null);

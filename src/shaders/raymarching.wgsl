@@ -62,13 +62,15 @@ fn refineIsoSurface(
 }
 
 // Simple ray march without brick traversal (direct atlas sampling)
+// This renders the raw atlas texture as a debug view
 fn rayMarchSimple(
     rayOrigin: vec3f, rayDir: vec3f, tStart: f32, tEnd: f32,
     normalizedSize: vec3f, datasetSize: vec3f
 ) -> vec4f {
-    let maxDim = max(datasetSize.x, max(datasetSize.y, datasetSize.z));
+    // For atlas debug view, use atlas size as the volume dimension
+    let atlasSize = ATLAS_SIZE;
     let rayLength = tEnd - tStart;
-    let numSteps = 256u;
+    let numSteps = 512u;  // More steps for full atlas
     let stepSize = rayLength / f32(numSteps);
 
     var color = vec3f(0.0);
@@ -77,9 +79,10 @@ fn rayMarchSimple(
     for (var i = 0u; i < numSteps; i++) {
         let t = tStart + f32(i) * stepSize;
         let pos = rayOrigin + rayDir * t;
-        let voxel = normalizedToVoxel(pos, normalizedSize, datasetSize);
-        let density = sampleDirect(voxel, datasetSize);
-        composeSample(density, stepSize, maxDim, &color, &alpha);
+        // Convert normalized position [-0.5, 0.5] to UV [0, 1] for atlas sampling
+        let atlasUV = (pos / normalizedSize) + 0.5;
+        let density = textureSampleLevel(volumeTexture, volumeSampler, atlasUV, 0.0).r;
+        composeSample(density, stepSize, atlasSize, &color, &alpha);
         if (alpha > EARLY_EXIT_ALPHA) { break; }
     }
 

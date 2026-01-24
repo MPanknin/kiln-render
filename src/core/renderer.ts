@@ -10,6 +10,7 @@ import { IndirectionTable } from './indirection.js';
 import { AtlasAllocator, AtlasSlot } from '../streaming/atlas-allocator.js';
 import { volumeShader, wireframeShader, axisShader, computeShader, blitShader } from '../shaders/index.js';
 import { getDatasetSize, getNormalizedSize } from './config.js';
+import type { BitDepth } from '../streaming/brick-loader.js';
 
 export type RenderMode = 'fragment' | 'compute';
 
@@ -45,6 +46,12 @@ export class Renderer {
 
   // ISO surface threshold (0-1)
   isoValue = 0.2;
+
+  // Windowing/Leveling for 16-bit data (0-1 normalized range)
+  // windowCenter: center of the display window (default 0.5 = middle of range)
+  // windowWidth: width of the display window (default 1.0 = full range)
+  windowCenter = 0.5;
+  windowWidth = 1.0;
 
   // Fragment-based pipelines
   private volumePipeline: GPURenderPipeline;
@@ -95,11 +102,11 @@ export class Renderer {
   // Frame counter for temporal jitter
   private frameIndex = 0;
 
-  constructor(device: GPUDevice, format: GPUTextureFormat) {
+  constructor(device: GPUDevice, format: GPUTextureFormat, bitDepth: BitDepth = 8) {
     this.device = device;
 
-    // Create volume canvas (empty)
-    this.canvas = createVolumeCanvas(device);
+    // Create volume canvas (empty) with specified bit depth
+    this.canvas = createVolumeCanvas(device, bitDepth);
 
     // Create indirection table for virtual texturing
     this.indirection = new IndirectionTable(device);
@@ -264,10 +271,10 @@ export class Renderer {
     // ===== Compute shader pipeline =====
 
     // Compute uniform buffer: mat4 inverseViewProj (64) + vec3 cameraPos (12) + useIndirection (4)
-    //                       + vec3 datasetSize (12) + pad (4) + vec3 normalizedSize (12) + pad (4)
-    //                       + vec2 screenSize (8) + pad (8) = 128
+    //                       + vec3 datasetSize (12) + renderMode (4) + vec3 normalizedSize (12) + isoValue (4)
+    //                       + vec2 screenSize (8) + frameIndex (4) + pad (4) + windowCenter (4) + windowWidth (4) = 144
     this.computeUniformBuffer = device.createBuffer({
-      size: 128,
+      size: 144,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -490,7 +497,7 @@ export class Renderer {
     // Update volume uniforms
     // Layout: mat4 mvp (64) + mat4 inverseModel (64) + vec3 cameraPos (12) + useIndirection (4)
     //       + vec3 datasetSize (12) + renderMode (4) + vec3 normalizedSize (12) + isoValue (4)
-    //       + frameIndex (4) + pad (12) = 192, WGSL alignment = 208
+    //       + frameIndex (4) + pad (4) + windowCenter (4) + windowWidth (4) = 208 bytes
     const uniformData = new Float32Array(52);  // 208 bytes / 4
     uniformData.set(vp, 0);                    // 0-15: mvp (model is identity)
     uniformData.set(inverseModel, 16);         // 16-31: inverseModel
@@ -503,7 +510,9 @@ export class Renderer {
     uniformData.set(getNormalizedSize(), 40); // 40-42: normalizedSize
     uniformData[43] = this.isoValue;          // 43: isoValue
     uniformDataView.setUint32(44 * 4, this.frameIndex, true);  // 44: frameIndex (u32)
-    // 45-47: padding
+    // 45: padding
+    uniformData[46] = this.windowCenter;      // 46: windowCenter
+    uniformData[47] = this.windowWidth;       // 47: windowWidth
     this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData as Float32Array<ArrayBuffer>);
 
     // Update wireframe uniforms
@@ -575,8 +584,8 @@ export class Renderer {
     // Update compute uniforms
     // Layout: mat4 inverseViewProj (64) + vec3 cameraPos (12) + useIndirection (4)
     //       + vec3 datasetSize (12) + renderMode (4) + vec3 normalizedSize (12) + isoValue (4)
-    //       + vec2 screenSize (8) + frameIndex (4) + pad (4) = 128 bytes = 32 floats
-    const computeUniformData = new Float32Array(32);
+    //       + vec2 screenSize (8) + frameIndex (4) + pad (4) + windowCenter (4) + windowWidth (4) = 136 bytes = 34 floats
+    const computeUniformData = new Float32Array(34);
     computeUniformData.set(inverseViewProj, 0);           // 0-15: inverseViewProj
     computeUniformData.set(camera.position, 16);          // 16-18: cameraPos
     computeUniformData[19] = this.useIndirection ? 1.0 : 0.0;  // 19: useIndirection
@@ -590,6 +599,8 @@ export class Renderer {
     computeUniformData[29] = this.screenHeight;           // 29: screenSize.y
     computeDataView.setUint32(30 * 4, this.frameIndex, true);  // 30: frameIndex (u32)
     // 31: padding
+    computeUniformData[32] = this.windowCenter;          // 32: windowCenter
+    computeUniformData[33] = this.windowWidth;           // 33: windowWidth
     this.device.queue.writeBuffer(this.computeUniformBuffer, 0, computeUniformData as Float32Array<ArrayBuffer>);
 
     const encoder = this.device.createCommandEncoder();

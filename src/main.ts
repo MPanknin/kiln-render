@@ -16,10 +16,13 @@ import { StreamingManager } from './streaming/streaming-manager.js';
 // Volume source configuration
 // const VOLUME_SOURCE = '/datasets/chameleon';
 // const VOLUME_SOURCE = 'datasets/stag_beetle_compressed';
-const VOLUME_SOURCE = 'datasets/chameleon_compressed';
+// const VOLUME_SOURCE = 'datasets/chameleon_compressed';
+// const VOLUME_SOURCE = 'datasets/chameleon_16bit';
+// const VOLUME_SOURCE = 'datasets/parihaka';
 // const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/stagbeetle-binary';
 // const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-binary';
-// const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-binary';
+// const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-compressed';
+const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-16bit';
 
 // Capture page load start time for time-to-first-render metric
 const PAGE_LOAD_START = performance.now();
@@ -35,11 +38,29 @@ async function main() {
     return;
   }
 
-  const device = await adapter.requestDevice();
+  // Request higher limits for large atlas textures and features for 16-bit textures
+  const adapterLimits = adapter.limits;
+  const requiredFeatures: GPUFeatureName[] = [];
+
+  // Request texture-formats-tier1 for r16unorm support (needed for 16-bit volumes)
+  if (adapter.features.has('texture-formats-tier1' as GPUFeatureName)) {
+    requiredFeatures.push('texture-formats-tier1' as GPUFeatureName);
+  }
+
+  const device = await adapter.requestDevice({
+    requiredLimits: {
+      maxBufferSize: adapterLimits.maxBufferSize,
+      maxStorageBufferBindingSize: adapterLimits.maxStorageBufferBindingSize,
+      maxTextureDimension3D: adapterLimits.maxTextureDimension3D,
+    },
+    requiredFeatures,
+  });
   if (!device) {
     showError('WebGPU device creation failed');
     return;
   }
+
+  console.log(`WebGPU limits: maxBufferSize=${device.limits.maxBufferSize}, maxTextureDimension3D=${device.limits.maxTextureDimension3D}`);
 
   const context = canvas.getContext('webgpu')!;
   const format = navigator.gpu.getPreferredCanvasFormat();
@@ -61,8 +82,10 @@ async function main() {
     console.log(`    LOD ${level.lod}: ${level.bricks.join('x')} bricks (${level.brickCount} total)`);
   }
 
-  // Create renderer
-  const renderer = new Renderer(device, format);
+  // Create renderer with appropriate bit depth from metadata
+  const bitDepth = brickLoader.getBitDepth();
+  const renderer = new Renderer(device, format, bitDepth);
+  console.log(`  Format: ${bitDepth}-bit`);
 
   // Create transfer function and connect to renderer
   const transferFunction = new TransferFunction(device);

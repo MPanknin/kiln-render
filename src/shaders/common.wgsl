@@ -14,9 +14,9 @@ const RENDER_MODE_ISO: i32 = 2;
 const RENDER_MODE_LOD: i32 = 3;
 
 // Lighting constants
-const LIGHT_DIR: vec3f = vec3f(0.5, -0.8, 0.3);
-const AMBIENT: f32 = 0.2;
-const DIFFUSE: f32 = 0.7;
+const LIGHT_DIR: vec3f = vec3f(0.1, -0.8, 0.1);
+const AMBIENT: f32 = 0.3;
+const DIFFUSE: f32 = 0.9;
 const SPECULAR: f32 = 0.3;
 const SHININESS: f32 = 32.0;
 
@@ -96,4 +96,16 @@ fn phongLighting(normal: vec3f, viewDir: vec3f, baseColor: vec3f) -> vec3f {
     let diffuse = DIFFUSE * max(dot(N, L), 0.0) * baseColor;
     let specular = SPECULAR * pow(max(dot(R, V), 0.0), SHININESS) * vec3f(1.0);
     return ambient + diffuse + specular;
+}
+
+// Window/Level (windowing) for density remapping
+// Maps a sub-range of density values to the full 0-1 range for better contrast
+// windowCenter: center of the window (0-1)
+// windowWidth: width of the window (0-1, where 1 = full range)
+// Returns density remapped to 0-1 based on window settings
+fn applyWindow(density: f32, windowCenter: f32, windowWidth: f32) -> f32 {
+    let halfWidth = windowWidth * 0.5;
+    let minVal = windowCenter - halfWidth;
+    let maxVal = windowCenter + halfWidth;
+    return clamp((density - minVal) / max(windowWidth, 0.001), 0.0, 1.0);
 }

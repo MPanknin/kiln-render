@@ -97,10 +97,17 @@ export class StreamingManager {
   // Frame counter for LRU
   private frameCount = 0;
 
-  // LOD thresholds (distance to split from LOD N to LOD N-1)
-  // Index 0 = threshold to split LOD1 -> LOD0, etc.
-  // Lower values = finer LODs only load when very close
-  public lodThresholds = [0.5, 1, 2, 3.0, 4.0];
+  // Screen-Space Error (SSE) threshold in pixels
+  // Split to finer LOD when projected voxel error exceeds this value
+  // Lower = higher quality, more bricks loaded
+  // Higher = lower quality, fewer bricks loaded
+  public maxPixelError = 8.0;
+
+  // Camera FOV in radians (must match camera.getProjectionMatrix)
+  private readonly cameraFovRad = Math.PI / 4; // 45 degrees
+
+  // Precomputed projection factor (updated each frame)
+  private projectionFactor = 0;
 
   // Max bricks to request at once (prevents runaway loading)
   private maxDesiredBricks = 256;
@@ -322,6 +329,7 @@ export class StreamingManager {
 
   /**
    * Compute the desired set of bricks based on camera position and frustum
+   * Uses Screen-Space Error (SSE) for LOD selection
    */
   private computeDesiredSet(camera: Camera, canvas: HTMLCanvasElement): void {
     const cameraPos: [number, number, number] = [
@@ -336,6 +344,10 @@ export class StreamingManager {
     const projMatrix = camera.getProjectionMatrix(aspect);
     const viewProj = multiplyMatrices(projMatrix, viewMatrix);
     const frustum = extractFrustumPlanes(viewProj);
+
+    // Compute projection factor for SSE calculation
+    // projectionFactor = screenHeight / (2 * tan(fov/2))
+    this.projectionFactor = canvas.height / (2 * Math.tan(this.cameraFovRad / 2));
 
     // Get LOD range from metadata
     const maxLod = Math.max(...this.metadata.levels.map(l => l.lod));
@@ -368,8 +380,14 @@ export class StreamingManager {
       const center = this.getAABBCenter(aabb);
       const dist = this.distance(cameraPos, center);
 
+      // Calculate Screen-Space Error (SSE)
+      // At this LOD, each voxel represents 2^lod original voxels
+      // The error is the projected size of one voxel at this LOD
+      const voxelWorldSize = this.getVoxelWorldSize(lod);
+      const projectedError = (voxelWorldSize / Math.max(dist, 0.001)) * this.projectionFactor;
+
       // Decision: load this LOD or split to finer?
-      const shouldSplit = lod > 0 && dist < this.lodThresholds[lod - 1]!;
+      const shouldSplit = lod > 0 && projectedError > this.maxPixelError;
 
       if (shouldSplit) {
         // Check if finer LOD exists
@@ -668,6 +686,23 @@ export class StreamingManager {
     const dy = a[1] - b[1];
     const dz = a[2] - b[2];
     return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  /**
+   * Get the world-space size of one voxel at a given LOD level
+   * At LOD N, each voxel represents 2^N original voxels
+   */
+  private getVoxelWorldSize(lod: number): number {
+    const normalizedSize = getNormalizedSize();
+    const dims = this.metadata.originalDimensions;
+
+    // Base voxel size in normalized space (LOD 0)
+    // Use the largest dimension for consistent error metric
+    const maxDim = Math.max(dims[0], dims[1], dims[2]);
+    const baseVoxelSize = Math.max(normalizedSize[0], normalizedSize[1], normalizedSize[2]) / maxDim;
+
+    // At LOD N, each voxel represents 2^N original voxels
+    return baseVoxelSize * (1 << lod);
   }
 
   /**

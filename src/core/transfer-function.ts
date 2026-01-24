@@ -2,7 +2,7 @@
  * Transfer function - maps density to RGBA color
  */
 
-export type TFPreset = 'grayscale' | 'hot' | 'cool' | 'viridis' | 'plasma' | 'coolwarm';
+export type TFPreset = 'grayscale' | 'hot' | 'cool' | 'viridis' | 'plasma' | 'coolwarm' | 'seismic';
 
 export interface OpacityPoint {
   x: number;  // 0-1 density
@@ -20,6 +20,7 @@ export class TransferFunction {
   constructor(device: GPUDevice) {
     this.device = device;
     this.colorData = new Uint8Array(this.size * 3);
+
     this.opacityPoints = [
       { x: 0.0, y: 0.0 },
       { x: 0.25, y: 0.0 },
@@ -45,6 +46,21 @@ export class TransferFunction {
       this.colorData[i * 3 + 0] = r;
       this.colorData[i * 3 + 1] = g;
       this.colorData[i * 3 + 2] = b;
+    }
+
+    // Set preset-specific opacity curves
+    if (preset === 'seismic') {
+      // Seismic: transparent in the middle (noise), opaque only at extreme reflections
+      // Wide transparent band around 0.5 to eliminate noise, only show strongest peaks
+      this.opacityPoints = [
+        { x: 0.0, y: 0.8 },   // Strong negative - high opacity
+        { x: 0.1, y: 0.2 },   // Moderate negative - low opacity
+        { x: 0.25, y: 0.0 },  // Weak negative - transparent
+        { x: 0.5, y: 0.0 },   // Zero amplitude - fully transparent
+        { x: 0.75, y: 0.0 },  // Weak positive - transparent
+        { x: 0.9, y: 0.2 },   // Moderate positive - low opacity
+        { x: 1.0, y: 0.8 },   // Strong positive - high opacity
+      ];
     }
 
     this.updateTexture();
@@ -93,7 +109,6 @@ export class TransferFunction {
         return this.interpolateColormap(plasma, t);
 
       case 'coolwarm':
-      default:
         // Blue -> White -> Red
         if (t < 0.5) {
           const s = t * 2;
@@ -110,6 +125,20 @@ export class TransferFunction {
             Math.floor((1 - s) * 255)
           ];
         }
+
+      case 'seismic':
+      default:
+        // Seismic colormap: Cyan -> Blue -> Gray -> Orange -> Red -> Yellow
+        // Diverging colormap centered at 0.5 (zero amplitude)
+        const seismicColors = [
+          [0, 255, 255],     // 0.0 - Cyan (strong negative)
+          [0, 0, 255],       // 0.25 - Blue
+          [128, 128, 128],   // 0.5 - Gray (zero)
+          [255, 128, 0],     // 0.75 - Orange
+          [255, 0, 0],       // 0.875 - Red
+          [255, 255, 0],     // 1.0 - Yellow (strong positive)
+        ];
+        return this.interpolateColormap(seismicColors, t);
     }
   }
 

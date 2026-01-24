@@ -96,8 +96,8 @@ struct Uniforms {
     isoValue: f32,
     frameIndex: u32,
     _pad1: u32,
-    _pad2: u32,
-    _pad3: u32,
+    windowCenter: f32,
+    windowWidth: f32,
 }
 
 ${sharedCode}
@@ -150,6 +150,8 @@ struct Uniforms {
     screenSize: vec2f,
     frameIndex: u32,
     _pad3: f32,
+    windowCenter: f32,
+    windowWidth: f32,
 }
 
 ${sharedCode}

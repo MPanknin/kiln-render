@@ -44,6 +44,9 @@ export class VolumeUI {
     useIndirection: true,
     showWireframe: false,
     showAxis: false,
+    // Windowing/Leveling for 16-bit data
+    windowCenter: 0.5,
+    windowWidth: 1.0,
   };
 
   // Stats display (read-only, updated periodically)
@@ -54,6 +57,7 @@ export class VolumeUI {
     timeToFirstRender: '',
     // Dataset
     dimensions: '',
+    fileSize: '',
     spacing: '',
     lodLevels: '',
     // Streaming
@@ -75,6 +79,7 @@ export class VolumeUI {
   // Folder references for visibility toggling
   private isoFolder: TweakpaneFolder | null = null;
   private tfFolder: TweakpaneFolder | null = null;
+  private windowFolder: TweakpaneFolder | null = null;
 
   constructor(
     renderer: Renderer,
@@ -90,6 +95,8 @@ export class VolumeUI {
     this.params.useIndirection = renderer.useIndirection;
     this.params.showWireframe = renderer.showWireframe;
     this.params.showAxis = renderer.showAxis;
+    this.params.windowCenter = renderer.windowCenter;
+    this.params.windowWidth = renderer.windowWidth;
 
     this.pane = new Pane({
       title: 'Volume Controls',
@@ -199,6 +206,7 @@ export class VolumeUI {
         'Cool': 'cool',
         'Viridis': 'viridis',
         'Plasma': 'plasma',
+        'Seismic': 'seismic',
       },
     }).on('change', (ev: { value: unknown }) => {
       this.transferFunction.setPreset(ev.value as TFPreset);
@@ -230,6 +238,29 @@ export class VolumeUI {
     if (containerEl) {
       containerEl.appendChild(canvasContainer);
     }
+
+    // Windowing/Leveling folder (for 16-bit data contrast adjustment)
+    this.windowFolder = pane.addFolder({
+      title: 'Window/Level',
+    });
+
+    this.windowFolder.addBinding(this.params, 'windowCenter', {
+      label: 'Center',
+      min: 0,
+      max: 1,
+      step: 0.01,
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.windowCenter = ev.value as number;
+    });
+
+    this.windowFolder.addBinding(this.params, 'windowWidth', {
+      label: 'Width',
+      min: 0.01,
+      max: 1,
+      step: 0.01,
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.windowWidth = ev.value as number;
+    });
   }
 
   private setupStatsPane(): void {
@@ -258,6 +289,11 @@ export class VolumeUI {
 
     dataFolder.addBinding(this.statsParams, 'dimensions', {
       label: 'Size',
+      readonly: true,
+    });
+
+    dataFolder.addBinding(this.statsParams, 'fileSize', {
+      label: 'File Size',
       readonly: true,
     });
 
@@ -327,6 +363,13 @@ export class VolumeUI {
     // Set static metadata info
     const dims = metadata.originalDimensions;
     this.statsParams.dimensions = `${dims[0]} × ${dims[1]} × ${dims[2]}`;
+
+    // Calculate raw file size in MB based on bit depth
+    const totalVoxels = dims[0] * dims[1] * dims[2];
+    const bytesPerVoxel = metadata.format === 'uint16' ? 2 : 1;
+    const bitDepth = metadata.format === 'uint16' ? 16 : 8;
+    const fileSizeMB = (totalVoxels * bytesPerVoxel) / (1024 * 1024);
+    this.statsParams.fileSize = `${fileSizeMB.toFixed(1)} MB (raw ${bitDepth}-bit)`;
 
     const spacing = metadata.voxelSpacing ?? [1, 1, 1];
     this.statsParams.spacing = `${spacing[0].toFixed(2)} × ${spacing[1].toFixed(2)} × ${spacing[2].toFixed(2)}`;
@@ -510,6 +553,11 @@ export class VolumeUI {
     // TF section visible in DVR and MIP modes
     if (this.tfFolder) {
       this.tfFolder.hidden = mode === 'iso';
+    }
+
+    // Window/Level section visible in all modes except LOD debug
+    if (this.windowFolder) {
+      this.windowFolder.hidden = mode === 'lod';
     }
   }
 }

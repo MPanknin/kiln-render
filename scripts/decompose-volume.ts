@@ -26,6 +26,7 @@ interface Config {
   brickSize: number;
   maxLod: number;
   bitDepth: 8 | 16;
+  native: boolean; // If true, preserve 16-bit data without conversion to 8-bit
 }
 
 function parseArgs(): Config {
@@ -43,6 +44,7 @@ function parseArgs(): Config {
     console.error('  --brick-size N       Brick size (default: 64)');
     console.error('  --max-lod N          Maximum LOD levels (default: auto)');
     console.error('  --bits N             Bit depth: 8 or 16 (default: 8)');
+    console.error('  --native             Keep 16-bit data as native uint16 (default: convert to 8-bit)');
     process.exit(1);
   }
 
@@ -99,6 +101,7 @@ function parseArgs(): Config {
   let headerSize = 0;
   let brickSize = 64;
   let maxLod = -1; // Auto
+  let native = false;
 
   for (let i = argOffset; i < args.length; i++) {
     if (args[i] === '--output' && args[i + 1]) {
@@ -129,6 +132,8 @@ function parseArgs(): Config {
       const bits = parseInt(args[i + 1]!);
       if (bits === 8 || bits === 16) bitDepth = bits;
       i++;
+    } else if (args[i] === '--native') {
+      native = true;
     }
   }
 
@@ -144,7 +149,7 @@ function parseArgs(): Config {
     maxLod = Math.max(0, Math.min(maxLod, 4)); // Cap at 4 levels
   }
 
-  return { inputPath, outputDir, dimensions, voxelSpacing, headerSize, brickSize, maxLod, bitDepth };
+  return { inputPath, outputDir, dimensions, voxelSpacing, headerSize, brickSize, maxLod, bitDepth, native };
 }
 
 /**
@@ -186,7 +191,8 @@ function findGlobalMinMax(
 
 /**
  * Read a slice of z-planes from the volume file (supports 8 and 16 bit)
- * For 16-bit, uses provided global min/max for consistent normalization
+ * For 16-bit, uses provided global min/max for consistent normalization (unless native=true)
+ * @param native - If true and bitDepth=16, return raw 16-bit data without conversion
  */
 function readZSlice(
   fd: number,
@@ -195,8 +201,9 @@ function readZSlice(
   zStart: number,
   zCount: number,
   bitDepth: 8 | 16,
-  globalRange?: { min: number; max: number }
-): Uint8Array {
+  globalRange?: { min: number; max: number },
+  native?: boolean
+): Uint8Array | Uint16Array {
   const [w, h, _d] = dims;
   const sliceSize = w * h;
   const bytesPerVoxel = bitDepth === 16 ? 2 : 1;
@@ -209,6 +216,11 @@ function readZSlice(
 
   if (bitDepth === 8) {
     return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.length);
+  }
+
+  // Native 16-bit: return raw data
+  if (native) {
+    return new Uint16Array(buffer.buffer, buffer.byteOffset, totalVoxels);
   }
 
   // Convert 16-bit to 8-bit using global min/max
@@ -231,25 +243,29 @@ function readZSlice(
 
 /**
  * Extract a brick from a z-slice buffer with proper border handling
- * @param sliceData - The slice data buffer
+ * @param sliceData - The slice data buffer (8-bit or 16-bit)
  * @param dims - Volume dimensions [w, h, d]
  * @param zBufferStart - The actual start z of the slice buffer (clamped to 0)
  * @param zRequestedStart - The requested start z (may be -1 for first brick)
  * @param brickX, brickY, brickZ - Brick coordinates
  * @param brickSize - Logical brick size (64)
+ * @param is16Bit - Whether to output 16-bit data
  */
 function extractBrickFromSlicesWithBorder(
-  sliceData: Uint8Array,
+  sliceData: Uint8Array | Uint16Array,
   dims: [number, number, number],
   zBufferStart: number,
   zRequestedStart: number,
   brickX: number,
   brickY: number,
   brickZ: number,
-  brickSize: number
-): Uint8Array {
+  brickSize: number,
+  is16Bit: boolean = false
+): Uint8Array | Uint16Array {
   const physicalSize = brickSize + 2; // 66
-  const brick = new Uint8Array(physicalSize ** 3);
+  const brick = is16Bit
+    ? new Uint16Array(physicalSize ** 3)
+    : new Uint8Array(physicalSize ** 3);
   const [w, h, d] = dims;
 
   // Logical start in the volume
@@ -283,12 +299,14 @@ function extractBrickFromSlicesWithBorder(
 
 /**
  * Optimized downsample that caches input bricks
+ * @param is16Bit - Whether to use 16-bit data
  */
 function downsampleVolumeOptimized(
   inputDir: string,
   inputDims: [number, number, number],
   outputDir: string,
-  brickSize: number
+  brickSize: number,
+  is16Bit: boolean = false
 ): [number, number, number] {
   const [w, h, d] = inputDims;
   const newDims: [number, number, number] = [Math.ceil(w / 2), Math.ceil(h / 2), Math.ceil(d / 2)];
@@ -306,16 +324,19 @@ function downsampleVolumeOptimized(
   console.log(`  Output bricks: ${outBricksX}x${outBricksY}x${outBricksZ}`);
 
   // Brick cache
-  const brickCache = new Map<string, Uint8Array>();
+  const brickCache = new Map<string, Uint8Array | Uint16Array>();
 
-  const loadBrick = (bx: number, by: number, bz: number): Uint8Array | null => {
+  const loadBrick = (bx: number, by: number, bz: number): Uint8Array | Uint16Array | null => {
     const key = `${bx}-${by}-${bz}`;
     if (brickCache.has(key)) {
       return brickCache.get(key)!;
     }
     const brickPath = path.join(inputDir, `brick-${bx}-${by}-${bz}.raw`);
     if (fs.existsSync(brickPath)) {
-      const data = new Uint8Array(fs.readFileSync(brickPath));
+      const buffer = fs.readFileSync(brickPath);
+      const data = is16Bit
+        ? new Uint16Array(buffer.buffer, buffer.byteOffset, buffer.length / 2)
+        : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.length);
       brickCache.set(key, data);
       return data;
     }
@@ -348,7 +369,9 @@ function downsampleVolumeOptimized(
 
     for (let oy = 0; oy < outBricksY; oy++) {
       for (let ox = 0; ox < outBricksX; ox++) {
-        const outputBrick = new Uint8Array(outPhysicalSize ** 3);
+        const outputBrick = is16Bit
+          ? new Uint16Array(outPhysicalSize ** 3)
+          : new Uint8Array(outPhysicalSize ** 3);
 
         // Output physical brick includes 1-voxel border on each side
         for (let lz = 0; lz < outPhysicalSize; lz++) {
@@ -383,7 +406,7 @@ function downsampleVolumeOptimized(
         }
 
         const outBrickPath = path.join(outputDir, `brick-${ox}-${oy}-${oz}.raw`);
-        fs.writeFileSync(outBrickPath, outputBrick);
+        fs.writeFileSync(outBrickPath, Buffer.from(outputBrick.buffer));
         savedCount++;
         process.stdout.write(`\r  Saved ${savedCount}/${totalBricks} bricks`);
       }
@@ -394,8 +417,12 @@ function downsampleVolumeOptimized(
   return newDims;
 }
 
-function decompose(config: Config): { outputDir: string; lodInfo: { lod: number; dimensions: [number, number, number]; bricks: [number, number, number]; brickCount: number }[]; brickSize: number } {
-  const { inputPath, outputDir, dimensions, voxelSpacing, headerSize, brickSize, maxLod, bitDepth } = config;
+function decompose(config: Config): { outputDir: string; lodInfo: { lod: number; dimensions: [number, number, number]; bricks: [number, number, number]; brickCount: number }[]; brickSize: number; outputFormat: 'uint8' | 'uint16' } {
+  const { inputPath, outputDir, dimensions, voxelSpacing, headerSize, brickSize, maxLod, bitDepth, native } = config;
+
+  // Determine output format: only 16-bit if both input is 16-bit AND native flag is set
+  const is16Bit = bitDepth === 16 && native;
+  const outputFormat: 'uint8' | 'uint16' = is16Bit ? 'uint16' : 'uint8';
 
   // Create output directory
   fs.mkdirSync(outputDir, { recursive: true });
@@ -403,7 +430,11 @@ function decompose(config: Config): { outputDir: string; lodInfo: { lod: number;
   const [w, h, d] = dimensions;
   console.log(`\nVolume size: ${w}x${h}x${d}`);
   console.log(`Voxel spacing: ${voxelSpacing.join(' x ')}`);
-  console.log(`Bit depth: ${bitDepth}`);
+  console.log(`Input bit depth: ${bitDepth}`);
+  console.log(`Output format: ${outputFormat}${is16Bit ? ' (native 16-bit)' : ''}`);
+  if (bitDepth === 16 && !native) {
+    console.log(`  (16-bit input will be normalized to 8-bit; use --native to preserve 16-bit)`);
+  }
 
   const lodInfo: Array<{
     lod: number;
@@ -452,13 +483,13 @@ function decompose(config: Config): { outputDir: string; lodInfo: { lod: number;
     const zEndRaw = bz * brickSize + brickSize + 1; // +1 for the far border
     const zEnd = Math.min(d, zEndRaw);
     const zCount = zEnd - zStart;
-    const sliceData = readZSlice(fd, headerSize, dimensions, zStart, zCount, bitDepth, globalRange);
+    const sliceData = readZSlice(fd, headerSize, dimensions, zStart, zCount, bitDepth, globalRange, is16Bit);
 
     for (let by = 0; by < bricksY; by++) {
       for (let bx = 0; bx < bricksX; bx++) {
-        const brick = extractBrickFromSlicesWithBorder(sliceData, dimensions, zStart, zStartRaw, bx, by, bz, brickSize);
+        const brick = extractBrickFromSlicesWithBorder(sliceData, dimensions, zStart, zStartRaw, bx, by, bz, brickSize, is16Bit);
         const brickPath = path.join(lod0Dir, `brick-${bx}-${by}-${bz}.raw`);
-        fs.writeFileSync(brickPath, brick);
+        fs.writeFileSync(brickPath, Buffer.from(brick.buffer));
         savedCount++;
       }
     }
@@ -478,7 +509,7 @@ function decompose(config: Config): { outputDir: string; lodInfo: { lod: number;
     const lodDir = path.join(outputDir, `lod${lod}`);
     fs.mkdirSync(lodDir, { recursive: true });
 
-    const newDims = downsampleVolumeOptimized(prevLodDir, currentDims, lodDir, brickSize);
+    const newDims = downsampleVolumeOptimized(prevLodDir, currentDims, lodDir, brickSize, is16Bit);
 
     const newBricksX = Math.ceil(newDims[0] / brickSize);
     const newBricksY = Math.ceil(newDims[1] / brickSize);
@@ -503,7 +534,7 @@ function decompose(config: Config): { outputDir: string; lodInfo: { lod: number;
     brickSize,
     maxLod,
     levels: lodInfo,
-    format: 'uint8',
+    format: outputFormat,
     inputFormat: bitDepth === 16 ? 'uint16' : 'uint8',
     createdAt: new Date().toISOString(),
   };
@@ -527,15 +558,17 @@ function decompose(config: Config): { outputDir: string; lodInfo: { lod: number;
   console.log(`Total size: ${(totalSize / 1024 / 1024).toFixed(1)} MB`);
 
   // Return output dir and lodInfo for pack step
-  return { outputDir, lodInfo, brickSize };
+  return { outputDir, lodInfo, brickSize, outputFormat };
 }
 
 /**
  * Pack brick files into binary sharded format with gzip compression
  */
-function packVolume(outputDir: string, lodInfo: { lod: number; bricks: [number, number, number] }[], brickSize: number): void {
+function packVolume(outputDir: string, lodInfo: { lod: number; bricks: [number, number, number] }[], brickSize: number, outputFormat: 'uint8' | 'uint16'): void {
   const physicalSize = brickSize + 2;
-  const uncompressedBrickBytes = physicalSize ** 3; // 287,496 for 66³
+  const is16Bit = outputFormat === 'uint16';
+  const bytesPerVoxel = is16Bit ? 2 : 1;
+  const uncompressedBrickBytes = physicalSize ** 3 * bytesPerVoxel; // 287,496 for 66³ (8-bit), 574,992 for 66³ (16-bit)
 
   console.log('\n=== Packing into compressed binary sharded format ===');
 
@@ -581,11 +614,15 @@ function packVolume(outputDir: string, lodInfo: { lod: number; bricks: [number, 
             continue;
           }
 
-          const data = new Uint8Array(fs.readFileSync(brickPath));
+          const rawBuffer = fs.readFileSync(brickPath);
+          const data = is16Bit
+            ? new Uint16Array(rawBuffer.buffer, rawBuffer.byteOffset, rawBuffer.length / 2)
+            : new Uint8Array(rawBuffer.buffer, rawBuffer.byteOffset, rawBuffer.length);
 
           // Calculate stats for the 64³ logical core
           const logicalSize = physicalSize - 2;
-          let min = 255, max = 0, sum = 0, count = 0;
+          const maxVal = is16Bit ? 65535 : 255;
+          let min = maxVal, max = 0, sum = 0, count = 0;
           for (let lz = 1; lz <= logicalSize; lz++) {
             for (let ly = 1; ly <= logicalSize; ly++) {
               for (let lx = 1; lx <= logicalSize; lx++) {
@@ -601,7 +638,7 @@ function packVolume(outputDir: string, lodInfo: { lod: number; bricks: [number, 
           const avg = Math.round(sum / count);
 
           // Compress the brick data with gzip (level 6 for good balance)
-          const compressed = gzipSync(Buffer.from(data), { level: 6 });
+          const compressed = gzipSync(Buffer.from(data.buffer), { level: 6 });
           const compressedSize = compressed.length;
 
           // Write compressed data to bin file
@@ -697,6 +734,7 @@ console.log(`  Header size: ${config.headerSize}`);
 console.log(`  Brick size: ${config.brickSize}`);
 console.log(`  Max LOD: ${config.maxLod}`);
 console.log(`  Bit depth: ${config.bitDepth}`);
+console.log(`  Native 16-bit: ${config.native}`);
 
 const result = decompose(config);
-packVolume(result.outputDir, result.lodInfo, result.brickSize);
+packVolume(result.outputDir, result.lodInfo, result.brickSize, result.outputFormat);

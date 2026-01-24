@@ -1,4 +1,4 @@
-// Direct Volume Rendering (DVR) - Front-to-back compositing
+// Direct Volume Rendering (DVR) - Front-to-back compositing with windowing
 
 fn rayMarchDVR(
     rayOrigin: vec3f, rayDir: vec3f, tStart: f32, tEnd: f32,
@@ -6,6 +6,10 @@ fn rayMarchDVR(
 ) -> vec4f {
     let maxDim = max(datasetSize.x, max(datasetSize.y, datasetSize.z));
     let invDir = 1.0 / rayDir;
+
+    // Get windowing parameters from uniforms
+    let windowCenter = uniforms.windowCenter;
+    let windowWidth = uniforms.windowWidth;
 
     var color = vec3f(0.0);
     var alpha = 0.0;
@@ -30,7 +34,7 @@ fn rayMarchDVR(
             let voxel = normalizedToVoxel(pos, normalizedSize, datasetSize);
             let density = sampleAtlas(voxel, brick.indirection, brick.lodScale);
 
-            composeSample(density, brick.stepSize, maxDim, &color, &alpha);
+            composeSampleWindowed(density, brick.stepSize, maxDim, windowCenter, windowWidth, &color, &alpha);
             if (alpha > EARLY_EXIT_ALPHA) { break; }
 
             tSample += brick.stepSize;

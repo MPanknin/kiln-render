@@ -1,10 +1,14 @@
-// Isosurface rendering with Phong shading
+// Isosurface rendering with Phong shading and windowing
 
 fn rayMarchISO(
     rayOrigin: vec3f, rayDir: vec3f, tStart: f32, tEnd: f32,
     normalizedSize: vec3f, datasetSize: vec3f, isoValue: f32
 ) -> vec4f {
     let invDir = 1.0 / rayDir;
+
+    // Get windowing parameters from uniforms
+    let windowCenter = uniforms.windowCenter;
+    let windowWidth = uniforms.windowWidth;
 
     var prevDensity = 0.0;
     var prevT = tStart;
@@ -27,13 +31,16 @@ fn rayMarchISO(
         for (var i = 0u; i < brick.numSteps; i++) {
             let pos = rayOrigin + rayDir * tSample;
             let voxel = normalizedToVoxel(pos, normalizedSize, datasetSize);
-            let density = sampleAtlas(voxel, brick.indirection, brick.lodScale);
+            let rawDensity = sampleAtlas(voxel, brick.indirection, brick.lodScale);
+            // Apply windowing to density for isosurface comparison
+            let density = applyWindow(rawDensity, windowCenter, windowWidth);
 
-            // Check for isosurface crossing
+            // Check for isosurface crossing (isoValue is in windowed space)
             if (prevDensity < isoValue && density >= isoValue) {
-                let tSurface = refineIsoSurface(
+                let tSurface = refineIsoSurfaceWindowed(
                     rayOrigin, rayDir, prevT, tSample, isoValue,
-                    normalizedSize, datasetSize, brick.indirection, brick.lodScale
+                    normalizedSize, datasetSize, brick.indirection, brick.lodScale,
+                    windowCenter, windowWidth
                 );
                 let surfacePos = rayOrigin + rayDir * tSurface;
                 let surfaceVoxel = normalizedToVoxel(surfacePos, normalizedSize, datasetSize);

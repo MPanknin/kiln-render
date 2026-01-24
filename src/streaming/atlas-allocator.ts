@@ -44,7 +44,7 @@ export class AtlasAllocator {
   // Reverse mapping: slot index -> brick metadata (for eviction)
   private slotMetadata: (BrickMetadata | null)[];
 
-  // Total slots available (8x8x8 = 512)
+  // Total slots available (GRID_SIZE³)
   readonly totalSlots: number;
 
   constructor() {

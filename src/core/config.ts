@@ -8,12 +8,18 @@
 // Core constants
 export const LOGICAL_BRICK_SIZE = 64;
 export const PHYSICAL_BRICK_SIZE = 66; // 64 + 1 voxel padding on each side
-export const ATLAS_SIZE = 528;         // 8 slots * 66 voxels = 528
+export const ATLAS_SIZE = 528;         // Grid slots * physical brick size
+// export const ATLAS_SIZE = 660;         // Grid slots * physical brick size
+// export const ATLAS_SIZE = 792;         // Grid slots * physical brick size
+
+// Derived constants - GRID_SIZE determines how many bricks fit in the atlas
+// ATLAS_SIZE = GRID_SIZE * PHYSICAL_BRICK_SIZE
+// 528 = 8 * 66, 660 = 10 * 66, 792 = 12 * 66, etc.
+export const GRID_SIZE = Math.floor(ATLAS_SIZE / PHYSICAL_BRICK_SIZE);
+export const TOTAL_BRICK_SLOTS = GRID_SIZE * GRID_SIZE * GRID_SIZE;
 
 // For backward compatibility with existing code
 export const BRICK_SIZE = LOGICAL_BRICK_SIZE;
-export const GRID_SIZE = 8;
-export const TOTAL_BRICK_SLOTS = 512;
 
 // Dataset dimensions (can be reconfigured dynamically)
 // Default: small test volume

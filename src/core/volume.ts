@@ -3,39 +3,50 @@
  */
 
 import { ATLAS_SIZE } from './config.js';
+import type { BitDepth, BrickData } from '../streaming/brick-loader.js';
 
 export interface VolumeCanvas {
   texture: GPUTexture;
   size: number;
+  bitDepth: BitDepth;
 }
 
 /**
- * Create empty volume canvas (512³)
+ * Create empty volume canvas (atlas texture)
+ * @param device - WebGPU device
+ * @param bitDepth - 8 for uint8/r8unorm, 16 for uint16/r16unorm
  */
-export function createVolumeCanvas(device: GPUDevice): VolumeCanvas {
+export function createVolumeCanvas(device: GPUDevice, bitDepth: BitDepth = 8): VolumeCanvas {
+  const format: GPUTextureFormat = bitDepth === 16 ? 'r16unorm' : 'r8unorm';
   const texture = device.createTexture({
-    size: [ATLAS_SIZE, ATLAS_SIZE, ATLAS_SIZE], // Use 528
-    format: 'r8unorm',
+    size: [ATLAS_SIZE, ATLAS_SIZE, ATLAS_SIZE],
+    format,
     dimension: '3d',
     usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
   });
-  return { texture, size: ATLAS_SIZE };
+  return { texture, size: ATLAS_SIZE, bitDepth };
 }
 
 /**
  * Write volume data into canvas at specified offset
+ * Handles both 8-bit and 16-bit data based on canvas bitDepth
  */
 export function writeToCanvas(
   device: GPUDevice,
   canvas: VolumeCanvas,
-  data: Uint8Array,
+  data: BrickData,
   size: [number, number, number],
   offset: [number, number, number] = [0, 0, 0]
 ) {
+  const bytesPerVoxel = canvas.bitDepth === 16 ? 2 : 1;
   device.queue.writeTexture(
     { texture: canvas.texture, origin: offset },
-    data as Uint8Array<ArrayBuffer>,
-    { bytesPerRow: size[0], rowsPerImage: size[1] },
+    data.buffer,
+    {
+      offset: data.byteOffset,
+      bytesPerRow: size[0] * bytesPerVoxel,
+      rowsPerImage: size[1]
+    },
     size
   );
 }

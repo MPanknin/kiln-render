@@ -1,10 +1,15 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { BRICK_SIZE, GRID_SIZE, ATLAS_SIZE } from '../src/config.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { BRICK_SIZE, PHYSICAL_BRICK_SIZE, GRID_SIZE, ATLAS_SIZE } from '../src/core/config.js';
 
 // Test the constants and data logic without GPU
 describe('Indirection Constants', () => {
-  it('should have correct brick size', () => {
+  it('should have correct logical brick size', () => {
     expect(BRICK_SIZE).toBe(64);
+  });
+
+  it('should have correct physical brick size (with padding)', () => {
+    expect(PHYSICAL_BRICK_SIZE).toBe(66);
+    expect(PHYSICAL_BRICK_SIZE).toBe(BRICK_SIZE + 2);
   });
 
   it('should have correct grid size', () => {
@@ -17,8 +22,9 @@ describe('Indirection Constants', () => {
     expect(Number.isInteger(ATLAS_SIZE)).toBe(true);
   });
 
-  it('should have consistent dimensions', () => {
-    expect(GRID_SIZE * BRICK_SIZE).toBe(ATLAS_SIZE);
+  it('should have consistent dimensions (using physical brick size)', () => {
+    // ATLAS_SIZE = GRID_SIZE * PHYSICAL_BRICK_SIZE
+    expect(GRID_SIZE * PHYSICAL_BRICK_SIZE).toBe(ATLAS_SIZE);
   });
 });
 

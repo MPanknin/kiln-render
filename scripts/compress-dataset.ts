@@ -73,13 +73,16 @@ function main() {
 
   console.log(`Compressing dataset: ${volume.name}`);
   console.log(`  Dimensions: ${volume.originalDimensions.join('x')}`);
+  console.log(`  Format: ${volume.format}`);
   console.log(`  LOD levels: ${volume.maxLod + 1}`);
 
   // Create output directory
   fs.mkdirSync(outputDir, { recursive: true });
 
   const physicalSize = volume.physicalSize;
-  const uncompressedBrickBytes = physicalSize ** 3;
+  const is16Bit = volume.format === 'uint16';
+  const bytesPerVoxel = is16Bit ? 2 : 1;
+  const uncompressedBrickBytes = physicalSize ** 3 * bytesPerVoxel;
 
   let totalUncompressed = 0;
   let totalCompressed = 0;

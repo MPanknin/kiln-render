@@ -9,6 +9,22 @@
 import { getEmptyBrickThreshold } from '../core/config.js';
 import { getDecompressionPool } from './decompression-pool.js';
 
+/** Supported volume data formats */
+export type VolumeFormat = 'uint8' | 'uint16';
+
+/** Bit depth for volume data */
+export type BitDepth = 8 | 16;
+
+/** Convert format string to bit depth */
+export function formatToBitDepth(format: VolumeFormat): BitDepth {
+  return format === 'uint16' ? 16 : 8;
+}
+
+/** Convert bit depth to format string */
+export function bitDepthToFormat(bitDepth: BitDepth): VolumeFormat {
+  return bitDepth === 16 ? 'uint16' : 'uint8';
+}
+
 export interface BrickStats {
   offset: number;
   size: number; // Compressed size (for range reads)
@@ -43,7 +59,7 @@ export interface BrickMetadata {
     binFile: string;
     indexFile: string;
   }[];
-  format: string;
+  format: VolumeFormat;
   packed: true;
   compressed?: boolean; // Whether bricks are gzip compressed
   createdAt: string;
@@ -55,10 +71,13 @@ export interface NetworkStats {
   requestCount: number;
 }
 
+/** Type for brick data - can be 8-bit or 16-bit */
+export type BrickData = Uint8Array | Uint16Array;
+
 export class BrickLoader {
   private basePath: string;
   private metadata: BrickMetadata | null = null;
-  private cache = new Map<string, Uint8Array>();
+  private cache = new Map<string, BrickData>();
   private lodIndices = new Map<number, LodIndex>();
 
   // Network tracking
@@ -68,6 +87,13 @@ export class BrickLoader {
 
   constructor(basePath: string) {
     this.basePath = basePath;
+  }
+
+  /**
+   * Get the bit depth of the loaded volume
+   */
+  getBitDepth(): BitDepth {
+    return this.metadata?.format === 'uint16' ? 16 : 8;
   }
 
   /**
@@ -191,8 +217,9 @@ export class BrickLoader {
   /**
    * Load a single brick using HTTP Range request
    * Handles gzip decompression via worker pool if data is compressed
+   * Returns Uint8Array for 8-bit volumes, Uint16Array for 16-bit volumes
    */
-  async loadBrick(lod: number, bx: number, by: number, bz: number): Promise<Uint8Array | null> {
+  async loadBrick(lod: number, bx: number, by: number, bz: number): Promise<BrickData | null> {
     const key = `lod${lod}:${bx}-${by}-${bz}`;
 
     // Check cache first (cache stores decompressed data)
@@ -241,14 +268,23 @@ export class BrickLoader {
       // Check if data is compressed (from index or metadata)
       const isCompressed = index.compressed ?? meta.compressed ?? false;
 
-      let data: Uint8Array;
+      let rawData: Uint8Array;
       if (isCompressed) {
         // Decompress using worker pool (off main thread)
         const pool = getDecompressionPool();
-        data = await pool.decompress(buffer);
+        rawData = await pool.decompress(buffer);
       } else {
         // Uncompressed - use directly
-        data = new Uint8Array(buffer);
+        rawData = new Uint8Array(buffer);
+      }
+
+      // Convert to appropriate typed array based on format
+      let data: BrickData;
+      if (meta.format === 'uint16') {
+        // Reinterpret bytes as 16-bit values (little-endian)
+        data = new Uint16Array(rawData.buffer, rawData.byteOffset, rawData.byteLength / 2);
+      } else {
+        data = rawData;
       }
 
       this.cache.set(key, data);
@@ -262,14 +298,14 @@ export class BrickLoader {
   /**
    * Preload all bricks at a given LOD level
    */
-  async preloadLevel(lod: number): Promise<Map<string, Uint8Array>> {
+  async preloadLevel(lod: number): Promise<Map<string, BrickData>> {
     const meta = this.getMetadata();
     const level = meta.levels.find(l => l.lod === lod);
     if (!level) {
       throw new Error(`LOD level ${lod} not found`);
     }
 
-    const bricks = new Map<string, Uint8Array>();
+    const bricks = new Map<string, BrickData>();
     const [nx, ny, nz] = level.bricks;
 
     // Batch fetch all bricks at this level
@@ -298,9 +334,9 @@ export class BrickLoader {
   /**
    * Build a pyramid structure compatible with the existing code
    */
-  async buildPyramid(): Promise<Record<string, Map<string, Uint8Array>>> {
+  async buildPyramid(): Promise<Record<string, Map<string, BrickData>>> {
     const meta = this.getMetadata();
-    const pyramid: Record<string, Map<string, Uint8Array>> = {};
+    const pyramid: Record<string, Map<string, BrickData>> = {};
 
     for (const level of meta.levels) {
       const levelName = `scale${level.lod}`;
@@ -336,7 +372,7 @@ export class BrickLoader {
  * Create a pyramid structure from BrickLoader
  */
 export async function loadBrickPyramid(basePath: string): Promise<{
-  pyramid: Record<string, Map<string, Uint8Array>>;
+  pyramid: Record<string, Map<string, BrickData>>;
   metadata: BrickMetadata;
   loader: BrickLoader;
 }> {

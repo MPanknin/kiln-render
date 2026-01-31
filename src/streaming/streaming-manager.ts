@@ -13,7 +13,7 @@
 
 import { Camera, extractFrustumPlanes, isAABBInFrustum, multiplyMatrices } from '../core/camera.js';
 import { Renderer } from '../core/renderer.js';
-import { BrickLoader, BrickMetadata } from './brick-loader.js';
+import type { DataProvider, VolumeMetadata } from '../data/data-provider.js';
 import { AtlasSlot } from './atlas-allocator.js';
 import { PHYSICAL_BRICK_SIZE, getNormalizedSize } from '../core/config.js';
 import { writeToCanvas } from '../core/volume.js';
@@ -52,8 +52,8 @@ export interface StreamingStats {
 
 export class StreamingManager {
   private renderer: Renderer;
-  private brickLoader: BrickLoader;
-  private metadata: BrickMetadata;
+  private dataProvider: DataProvider;
+  private metadata: VolumeMetadata;
   private device: GPUDevice;
 
   // Track loaded bricks: key -> { slot, slotIndex }
@@ -141,13 +141,13 @@ export class StreamingManager {
 
   constructor(
     renderer: Renderer,
-    brickLoader: BrickLoader,
-    metadata: BrickMetadata,
+    dataProvider: DataProvider,
+    metadata: VolumeMetadata,
     device: GPUDevice,
     pageLoadStartTime?: number
   ) {
     this.renderer = renderer;
-    this.brickLoader = brickLoader;
+    this.dataProvider = dataProvider;
     this.metadata = metadata;
     this.device = device;
 
@@ -166,7 +166,7 @@ export class StreamingManager {
     const level = this.metadata.levels.find(l => l.lod === maxLod);
     if (!level) return;
 
-    const [gridX, gridY, gridZ] = level.bricks as [number, number, number];
+    const [gridX, gridY, gridZ] = level.brickGrid;
     console.log(`Loading base LOD ${maxLod} (${gridX}x${gridY}x${gridZ} = ${level.brickCount} bricks)...`);
 
     for (let bz = 0; bz < gridZ; bz++) {
@@ -175,7 +175,7 @@ export class StreamingManager {
           const key = `lod${maxLod}:${bz}/${by}/${bx}`;
 
           // Check if empty
-          const isEmpty = await this.brickLoader.isBrickEmpty(maxLod, bx, by, bz);
+          const isEmpty = await this.dataProvider.isBrickEmpty(maxLod, bx, by, bz);
           if (isEmpty) {
             this.emptyBricks.add(key);
             this.renderer.indirection.setEmpty(bx, by, bz, maxLod);
@@ -183,7 +183,7 @@ export class StreamingManager {
           }
 
           // Load brick data
-          const data = await this.brickLoader.loadBrick(maxLod, bx, by, bz);
+          const data = await this.dataProvider.loadBrick(maxLod, bx, by, bz);
           if (!data) continue;
 
           // Allocate slot
@@ -316,8 +316,8 @@ export class StreamingManager {
    * Get current stats
    */
   getStats(): StreamingStats {
-    // Get live network stats from BrickLoader
-    const networkStats = this.brickLoader.getNetworkStats();
+    // Get live network stats from DataProvider
+    const networkStats = this.dataProvider.getNetworkStats();
     return {
       ...this.lastStats,
       totalBytesDownloaded: networkStats.totalBytesDownloaded,
@@ -362,7 +362,7 @@ export class StreamingManager {
       const level = this.metadata.levels.find(l => l.lod === lod);
       if (!level) return;
 
-      const [gridX, gridY, gridZ] = level.bricks as [number, number, number];
+      const [gridX, gridY, gridZ] = level.brickGrid;
 
       // Bounds check - handles non-power-of-two grids
       if (bx < 0 || bx >= gridX || by < 0 || by >= gridY || bz < 0 || bz >= gridZ) return;
@@ -401,7 +401,7 @@ export class StreamingManager {
         // Compute child coordinates for non-power-of-two grids
         // The relationship is: parent brick covers a 2x2x2 region at finer LOD
         // But we need to check bounds at the finer level
-        const [finerGridX, finerGridY, finerGridZ] = finerLevel.bricks as [number, number, number];
+        const [finerGridX, finerGridY, finerGridZ] = finerLevel.brickGrid;
         const nextLod = lod - 1;
 
         for (let dz = 0; dz < 2; dz++) {
@@ -439,7 +439,7 @@ export class StreamingManager {
     // Start from coarsest LOD
     const rootLevel = this.metadata.levels.find(l => l.lod === maxLod);
     if (rootLevel) {
-      const [gridX, gridY, gridZ] = rootLevel.bricks as [number, number, number];
+      const [gridX, gridY, gridZ] = rootLevel.brickGrid;
       for (let bz = 0; bz < gridZ; bz++) {
         for (let by = 0; by < gridY; by++) {
           for (let bx = 0; bx < gridX; bx++) {
@@ -557,7 +557,7 @@ export class StreamingManager {
     if (signal.aborted) return;
 
     // Check if empty
-    const isEmpty = await this.brickLoader.isBrickEmpty(lod, bx, by, bz);
+    const isEmpty = await this.dataProvider.isBrickEmpty(lod, bx, by, bz);
     if (signal.aborted) return;
 
     if (isEmpty) {
@@ -567,7 +567,7 @@ export class StreamingManager {
     }
 
     // Load brick data
-    const data = await this.brickLoader.loadBrick(lod, bx, by, bz);
+    const data = await this.dataProvider.loadBrick(lod, bx, by, bz);
     if (signal.aborted) return;
 
     if (!data) return;
@@ -649,7 +649,7 @@ export class StreamingManager {
     if (!level) return { min: [0, 0, 0], max: [0, 0, 0] };
 
     const normalizedSize = getNormalizedSize();
-    const [gridX, gridY, gridZ] = level.bricks as [number, number, number];
+    const [gridX, gridY, gridZ] = level.brickGrid;
     const brickSize: [number, number, number] = [
       normalizedSize[0] / gridX,
       normalizedSize[1] / gridY,
@@ -694,7 +694,7 @@ export class StreamingManager {
    */
   private getVoxelWorldSize(lod: number): number {
     const normalizedSize = getNormalizedSize();
-    const dims = this.metadata.originalDimensions;
+    const dims = this.metadata.dimensions;
 
     // Base voxel size in normalized space (LOD 0)
     // Use the largest dimension for consistent error metric

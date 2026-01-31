@@ -10,7 +10,7 @@ import { IndirectionTable } from './indirection.js';
 import { AtlasAllocator, AtlasSlot } from '../streaming/atlas-allocator.js';
 import { volumeShader, wireframeShader, axisShader, computeShader, blitShader } from '../shaders/index.js';
 import { getDatasetSize, getNormalizedSize } from './config.js';
-import type { BitDepth } from '../streaming/brick-loader.js';
+import type { BitDepth } from '../data/data-provider.js';
 
 export type RenderMode = 'fragment' | 'compute';
 

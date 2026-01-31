@@ -7,7 +7,7 @@ import { TransferFunction, TFPreset } from '../core/transfer-function.js';
 import { Renderer, VolumeRenderMode } from '../core/renderer.js';
 import { Camera, UpAxis } from '../core/camera.js';
 import { StreamingManager } from '../streaming/streaming-manager.js';
-import type { BrickMetadata } from '../streaming/brick-loader.js';
+import type { VolumeMetadata } from '../data/data-provider.js';
 
 // Tweakpane's types don't fully export FolderApi, so use a minimal interface
 interface TweakpaneFolder {
@@ -357,19 +357,18 @@ export class VolumeUI {
   /**
    * Set the streaming manager and metadata for stats display
    */
-  setStreamingManager(manager: StreamingManager, metadata: BrickMetadata): void {
+  setStreamingManager(manager: StreamingManager, metadata: VolumeMetadata): void {
     this.streamingManager = manager;
 
     // Set static metadata info
-    const dims = metadata.originalDimensions;
+    const dims = metadata.dimensions;
     this.statsParams.dimensions = `${dims[0]} × ${dims[1]} × ${dims[2]}`;
 
     // Calculate raw file size in MB based on bit depth
     const totalVoxels = dims[0] * dims[1] * dims[2];
-    const bytesPerVoxel = metadata.format === 'uint16' ? 2 : 1;
-    const bitDepth = metadata.format === 'uint16' ? 16 : 8;
+    const bytesPerVoxel = metadata.bitDepth === 16 ? 2 : 1;
     const fileSizeMB = (totalVoxels * bytesPerVoxel) / (1024 * 1024);
-    this.statsParams.fileSize = `${fileSizeMB.toFixed(1)} MB (raw ${bitDepth}-bit)`;
+    this.statsParams.fileSize = `${fileSizeMB.toFixed(1)} MB (raw ${metadata.bitDepth}-bit)`;
 
     const spacing = metadata.voxelSpacing ?? [1, 1, 1];
     this.statsParams.spacing = `${spacing[0].toFixed(2)} × ${spacing[1].toFixed(2)} × ${spacing[2].toFixed(2)}`;

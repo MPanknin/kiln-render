@@ -3,7 +3,7 @@
  */
 
 import { ATLAS_SIZE } from './config.js';
-import type { BitDepth, BrickData } from '../streaming/brick-loader.js';
+import type { BitDepth, BrickData } from '../data/data-provider.js';
 
 export interface VolumeCanvas {
   texture: GPUTexture;

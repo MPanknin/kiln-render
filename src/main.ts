@@ -8,7 +8,8 @@ import { Camera, UpAxis, extractFrustumPlanes, isAABBInFrustum, multiplyMatrices
 import { writeToCanvas } from './core/volume.js';
 import { PHYSICAL_BRICK_SIZE, setDatasetSize, getNormalizedSize } from './core/config.js';
 import { AtlasSlot } from './streaming/atlas-allocator.js';
-import { BrickLoader } from './streaming/brick-loader.js';
+import { ShardedDataProvider } from './data/sharded-provider.js';
+import type { DataProvider } from './data/data-provider.js';
 import { TransferFunction } from './core/transfer-function.js';
 import { VolumeUI } from './ui/volume-ui.js';
 import { StreamingManager } from './streaming/streaming-manager.js';
@@ -66,24 +67,24 @@ async function main() {
   const format = navigator.gpu.getPreferredCanvasFormat();
   context.configure({ device, format });
 
-  // Load volume metadata
+  // Load volume metadata via DataProvider
   console.log(`Loading volume metadata from ${VOLUME_SOURCE}...`);
-  const brickLoader = new BrickLoader(VOLUME_SOURCE);
-  const metadata = await brickLoader.loadMetadata();
+  const dataProvider: DataProvider = new ShardedDataProvider(VOLUME_SOURCE);
+  const metadata = await dataProvider.initialize();
 
   // Configure dataset size from metadata
-  const spacing = metadata.voxelSpacing as [number, number, number] | undefined;
-  setDatasetSize(metadata.originalDimensions as [number, number, number], spacing);
+  const spacing = metadata.voxelSpacing;
+  setDatasetSize(metadata.dimensions, spacing);
 
   console.log(`\n📦 Volume: ${metadata.name}`);
-  console.log(`  Dimensions: ${metadata.originalDimensions.join('x')}`);
+  console.log(`  Dimensions: ${metadata.dimensions.join('x')}`);
   console.log(`  LOD levels: ${metadata.levels.length}`);
   for (const level of metadata.levels) {
-    console.log(`    LOD ${level.lod}: ${level.bricks.join('x')} bricks (${level.brickCount} total)`);
+    console.log(`    LOD ${level.lod}: ${level.brickGrid.join('x')} bricks (${level.brickCount} total)`);
   }
 
   // Create renderer with appropriate bit depth from metadata
-  const bitDepth = brickLoader.getBitDepth();
+  const bitDepth = dataProvider.getBitDepth();
   const renderer = new Renderer(device, format, bitDepth);
   console.log(`  Format: ${bitDepth}-bit`);
 
@@ -95,7 +96,7 @@ async function main() {
   const camera = new Camera(canvas);
 
   // Create streaming manager (pass page load start time for accurate time-to-first-render)
-  const streamingManager = new StreamingManager(renderer, brickLoader, metadata, device, PAGE_LOAD_START);
+  const streamingManager = new StreamingManager(renderer, dataProvider, metadata, device, PAGE_LOAD_START);
 
   // Streaming mode toggle - enabled by default
   let streamingEnabled = true;
@@ -171,7 +172,7 @@ async function main() {
       return;
     }
 
-    const [gridX, gridY, gridZ] = level.bricks as [number, number, number];
+    const [gridX, gridY, gridZ] = level.brickGrid;
     const normalizedSize = getNormalizedSize();
 
     // Get camera position
@@ -255,7 +256,7 @@ async function main() {
       }
 
       // Skip empty bricks (min=0, max=0, avg=0) - mark as empty in indirection
-      if (await brickLoader.isBrickEmpty(lod, brick.bx, brick.by, brick.bz)) {
+      if (await dataProvider.isBrickEmpty(lod, brick.bx, brick.by, brick.bz)) {
         renderer.indirection.setEmpty(brick.bx, brick.by, brick.bz, lod);
         skippedEmpty++;
         continue;
@@ -279,7 +280,7 @@ async function main() {
       }
 
       // Load brick data
-      const data = await brickLoader.loadBrick(lod, brick.bx, brick.by, brick.bz);
+      const data = await dataProvider.loadBrick(lod, brick.bx, brick.by, brick.bz);
       if (!data) {
         renderer.allocator.free(result.slot);
         continue;
@@ -370,7 +371,7 @@ async function main() {
   (window as any).metadata = metadata;
   (window as any).transferFunction = transferFunction;
   (window as any).ui = ui;
-  (window as any).loader = brickLoader;
+  (window as any).dataProvider = dataProvider;
   (window as any).streamingManager = streamingManager;
   (window as any).startStreaming = startStreaming;
   (window as any).stopStreaming = stopStreaming;
@@ -400,7 +401,7 @@ async function main() {
     }
 
     try {
-      const data = await brickLoader.loadBrick(lod, bx, by, bz);
+      const data = await dataProvider.loadBrick(lod, bx, by, bz);
       if (!data) {
         console.error('Failed to load brick data');
         return;

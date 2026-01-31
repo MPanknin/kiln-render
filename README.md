@@ -15,22 +15,24 @@ Kiln streams multi-gigabyte volumes over HTTP, rendering them at interactive fra
 
 ## What Problem Does Kiln Solve?
 
-Traditional volume renderers load entire datasets into GPU memory, limiting them to volumes that fit in VRAM (typically 8-24 GB). Medical imaging, scientific simulations, and microscopy routinely produce datasets of 50+ GB that cannot be visualized this way.
+Web-based volume renderers typically require loading entire datasets into GPU memory upfront, making multi-gigabyte medical and scientific volumes impractical to visualize in a browser. While out-of-core rendering exists in desktop applications, bringing this capability to the web has been challenging.
 
-Kiln solves this by implementing **virtual texturing for volumetric data**:
+Kiln brings **virtual texturing for volumetric data** to the browser:
 
-- **Fixed memory footprint** - Uses only ~150 MB of VRAM regardless of dataset size
+- **Fixed memory footprint** - Uses only ~150 MB of VRAM for a working set of bricks
 - **Stream on demand** - Fetches only the bricks visible in the current view
 - **Multi-resolution** - Automatically shows coarse data far away, fine data up close
 - **Network-native** - Streams directly from S3, CDN, or any HTTP server supporting Range requests
 
 ## Features
 
-- **Out-of-core streaming** - Distance-based LOD selection with LRU eviction
+- **Out-of-core streaming** - Screen-space error (SSE) based LOD selection with LRU eviction
 - **Multi-LOD support** - Coarse-to-fine octree traversal with automatic refinement
-- **Constant VRAM usage** - 512 brick slots (147 MB atlas) regardless of source volume size
+- **Bounded VRAM usage** - 512 brick slots (~150 MB atlas) for a working set cache
+- **8-bit and 16-bit volumes** - Native r16unorm support with windowing/leveling controls
 - **Virtual texturing** - Indirection table maps logical volume to physical cache
 - **Compute shader raycasting** - Brick-aware raymarching with early ray termination
+- **Brick compression** - Gzip compression with parallel Web Worker decompression
 - **Empty brick skipping** - Pre-indexed statistics enable zero-cost culling
 - **Multiple render modes** - DVR, MIP, Isosurface, LOD visualization
 - **HTTP Range requests** - Granular byte-range fetches for efficient streaming
@@ -67,13 +69,32 @@ The demo loads a sample dataset from S3. To use your own data, see the [Data Pre
 | **Indirection** | Toggle virtual texturing on/off |
 | **Wireframe** | Show volume bounding box |
 | **Transfer Function** | Color/opacity presets and interactive curve editing |
+| **Window/Level** | Contrast adjustment for 16-bit data (center and width) |
+
+## Why WebGPU?
+
+Kiln uses WebGPU rather than WebGL. This provides several technical advantages for volume rendering:
+
+| Feature | WebGL | WebGPU (Kiln) |
+|---------|-------|---------------|
+| **16-bit textures** | Emulated (two 8-bit channels + shader reconstruction) | Native `r16unorm` format |
+| **3D texture size** | Often limited to 2048³ | Up to 16384³ (device-dependent) |
+| **Compute shaders** | Not available | Full support for raymarching |
+| **Texture updates** | Synchronous, blocks rendering | `writeTexture` is asynchronous |
+| **Integer textures** | Limited support | Native `rgba8uint` for indirection |
+
+**Native 16-bit textures** are particularly significant for medical imaging. WebGL requires packing 16-bit values into two 8-bit channels and reconstructing them in the shader, adding overhead and complexity. WebGPU's `r16unorm` format stores and samples 16-bit data directly with hardware filtering.
+
+**Compute shaders** enable efficient full-screen raymarching. Each pixel generates and traces its own ray independently, mapping naturally to GPU parallelism. WebGL requires rendering a full-screen quad and performing raymarching in a fragment shader, which works but is less flexible.
+
+**Asynchronous texture updates** allow brick data to be uploaded to the atlas without stalling the render loop. This is important for streaming, where new bricks arrive continuously while rendering proceeds.
 
 ## Target Use Cases
 
-- Medical imaging (CT, MRI) visualization
+- Medical imaging (CT, MRI) visualization in the browser
 - Scientific visualization (simulation data, microscopy)
 - Geospatial and seismic volume rendering
-- Any volumetric dataset too large for GPU memory
+- Datasets that would be impractical to load entirely in a web-based viewer
 
 ## Credits
 

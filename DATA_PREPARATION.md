@@ -20,7 +20,14 @@ Kiln accepts raw binary volume files:
 - **8-bit unsigned** (`uint8`) - 1 byte per voxel
 - **16-bit unsigned** (`uint16`) - 2 bytes per voxel, little-endian
 
-16-bit volumes are automatically normalized to 8-bit during processing using global min/max values.
+### 16-bit Processing Modes
+
+By default, 16-bit volumes are normalized to 8-bit during processing. Use `--native` to preserve full 16-bit precision:
+
+| Mode | Flag | Output | Use Case |
+|------|------|--------|----------|
+| Normalized | (default) | 8-bit | Smaller files, wider compatibility |
+| Native | `--native` | 16-bit | Full precision, requires `texture-formats-tier1` |
 
 ### Filename Conventions
 
@@ -52,6 +59,8 @@ When dimensions are provided as positional args, the output directory defaults t
 | `--brick-size N` | `64` | Logical brick size |
 | `--max-lod N` | Auto | Maximum LOD levels |
 | `--bits N` | `8` | Input bit depth (8 or 16) |
+| `--native` | Off | Preserve 16-bit precision (don't normalize to 8-bit) |
+| `--output DIR` | Auto | Output directory |
 
 ### Examples
 
@@ -62,9 +71,13 @@ npx ts-node scripts/decompose-volume.ts data/chameleon_1024x1024x1080.raw public
 # Specify dimensions explicitly
 npx ts-node scripts/decompose-volume.ts data/scan.raw 512 512 256
 
-# 16-bit with custom voxel spacing
+# 16-bit normalized to 8-bit (smaller output)
 npx ts-node scripts/decompose-volume.ts data/mri.raw 256 256 128 \
   --bits 16 --spacing 0.5,0.5,1.0
+
+# 16-bit native (full precision, use windowing in viewer)
+npx ts-node scripts/decompose-volume.ts data/ct_scan.raw 512 512 400 \
+  --bits 16 --native --output public/datasets/ct_16bit
 
 # Skip 2048-byte header (common in some medical formats)
 npx ts-node scripts/decompose-volume.ts data/dicom.raw 512 512 400 --header 2048
@@ -108,9 +121,13 @@ Main metadata file:
     }
   ],
   "format": "uint8",
-  "packed": true
+  "packed": true,
+  "compressed": true
 }
 ```
+
+The `format` field indicates the voxel format: `"uint8"` (8-bit) or `"uint16"` (16-bit native).
+The `compressed` field indicates bricks are gzip compressed.
 
 ### Index Files
 
@@ -221,4 +238,6 @@ The script processes data in z-slabs to limit memory usage, but very large volum
 
 ### 16-bit normalization looks wrong
 
-The script uses global min/max for normalization. If the volume has outliers, contrast may be compressed. Consider pre-processing the raw data to adjust the value range.
+The script uses global min/max for normalization. If the volume has outliers, contrast may be compressed. Options:
+1. Pre-process the raw data to adjust the value range
+2. Use `--native` to preserve full 16-bit precision and adjust contrast with windowing in the viewer

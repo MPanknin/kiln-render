@@ -1,59 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import {
-  formatToBitDepth,
-  bitDepthToFormat,
-  type VolumeFormat,
-  type BitDepth,
-} from '../src/streaming/brick-loader.js';
+import type { BitDepth, BrickData } from '../src/data/data-provider.js';
 
-describe('Brick Loader Format Utilities', () => {
-  describe('formatToBitDepth', () => {
-    it('should convert uint8 to 8-bit', () => {
-      expect(formatToBitDepth('uint8')).toBe(8);
+describe('Data Provider Types', () => {
+  describe('BitDepth type', () => {
+    it('should support 8-bit depth', () => {
+      const depth: BitDepth = 8;
+      expect(depth).toBe(8);
     });
 
-    it('should convert uint16 to 16-bit', () => {
-      expect(formatToBitDepth('uint16')).toBe(16);
-    });
-  });
-
-  describe('bitDepthToFormat', () => {
-    it('should convert 8-bit to uint8', () => {
-      expect(bitDepthToFormat(8)).toBe('uint8');
-    });
-
-    it('should convert 16-bit to uint16', () => {
-      expect(bitDepthToFormat(16)).toBe('uint16');
-    });
-  });
-
-  describe('round-trip conversion', () => {
-    it('should round-trip uint8 correctly', () => {
-      const format: VolumeFormat = 'uint8';
-      const bitDepth = formatToBitDepth(format);
-      const backToFormat = bitDepthToFormat(bitDepth);
-      expect(backToFormat).toBe(format);
-    });
-
-    it('should round-trip uint16 correctly', () => {
-      const format: VolumeFormat = 'uint16';
-      const bitDepth = formatToBitDepth(format);
-      const backToFormat = bitDepthToFormat(bitDepth);
-      expect(backToFormat).toBe(format);
-    });
-
-    it('should round-trip 8-bit correctly', () => {
-      const bitDepth: BitDepth = 8;
-      const format = bitDepthToFormat(bitDepth);
-      const backToBitDepth = formatToBitDepth(format);
-      expect(backToBitDepth).toBe(bitDepth);
-    });
-
-    it('should round-trip 16-bit correctly', () => {
-      const bitDepth: BitDepth = 16;
-      const format = bitDepthToFormat(bitDepth);
-      const backToBitDepth = formatToBitDepth(format);
-      expect(backToBitDepth).toBe(bitDepth);
+    it('should support 16-bit depth', () => {
+      const depth: BitDepth = 16;
+      expect(depth).toBe(16);
     });
   });
 });
@@ -61,7 +18,7 @@ describe('Brick Loader Format Utilities', () => {
 describe('Brick Data Types', () => {
   describe('8-bit data', () => {
     it('should handle Uint8Array correctly', () => {
-      const data = new Uint8Array([0, 127, 255]);
+      const data: BrickData = new Uint8Array([0, 127, 255]);
       expect(data.length).toBe(3);
       expect(data[0]).toBe(0);
       expect(data[1]).toBe(127);
@@ -72,14 +29,14 @@ describe('Brick Data Types', () => {
     it('should have correct byte length for brick size', () => {
       const physicalSize = 66; // 64 + 2 padding
       const brickVoxels = physicalSize ** 3;
-      const data = new Uint8Array(brickVoxels);
+      const data: BrickData = new Uint8Array(brickVoxels);
       expect(data.byteLength).toBe(287496); // 66^3
     });
   });
 
   describe('16-bit data', () => {
     it('should handle Uint16Array correctly', () => {
-      const data = new Uint16Array([0, 32767, 65535]);
+      const data: BrickData = new Uint16Array([0, 32767, 65535]);
       expect(data.length).toBe(3);
       expect(data[0]).toBe(0);
       expect(data[1]).toBe(32767);
@@ -90,14 +47,14 @@ describe('Brick Data Types', () => {
     it('should have correct byte length for brick size', () => {
       const physicalSize = 66; // 64 + 2 padding
       const brickVoxels = physicalSize ** 3;
-      const data = new Uint16Array(brickVoxels);
+      const data: BrickData = new Uint16Array(brickVoxels);
       expect(data.byteLength).toBe(574992); // 66^3 * 2
     });
 
     it('should be exactly 2x the size of 8-bit for same voxel count', () => {
       const voxelCount = 66 ** 3;
-      const data8 = new Uint8Array(voxelCount);
-      const data16 = new Uint16Array(voxelCount);
+      const data8: BrickData = new Uint8Array(voxelCount);
+      const data16: BrickData = new Uint16Array(voxelCount);
       expect(data16.byteLength).toBe(data8.byteLength * 2);
     });
   });

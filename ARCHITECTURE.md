@@ -35,7 +35,7 @@ Kiln implements a **virtual texturing** system that decouples the logical volume
 
 ## Virtual Texturing Pipeline
 
-The core insight is that volumetric data exhibits strong spatial coherence: only a small working set of bricks is visible at any moment. By virtualizing the address space, we can map an arbitrarily large logical volume onto a fixed-size physical cache.
+The core insight is that volumetric data exhibits strong spatial coherence: only a small working set of bricks is visible at any moment. By virtualizing the address space, we can map a large logical volume onto a bounded physical cache, enabling web-based visualization of datasets that would otherwise be impractical to load entirely.
 
 ### 1. Brick Decomposition
 
@@ -85,7 +85,9 @@ When a finer LOD brick loads, it **overwrites** only its specific cell, leaving 
 
 ### 3. Atlas Texture
 
-The **atlas** is a single 3D texture (`528³ r8unorm`) organized as an 8×8×8 grid of 66³ slots:
+The **atlas** is a single 3D texture (`528³`) organized as an 8×8×8 grid of 66³ slots. The texture format depends on the source data:
+- **8-bit volumes**: `r8unorm` (1 byte per voxel)
+- **16-bit volumes**: `r16unorm` (2 bytes per voxel, requires WebGPU `texture-formats-tier1` feature)
 
 ```
 Atlas Layout (528³ total)
@@ -98,7 +100,9 @@ Atlas Layout (528³ total)
    ...            512 total slots (8×8×8)           ...
 ```
 
-Each slot stores 66³ voxels = 287,496 bytes. Total atlas size: **147 MB** fixed VRAM footprint regardless of source volume size.
+Each slot stores 66³ voxels. Atlas size:
+- **8-bit**: 287,496 bytes per slot × 512 slots = **~147 MB** VRAM
+- **16-bit**: 574,992 bytes per slot × 512 slots = **~294 MB** VRAM
 
 The 1-voxel **ghost border** duplicates neighboring brick data to enable hardware trilinear filtering without seams:
 
@@ -119,15 +123,15 @@ Physical Brick (66³)
 
 ## Streaming Manager
 
-The **StreamingManager** (`src/streaming/streaming-manager.ts`) implements a **resident set manager** that decides which bricks should occupy the atlas based on camera position, viewing frustum, and distance-based LOD selection.
+The **StreamingManager** (`src/streaming/streaming-manager.ts`) implements a **resident set manager** that decides which bricks should occupy the atlas based on camera position, viewing frustum, and screen-space error (SSE) based LOD selection.
 
 ### Desired Set Computation
 
 Each frame (throttled to every N frames while camera moves), the manager performs:
 
-1. **Octree Traversal**: Starting from the coarsest LOD, recursively descend based on distance thresholds
+1. **Octree Traversal**: Starting from the coarsest LOD, recursively descend based on screen-space error
 2. **Frustum Culling**: Reject bricks whose AABBs lie entirely outside the view frustum
-3. **LOD Selection**: At each node, decide whether to use this LOD or split to children
+3. **SSE-based LOD Selection**: At each node, compute screen-space error to decide whether to split
 
 ```typescript
 const traverse = (bx, by, bz, lod) => {
@@ -136,9 +140,12 @@ const traverse = (bx, by, bz, lod) => {
   // Frustum cull
   if (!isAABBInFrustum(aabb, frustumPlanes)) return;
 
-  // Distance-based LOD decision
+  // Screen-space error LOD decision
   const dist = distance(cameraPos, aabbCenter(aabb));
-  const shouldSplit = lod > 0 && dist < lodThresholds[lod - 1];
+  const lodScale = Math.pow(2, lod);  // Voxel size multiplier
+  const voxelWorldSize = lodScale * voxelSpacing;
+  const projectedError = (voxelWorldSize / dist) * projectionFactor;
+  const shouldSplit = lod > 0 && projectedError > sseThreshold;
 
   if (shouldSplit && finerLodExists(lod - 1)) {
     // Recurse to 8 children at finer LOD
@@ -152,13 +159,10 @@ const traverse = (bx, by, bz, lod) => {
 };
 ```
 
-The LOD thresholds define the distance at which each level splits:
-
-| Threshold | Distance | Effect                                  |
-|-----------|----------|-----------------------------------------|
-| LOD 3→2   | 4.0      | Coarsest splits when moderately close   |
-| LOD 2→1   | 2.0      | Medium detail at intermediate distance  |
-| LOD 1→0   | 0.5      | Finest detail only when very close      |
+**Screen-Space Error (SSE)** measures how many pixels a voxel projects to on screen. When the projected error exceeds a threshold (default: 2.0 pixels), the brick should split to a finer LOD. This approach adapts automatically to:
+- Screen resolution (higher res = more splits for same view)
+- Field of view (narrower FOV = more detail at same distance)
+- Anisotropic voxel spacing (non-uniform datasets)
 
 ### Priority Queue and Request Management
 
@@ -249,6 +253,48 @@ Network statistics are tracked in real-time:
 - **Throughput**: Rolling 2-second window of bytes/second
 - **Total downloaded**: Cumulative bytes since session start
 - **Request count**: Total HTTP requests issued
+
+### Brick Compression
+
+Bricks are stored with gzip compression to reduce network transfer size. A **DecompressionPool** of Web Workers handles parallel decompression without blocking the main thread:
+
+```
+Compressed Brick (HTTP) → Worker Pool → Decompressed Data → GPU Upload
+```
+
+Typical compression ratios:
+- Dense volumes (CT/MRI): 30-60% of original size
+- Sparse volumes (with empty regions): 10-30% of original size
+
+The compression is transparent to the rest of the system—bricks are decompressed before being written to the atlas texture.
+
+---
+
+## 16-bit Volume Support
+
+Kiln supports both 8-bit and 16-bit unsigned integer volumes:
+
+| Feature | 8-bit | 16-bit |
+|---------|-------|--------|
+| Texture format | `r8unorm` | `r16unorm` |
+| Value range | 0-255 | 0-65535 |
+| Bytes per voxel | 1 | 2 |
+| Atlas size | ~147 MB | ~294 MB |
+| WebGPU feature | (none) | `texture-formats-tier1` |
+
+### Windowing/Leveling
+
+16-bit data often uses only a portion of the full 0-65535 range. **Windowing** remaps a sub-range to the visible 0-1 output:
+
+```wgsl
+fn applyWindow(density: f32, windowCenter: f32, windowWidth: f32) -> f32 {
+    let halfWidth = windowWidth * 0.5;
+    let minVal = windowCenter - halfWidth;
+    return clamp((density - minVal) / windowWidth, 0.0, 1.0);
+}
+```
+
+For example, a CT soft tissue window might use center=0.5, width=0.1 to expand a narrow intensity band to full contrast.
 
 ---
 
@@ -397,9 +443,9 @@ At any moment, only ~512 bricks (the atlas capacity) are resident, representing 
 
 ## Design Decisions
 
-### 1. Distance-based LOD Selection
+### 1. Screen-Space Error LOD Selection
 
-Simple distance thresholds determine when to use finer/coarser LODs. This approach is predictable, debuggable, and performs well for most use cases. The thresholds are hand-tuned for visible LOD bands at typical viewing distances.
+SSE determines when to use finer/coarser LODs based on how many pixels a voxel projects to. This adapts automatically to screen resolution, FOV, and viewing distance. A single threshold (default 2.0 pixels) controls the quality/performance tradeoff across all viewing conditions.
 
 ### 2. LRU Eviction
 
@@ -460,6 +506,66 @@ src/
 │   └── geometry.ts          # Box and axis geometry generation
 └── main.ts                  # Entry point, initialization
 ```
+
+---
+
+## WebGPU vs WebGL for Volume Rendering
+
+Kiln is built on WebGPU rather than WebGL. This section documents the technical differences relevant to volume rendering.
+
+### Native 16-bit Texture Support
+
+WebGPU provides native `r16unorm` texture format, where 16-bit unsigned integers are stored directly and normalized to `[0,1]` floats during sampling. Hardware trilinear filtering works correctly on the 16-bit values.
+
+WebGL lacks native 16-bit single-channel textures. Common workarounds include:
+- **Two-channel packing**: Store high/low bytes in separate channels, reconstruct in shader
+- **Float textures**: Use `R32F` (wastes memory, requires `OES_texture_float`)
+- **Half-float textures**: Use `R16F` (different precision characteristics than integer)
+
+Each workaround adds shader complexity and may affect filtering behavior at brick boundaries.
+
+### Compute Shaders
+
+WebGPU compute shaders enable per-pixel raymarching with explicit thread dispatch:
+
+```wgsl
+@compute @workgroup_size(8, 8, 1)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+    // One thread per pixel, full control over execution
+}
+```
+
+WebGL requires rendering a full-screen quad and performing raymarching in a fragment shader. This works but conflates rasterization with computation and limits flexibility for advanced techniques.
+
+### Asynchronous Texture Updates
+
+WebGPU's `device.queue.writeTexture()` queues texture uploads without blocking the CPU or stalling rendering. Multiple brick uploads can be batched and executed asynchronously.
+
+WebGL's `texSubImage3D()` is synchronous on the CPU timeline. While the GPU may process it asynchronously, the CPU call blocks until the data is transferred to GPU-accessible memory. This can cause frame drops during intensive streaming.
+
+### 3D Texture Limits
+
+WebGPU allows querying actual device limits via `device.limits.maxTextureDimension3D`. Modern GPUs commonly support 16384³, though this varies by hardware.
+
+WebGL 2 specifies a minimum of 256³ for 3D textures, with most implementations supporting 2048³. Larger atlases may require multiple textures or texture arrays.
+
+### Integer Texture Formats
+
+The indirection table uses `rgba8uint` format to store slot indices and LOD levels as exact integers. WebGPU provides `textureLoad()` for non-interpolated integer sampling.
+
+WebGL 2 supports integer textures but with more limited format options and requires careful handling to avoid unintended filtering.
+
+### Summary
+
+| Capability | WebGL 2 | WebGPU |
+|------------|---------|--------|
+| 16-bit textures | Emulated | Native `r16unorm` |
+| 3D texture limit | Typically 2048³ | Up to 16384³ |
+| Compute shaders | No | Yes |
+| Texture uploads | Synchronous | Asynchronous queue |
+| Integer textures | Limited | Full support |
+
+These differences don't make WebGL unsuitable for volume rendering—capable WebGL renderers exist. However, WebGPU provides a more direct mapping to the hardware capabilities needed for streaming virtual textures.
 
 ---
 

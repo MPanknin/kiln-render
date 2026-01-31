@@ -3,7 +3,9 @@
  */
 
 export * from './atlas-allocator.js';
-export { BrickLoader } from './brick-loader.js';
-export type { BrickMetadata as LoaderBrickMetadata } from './brick-loader.js';
 export * from './streaming-manager.js';
-export { getDecompressionPool, terminateDecompressionPool, DecompressionPool } from './decompression-pool.js';
+
+// Re-export data provider types for convenience
+export type { DataProvider, VolumeMetadata, BrickData, BitDepth } from '../data/data-provider.js';
+export { ShardedDataProvider, createShardedProvider } from '../data/sharded-provider.js';
+export { getDecompressionPool, terminateDecompressionPool, DecompressionPool } from '../data/decompression-pool.js';

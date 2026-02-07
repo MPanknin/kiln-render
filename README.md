@@ -4,14 +4,13 @@ A WebGPU-native out-of-core volume renderer for large virtualized volumetric dat
 
 Kiln streams multi-gigabyte volumes over HTTP, rendering them at interactive framerates using a fixed-size VRAM page cache and virtual texture indirection.
 
-## Chameleon CT Scan 
-<img width="1721" alt="Kiln volume renderer showing a chameleon CT scan" src="https://github.com/user-attachments/assets/07502e5c-c1d7-4ef7-8b78-6b89402216f8" />
+## Chameleon CT Scan
+#### 2160.0 MB - 1024 × 1024 × 1080 @ 16-bit
+<img width="1723" height="901" alt="image" src="https://github.com/user-attachments/assets/5f3a8e98-707d-4da4-b7ee-65f8ad5f4a99" />
 
-## Parihaka Seismic Survey
-
-<img width="1722" height="903" alt="image" src="https://github.com/user-attachments/assets/ae0236fc-357b-4dc8-b79c-04cedf8f3ad3" />
-
-<img width="1716" height="904" alt="image" src="https://github.com/user-attachments/assets/a325d219-dca9-4029-b599-bbe0c6d7abde" />
+## Bechnut CT Scan
+#### 3092.0 MB - 1024 × 1024 × 1546 @ 16-bit
+<img width="1722" height="904" alt="image" src="https://github.com/user-attachments/assets/16828573-1f15-45f6-be3d-a46708293bc2" />
 
 ## What Problem Does Kiln Solve?
 

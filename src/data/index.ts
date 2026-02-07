@@ -20,6 +20,9 @@ export type {
 // Sharded format implementation (Kiln's native format)
 export { ShardedDataProvider, createShardedProvider } from './sharded-provider.js';
 
+// OME-Zarr format implementation
+export { ZarrDataProvider } from './zarr-provider.js';
+
 // Decompression utilities
 export {
   DecompressionPool,

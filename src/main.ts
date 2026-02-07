@@ -9,6 +9,7 @@ import { writeToCanvas } from './core/volume.js';
 import { PHYSICAL_BRICK_SIZE, setDatasetSize, getNormalizedSize } from './core/config.js';
 import { AtlasSlot } from './streaming/atlas-allocator.js';
 import { ShardedDataProvider } from './data/sharded-provider.js';
+import { ZarrDataProvider } from './data/zarr-provider.js';
 import type { DataProvider } from './data/data-provider.js';
 import { TransferFunction } from './core/transfer-function.js';
 import { VolumeUI } from './ui/volume-ui.js';
@@ -23,7 +24,8 @@ import { StreamingManager } from './streaming/streaming-manager.js';
 // const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/stagbeetle-binary';
 // const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-binary';
 // const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-compressed';
-const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-16bit';
+// const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-16bit';
+const VOLUME_SOURCE = 'https://ome-zarr-scivis.s3.us-east-1.amazonaws.com/v0.5/96x2/boston_teapot.ome.zarr';
 
 // Capture page load start time for time-to-first-render metric
 const PAGE_LOAD_START = performance.now();
@@ -67,9 +69,12 @@ async function main() {
   const format = navigator.gpu.getPreferredCanvasFormat();
   context.configure({ device, format });
 
-  // Load volume metadata via DataProvider
+  // Load volume metadata via DataProvider (auto-detect format)
   console.log(`Loading volume metadata from ${VOLUME_SOURCE}...`);
-  const dataProvider: DataProvider = new ShardedDataProvider(VOLUME_SOURCE);
+  const isZarr = VOLUME_SOURCE.includes('.zarr');
+  const dataProvider: DataProvider = isZarr
+    ? new ZarrDataProvider(VOLUME_SOURCE)
+    : new ShardedDataProvider(VOLUME_SOURCE);
   const metadata = await dataProvider.initialize();
 
   // Configure dataset size from metadata

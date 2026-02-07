@@ -569,6 +569,190 @@ These differences don't make WebGL unsuitable for volume rendering—capable Web
 
 ---
 
+## Future: WebGPU-Native Optimizations
+
+Kiln currently uses WebGPU for compute shaders, async texture uploads, and native 16-bit support. However, several advanced WebGPU patterns could further improve performance and reduce CPU overhead. This section documents potential optimizations that would make Kiln more "GPU-driven" and truly WebGPU-native.
+
+### GPU-Driven Frustum Culling
+
+**Current approach**: CPU computes desired brick set each frame via octree traversal, frustum culling, and SSE calculation in JavaScript.
+
+**WebGPU-native approach**: Move visibility computation to a compute shader.
+
+```
+CPU:                              GPU:
+┌──────────────────────┐         ┌─────────────────────────────────┐
+│ Upload brick metadata│   →     │ Compute Pass: Cull + LOD Select │
+│ (AABBs, LOD info)    │         │ - Test each brick vs frustum    │
+│                      │         │ - Compute SSE per brick         │
+│                      │         │ - atomicAdd to visible count    │
+│                      │         │ - Write visible brick IDs       │
+└──────────────────────┘         └─────────────────────────────────┘
+```
+
+**Implementation sketch**:
+1. Storage buffer with all brick AABBs and metadata (flat array)
+2. Compute shader tests each brick against 6 frustum planes
+3. Visible bricks written to compacted output buffer via `atomicAdd` for index
+4. Indirect dispatch buffer updated with visible count
+
+**Benefits**:
+- Eliminates CPU-GPU sync for visibility queries
+- Scales better with large brick counts (1000s of bricks)
+- Frees main thread for other work
+
+**Complexity**: Medium — frustum math is straightforward in WGSL; atomic compaction is the tricky part.
+
+---
+
+### Indirect Dispatch for Raymarching
+
+**Current approach**: CPU dispatches compute shader with fixed workgroup count based on screen size.
+
+**WebGPU-native approach**: Use `dispatchWorkgroupsIndirect` where the dispatch parameters are written by a prior GPU pass.
+
+```wgsl
+// Buffer written by culling pass
+struct IndirectDispatch {
+    workgroup_count_x: u32,
+    workgroup_count_y: u32,
+    workgroup_count_z: u32,
+}
+```
+
+**Use cases**:
+- Dispatch only over visible tiles (tile-based culling)
+- Variable workload based on GPU-computed brick count
+- Chained passes where output of one determines input of next
+
+**Benefits**:
+- Zero CPU readback for dispatch sizing
+- Enables fully GPU-driven rendering loop
+
+---
+
+### Bindless Textures (Future WebGPU Feature)
+
+**Current approach**: Single 528³ atlas texture with indirection table for virtual addressing.
+
+**True bindless approach**: Each brick as a separate texture, indexed dynamically in shader.
+
+**WebGPU status**: Not yet supported. WebGPU lacks:
+- `VK_EXT_descriptor_indexing` equivalent
+- Dynamic non-uniform texture array indexing
+- Unbounded descriptor arrays
+
+**Why the atlas is still correct for now**:
+- Hardware trilinear filtering works across the atlas
+- Single bind group (no rebinding overhead)
+- Indirection table already provides "virtual bindless" semantics
+- Cache-coherent memory layout
+
+**When to revisit**: If WebGPU adds `texture_2d_array` with dynamic indexing or descriptor indexing extensions, individual brick textures could reduce atlas management complexity.
+
+---
+
+### Subgroup Operations
+
+**Current approach**: Each thread operates independently in compute shaders.
+
+**WebGPU-native approach**: Use subgroup operations for efficient reductions and communication.
+
+```wgsl
+// Example: early ray termination across subgroup
+let anyActive = subgroupAny(alpha < 0.95);
+if (!anyActive) { return; }  // Entire subgroup done
+
+// Example: shared brick lookup
+let brickData = subgroupBroadcastFirst(loadBrick(leaderThread));
+```
+
+**WebGPU status**: Subgroup operations are available via the `subgroups` feature (check adapter capabilities).
+
+**Use cases for Kiln**:
+- Ballot operations for coherent ray termination
+- Reduction for tile-based statistics
+- Broadcast for shared brick metadata loads
+
+**Benefits**:
+- Reduced divergence in raymarching
+- Faster reductions without shared memory
+
+---
+
+### Timestamp Queries for Profiling
+
+**Current approach**: Performance measured via JavaScript `performance.now()` around render calls.
+
+**WebGPU-native approach**: Use GPU timestamp queries for accurate per-pass timing.
+
+```typescript
+const querySet = device.createQuerySet({
+    type: 'timestamp',
+    count: 4,
+});
+
+passEncoder.writeTimestamp(querySet, 0);  // Before culling
+// ... culling pass ...
+passEncoder.writeTimestamp(querySet, 1);  // After culling
+// ... raymarching pass ...
+passEncoder.writeTimestamp(querySet, 2);  // After raymarching
+```
+
+**Benefits**:
+- Accurate GPU timing independent of CPU-GPU sync
+- Identify bottlenecks (culling vs raymarching vs compositing)
+- Profile on actual hardware without JavaScript overhead
+
+**WebGPU status**: Requires `timestamp-query` feature.
+
+---
+
+### Multi-Draw Indirect (for Hybrid Rasterization)
+
+**Current approach**: Pure compute-based raymarching.
+
+**Alternative**: Hybrid rasterization + raymarching where brick bounding boxes are rasterized first.
+
+```
+Pass 1: Rasterize brick AABBs (indirect draw from GPU-culled list)
+        → Write brick IDs to per-pixel buffer
+
+Pass 2: Raymarch only within each pixel's assigned bricks
+        → Skip empty space traversal
+```
+
+**WebGPU support**: `drawIndirect` and `drawIndexedIndirect` are available.
+
+**Benefits**:
+- Hardware rasterization for coarse visibility
+- Reduced ray setup cost (start at brick entry, not volume entry)
+- Better GPU occupancy for sparse volumes
+
+**Tradeoffs**:
+- More complex pipeline
+- May not benefit dense volumes where most rays hit most bricks
+
+---
+
+### Summary: Optimization Roadmap
+
+| Optimization | Complexity | Impact | WebGPU Status |
+|--------------|------------|--------|---------------|
+| GPU frustum culling | Medium | High for large brick counts | Ready |
+| Indirect dispatch | Low | Medium (enables GPU-driven) | Ready |
+| Bindless textures | N/A | Blocked | Not in WebGPU spec |
+| Subgroup operations | Medium | Medium (reduced divergence) | Feature flag |
+| Timestamp queries | Low | Profiling only | Feature flag |
+| Multi-draw indirect | High | Situational | Ready |
+
+**Recommended priority**:
+1. GPU frustum culling + indirect dispatch (biggest win, medium effort)
+2. Timestamp queries (low effort, valuable for optimization)
+3. Subgroup operations (if targeting modern hardware)
+
+---
+
 ## References
 
 - Virtual Texturing / Megatextures (id Tech 5)

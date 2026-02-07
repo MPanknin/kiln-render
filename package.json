@@ -28,6 +28,7 @@
   "dependencies": {
     "fflate": "^0.8.2",
     "tweakpane": "^4.0.5",
-    "wgpu-matrix": "^3.4.0"
+    "wgpu-matrix": "^3.4.0",
+    "zarrita": "^0.6.1"
   }
 }

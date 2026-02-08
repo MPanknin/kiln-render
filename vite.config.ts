@@ -10,5 +10,8 @@ export default defineConfig({
     target: 'esnext',
     minify: 'esbuild',
   },
+  worker: {
+    format: 'es',
+  },
 });
 

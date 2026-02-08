@@ -2,8 +2,8 @@
  * ZarrDataProvider - DataProvider implementation for OME-Zarr (NGFF) volumes
  *
  * Loads OME-Zarr v0.5 datasets over HTTP using zarrita.js.
- * Handles re-chunking from arbitrary Zarr chunk sizes to Kiln's fixed 66³ bricks,
- * including 1-voxel ghost borders via coordinate clamping.
+ * All heavy work (fetch, decompress, re-chunk into 66³ bricks) runs in a
+ * Web Worker pool — the main thread only handles metadata and GPU uploads.
  *
  * Axis convention:
  * - Zarr stores dimensions as [z, y, x] (C-order, x fastest-varying)
@@ -14,7 +14,7 @@
 import { FetchStore, open, root, Array as ZarrArray } from 'zarrita';
 import type { DataType, Readable } from 'zarrita';
 import { LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE } from '../core/config.js';
-import { ZarrChunkCache } from './zarr-chunk-cache.js';
+import { ZarrWorkerPool } from './zarr-worker-pool.js';
 import type {
   DataProvider,
   VolumeMetadata,
@@ -39,23 +39,24 @@ interface OmeMultiscales {
 export class ZarrDataProvider implements DataProvider {
   private url: string;
   private metadata: VolumeMetadata | null = null;
-  private arrays: ZarrArray<DataType, Readable>[] = [];
-  private chunkCache = new ZarrChunkCache(256);
   private brickStatsCache = new Map<string, BrickStats>();
 
-  // Network tracking
+  /** Worker pool for off-main-thread brick loading */
+  private workerPool: ZarrWorkerPool | null = null;
+
+  // Network tracking (approximate — workers do the actual fetching)
   private totalBytesDownloaded = 0;
   private requestCount = 0;
   private recentDownloads: { timestamp: number; bytes: number }[] = [];
 
   constructor(url: string) {
-    // Remove trailing slash for consistency
     this.url = url.replace(/\/$/, '');
   }
 
   async initialize(): Promise<VolumeMetadata> {
     if (this.metadata) return this.metadata;
 
+    // Use zarrita on main thread for lightweight metadata reading only
     const store = new FetchStore(this.url);
     const rootGroup = await open(root(store), { kind: 'group' });
 
@@ -73,16 +74,17 @@ export class ZarrDataProvider implements DataProvider {
 
     const ms = multiscales[0]!;
     const numScales = ms.datasets.length;
+    const arrayPaths = ms.datasets.map(ds => ds.path);
 
-    // Open each scale array
-    this.arrays = [];
+    // Open arrays on main thread to read metadata (shape, chunks, dtype)
+    const arrays: ZarrArray<DataType, Readable>[] = [];
     for (const ds of ms.datasets) {
       const arr = await open(rootGroup.resolve(ds.path), { kind: 'array' });
-      this.arrays.push(arr);
+      arrays.push(arr);
     }
 
-    // Determine bit depth from first array's dtype
-    const dtype = this.arrays[0]!.dtype;
+    // Determine bit depth
+    const dtype = arrays[0]!.dtype;
     let bitDepth: BitDepth;
     if (dtype === 'uint8' || dtype === 'int8') {
       bitDepth = 8;
@@ -100,31 +102,61 @@ export class ZarrDataProvider implements DataProvider {
       const scaleTransform = transforms.find(t => t.type === 'scale');
       if (scaleTransform?.scale) {
         const s = scaleTransform.scale;
-        // Swap ZYX -> XYZ
         voxelSpacing = [s[s.length - 1]!, s[s.length - 2]!, s[s.length - 3]!];
       }
     }
 
-    // Build LOD levels (swap ZYX → XYZ for all dimension tuples)
-    const levels: LodLevel[] = this.arrays.map((arr, i) => {
-      const shape = arr.shape; // [z, y, x]
-      const dimX = shape[shape.length - 1]!;
-      const dimY = shape[shape.length - 2]!;
-      const dimZ = shape[shape.length - 3]!;
+    // Build LOD levels with virtual dimensions for uniform 2:1 downsampling.
+    // The renderer assumes lodScale = 2^lod (uniform). OME-Zarr may not
+    // downsample uniformly, so we compute virtual dims and per-axis scale factors.
+    const lod0Shape = arrays[0]!.shape; // [z, y, x]
+    const lod0Dims: [number, number, number] = [
+      lod0Shape[lod0Shape.length - 1]!,
+      lod0Shape[lod0Shape.length - 2]!,
+      lod0Shape[lod0Shape.length - 3]!,
+    ];
+
+    // Build lodParams for the workers (per-axis scale + chunk info)
+    const lodParams: {
+      scaleX: number; scaleY: number; scaleZ: number;
+      actualDimX: number; actualDimY: number; actualDimZ: number;
+      csx: number; csy: number; csz: number;
+    }[] = [];
+
+    const levels: LodLevel[] = arrays.map((arr, i) => {
+      const shape = arr.shape;
+      const actualDimX = shape[shape.length - 1]!;
+      const actualDimY = shape[shape.length - 2]!;
+      const actualDimZ = shape[shape.length - 3]!;
+
+      const virtualDimX = Math.ceil(lod0Dims[0] / (1 << i));
+      const virtualDimY = Math.ceil(lod0Dims[1] / (1 << i));
+      const virtualDimZ = Math.ceil(lod0Dims[2] / (1 << i));
+
+      const chunkShape = arr.chunks;
+      lodParams.push({
+        scaleX: actualDimX / virtualDimX,
+        scaleY: actualDimY / virtualDimY,
+        scaleZ: actualDimZ / virtualDimZ,
+        actualDimX, actualDimY, actualDimZ,
+        csx: chunkShape[chunkShape.length - 1]!,
+        csy: chunkShape[chunkShape.length - 2]!,
+        csz: chunkShape[chunkShape.length - 3]!,
+      });
+
       const brickGrid: [number, number, number] = [
-        Math.ceil(dimX / LOGICAL_BRICK_SIZE),
-        Math.ceil(dimY / LOGICAL_BRICK_SIZE),
-        Math.ceil(dimZ / LOGICAL_BRICK_SIZE),
+        Math.ceil(virtualDimX / LOGICAL_BRICK_SIZE),
+        Math.ceil(virtualDimY / LOGICAL_BRICK_SIZE),
+        Math.ceil(virtualDimZ / LOGICAL_BRICK_SIZE),
       ];
       return {
         lod: i,
-        dimensions: [dimX, dimY, dimZ] as [number, number, number],
+        dimensions: [virtualDimX, virtualDimY, virtualDimZ] as [number, number, number],
         brickGrid,
         brickCount: brickGrid[0] * brickGrid[1] * brickGrid[2],
       };
     });
 
-    // Extract name from URL (last path segment before .zarr or .ome.zarr)
     const urlParts = this.url.split('/');
     const name = urlParts[urlParts.length - 1]?.replace(/\.ome\.zarr|\.zarr/, '') ?? 'zarr-volume';
 
@@ -144,6 +176,14 @@ export class ZarrDataProvider implements DataProvider {
     for (const level of levels) {
       console.log(`  LOD ${level.lod}: ${level.dimensions.join('x')} → ${level.brickGrid.join('x')} bricks`);
     }
+
+    // Initialize worker pool — all heavy lifting happens there
+    this.workerPool = new ZarrWorkerPool();
+    await this.workerPool.init(
+      this.url, arrayPaths, lodParams,
+      LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE,
+      bitDepth === 16,
+    );
 
     return this.metadata;
   }
@@ -165,154 +205,44 @@ export class ZarrDataProvider implements DataProvider {
   }
 
   /**
-   * Load a single 66³ brick by fetching overlapping Zarr chunks
-   *
-   * The brick covers voxels [bx*64-1 .. bx*64+64] (66 voxels including ghost border).
-   * We determine which Zarr chunks overlap this region, fetch them (with caching),
-   * and assemble the brick by reading from the cached chunks.
+   * Load a fully assembled 66³ brick via the worker pool.
+   * The entire pipeline (fetch + decompress + re-chunk + stats) runs off main thread.
    */
   async loadBrick(lod: number, bx: number, by: number, bz: number): Promise<BrickData | null> {
-    const arr = this.arrays[lod];
-    if (!arr) return null;
-
     const meta = this.getMetadata();
     const level = meta.levels.find(l => l.lod === lod);
     if (!level) return null;
 
-    // Validate coordinates
     if (bx < 0 || bx >= level.brickGrid[0] ||
         by < 0 || by >= level.brickGrid[1] ||
         bz < 0 || bz >= level.brickGrid[2]) {
       return null;
     }
 
-    const shape = arr.shape;       // [z, y, x] in Zarr order
-    const chunkShape = arr.chunks;  // [cz, cy, cx] in Zarr order
-    const dimX = shape[shape.length - 1]!;
-    const dimY = shape[shape.length - 2]!;
-    const dimZ = shape[shape.length - 3]!;
-    const csx = chunkShape[chunkShape.length - 1]!;
-    const csy = chunkShape[chunkShape.length - 2]!;
-    const csz = chunkShape[chunkShape.length - 3]!;
-
-    // Brick voxel range in volume space (Kiln XYZ)
-    // Ghost border: starts 1 voxel before the logical brick
-    const startX = bx * LOGICAL_BRICK_SIZE - 1;
-    const startY = by * LOGICAL_BRICK_SIZE - 1;
-    const startZ = bz * LOGICAL_BRICK_SIZE - 1;
-
-    // Determine which Zarr chunks overlap this brick's voxel range
-    const minCx = Math.max(0, Math.floor(Math.max(0, startX) / csx));
-    const minCy = Math.max(0, Math.floor(Math.max(0, startY) / csy));
-    const minCz = Math.max(0, Math.floor(Math.max(0, startZ) / csz));
-    const maxCx = Math.floor(Math.min(dimX - 1, startX + PHYSICAL_BRICK_SIZE - 1) / csx);
-    const maxCy = Math.floor(Math.min(dimY - 1, startY + PHYSICAL_BRICK_SIZE - 1) / csy);
-    const maxCz = Math.floor(Math.min(dimZ - 1, startZ + PHYSICAL_BRICK_SIZE - 1) / csz);
-
-    // Fetch all overlapping chunks in parallel (with cache)
-    const chunkPromises: Promise<void>[] = [];
-    for (let cz = minCz; cz <= maxCz; cz++) {
-      for (let cy = minCy; cy <= maxCy; cy++) {
-        for (let cx = minCx; cx <= maxCx; cx++) {
-          const key = ZarrChunkCache.key(lod, cz, cy, cx);
-          if (!this.chunkCache.has(key)) {
-            chunkPromises.push(this.fetchChunk(arr, lod, cz, cy, cx));
-          }
-        }
-      }
-    }
-
-    if (chunkPromises.length > 0) {
-      await Promise.all(chunkPromises);
-    }
-
-    // Assemble 66³ brick from cached chunks
-    const physSize = PHYSICAL_BRICK_SIZE;
-    const is16bit = meta.bitDepth === 16;
-    const brick: BrickData = is16bit
-      ? new Uint16Array(physSize * physSize * physSize)
-      : new Uint8Array(physSize * physSize * physSize);
-
-    let min = Infinity;
-    let max = -Infinity;
-    let sum = 0;
-
-    for (let lz = 0; lz < physSize; lz++) {
-      for (let ly = 0; ly < physSize; ly++) {
-        for (let lx = 0; lx < physSize; lx++) {
-          // Global voxel coordinate with clamping at boundaries
-          const gx = Math.max(0, Math.min(dimX - 1, startX + lx));
-          const gy = Math.max(0, Math.min(dimY - 1, startY + ly));
-          const gz = Math.max(0, Math.min(dimZ - 1, startZ + lz));
-
-          // Which chunk does this voxel belong to?
-          const cx = Math.floor(gx / csx);
-          const cy = Math.floor(gy / csy);
-          const cz = Math.floor(gz / csz);
-
-          // Local coordinate within that chunk
-          const lcx = gx - cx * csx;
-          const lcy = gy - cy * csy;
-          const lcz = gz - cz * csz;
-
-          // Read from cached chunk (C-order: z,y,x)
-          const key = ZarrChunkCache.key(lod, cz, cy, cx);
-          const chunk = this.chunkCache.get(key);
-          if (chunk) {
-            const chunkW = chunk.shape[chunk.shape.length - 1]!;
-            const chunkH = chunk.shape[chunk.shape.length - 2]!;
-            const idx = lcz * chunkH * chunkW + lcy * chunkW + lcx;
-            const val = Number(chunk.data[idx]!);
-
-            // Brick layout: x + y * physSize + z * physSize * physSize
-            brick[lx + ly * physSize + lz * physSize * physSize] = val;
-
-            min = Math.min(min, val);
-            max = Math.max(max, val);
-            sum += val;
-          }
-        }
-      }
-    }
-
-    // Cache stats
-    const voxelCount = physSize * physSize * physSize;
-    const statsKey = `${lod}:${bx}/${by}/${bz}`;
-    this.brickStatsCache.set(statsKey, {
-      min: min === Infinity ? 0 : min,
-      max: max === -Infinity ? 0 : max,
-      avg: sum / voxelCount,
-    });
-
-    return brick;
-  }
-
-  /**
-   * Fetch a single Zarr chunk and add it to the cache
-   */
-  private async fetchChunk(
-    arr: ZarrArray<DataType, Readable>,
-    lod: number, cz: number, cy: number, cx: number
-  ): Promise<void> {
-    const key = ZarrChunkCache.key(lod, cz, cy, cx);
     try {
-      const chunk = await arr.getChunk([cz, cy, cx]);
-      this.chunkCache.set(key, chunk.data as unknown as ArrayLike<number>, chunk.shape);
-      // Estimate bytes downloaded (compressed size unknown, use uncompressed as upper bound)
-      const byteLength = (chunk.data as unknown as ArrayBufferView).byteLength ?? 0;
-      this.recordDownload(byteLength);
+      const result = await this.workerPool!.loadBrick(lod, bx, by, bz);
+
+      // Cache stats for isBrickEmpty checks
+      const statsKey = `${lod}:${bx}/${by}/${bz}`;
+      this.brickStatsCache.set(statsKey, {
+        min: result.min,
+        max: result.max,
+        avg: result.avg,
+      });
+
+      // Track approximate download size
+      this.recordDownload(result.data.byteLength);
+
+      return result.data;
     } catch (e) {
-      console.warn(`Failed to fetch chunk ${key}:`, e);
+      console.warn(`Failed to load brick lod${lod}:${bx}-${by}-${bz}:`, e);
+      return null;
     }
   }
 
-  /**
-   * Check if a brick is empty. Since we don't have pre-computed stats,
-   * we return false (assume non-empty) until the brick has been loaded.
-   */
   async isBrickEmpty(lod: number, bx: number, by: number, bz: number, maxThreshold?: number): Promise<boolean> {
     const stats = await this.getBrickStats(lod, bx, by, bz);
-    if (!stats) return false; // Not yet loaded - assume non-empty
+    if (!stats) return false;
     const threshold = maxThreshold ?? 1;
     return stats.max < threshold;
   }
@@ -342,8 +272,8 @@ export class ZarrDataProvider implements DataProvider {
   }
 
   dispose(): void {
-    this.chunkCache.clear();
     this.brickStatsCache.clear();
-    this.arrays = [];
+    this.workerPool?.terminate();
+    this.workerPool = null;
   }
 }

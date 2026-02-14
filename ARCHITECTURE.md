@@ -4,7 +4,7 @@ This document provides a technical deep-dive into Kiln's virtual texturing syste
 
 ## System Overview
 
-Kiln implements a **virtual texturing** system that decouples the logical volume address space from physical GPU memory. This allows rendering of datasets that far exceed available VRAM by streaming only the visible, high-priority regions on demand.
+Kiln implements a **virtual texturing** system that decouples the logical volume address space from physical GPU memory. A bounded atlas cache holds only the currently needed bricks, while the rest of the dataset remains on the server and is streamed on demand.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -17,10 +17,10 @@ Kiln implements a **virtual texturing** system that decouples the logical volume
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                              Residency Management                           │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  AtlasAllocator             │  IndirectionTable        │  BrickLoader       │
-│  - LRU slot tracking        │  - Virtual→Physical map  │  - HTTP Range I/O  │
-│  - Eviction selection       │  - Multi-LOD support     │  - Index parsing   │
-│  - Metadata bookkeeping     │  - Empty brick markers   │  - Brick cache     │
+│  AtlasAllocator             │  IndirectionTable        │  DataProviders     │
+│  - LRU slot tracking        │  - Virtual→Physical map  │  - Sharded binary  │
+│  - Eviction selection       │  - Multi-LOD support     │  - OME-Zarr        │
+│  - Metadata bookkeeping     │  - Empty brick markers   │  - Worker pools    │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                              GPU Resources                                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -35,7 +35,7 @@ Kiln implements a **virtual texturing** system that decouples the logical volume
 
 ## Virtual Texturing Pipeline
 
-The core insight is that volumetric data exhibits strong spatial coherence: only a small working set of bricks is visible at any moment. By virtualizing the address space, we can map a large logical volume onto a bounded physical cache, enabling web-based visualization of datasets that would otherwise be impractical to load entirely.
+Volumetric data exhibits strong spatial coherence: only a small working set of bricks is visible at any moment. By virtualizing the address space, a large logical volume maps onto a bounded physical cache.
 
 ### 1. Brick Decomposition
 
@@ -219,7 +219,7 @@ allocate(frame: number): AllocationResult {
 
 ## Network Streaming
 
-The **BrickLoader** (`src/streaming/brick-loader.ts`) uses **HTTP Range requests** to fetch individual bricks without downloading entire LOD files:
+Data providers (`src/data/`) handle fetching brick data. The **ShardedDataProvider** uses **HTTP Range requests** to fetch individual bricks without downloading entire LOD files:
 
 ```
 GET /datasets/volume/lod0.bin
@@ -267,6 +267,10 @@ Typical compression ratios:
 - Sparse volumes (with empty regions): 10-30% of original size
 
 The compression is transparent to the rest of the system—bricks are decompressed before being written to the atlas texture.
+
+### OME-Zarr Streaming
+
+The **ZarrDataProvider** (`src/data/zarr-provider.ts`) loads OME-Zarr volumes directly over HTTP using zarrita.js. A pool of Web Workers handles chunk fetching, decompression, and re-chunking into 66³ bricks with ghost borders. Since Zarr chunk boundaries don't align with Kiln's brick grid, workers fetch the overlapping chunks and assemble each brick from the relevant regions.
 
 ---
 
@@ -488,9 +492,15 @@ src/
 │   ├── transfer-function.ts # 1D transfer function texture
 │   ├── volume.ts            # Atlas texture creation/upload
 │   └── config.ts            # Constants and dataset configuration
+├── data/
+│   ├── data-provider.ts     # Abstract DataProvider interface
+│   ├── sharded-provider.ts  # Kiln sharded binary format
+│   ├── zarr-provider.ts     # OME-Zarr format (via zarrita.js)
+│   ├── zarr-worker-pool.ts  # Worker pool for off-thread chunk loading
+│   ├── zarr-chunk-worker.ts # Web Worker for Zarr chunk fetch/decompress
+│   └── decompression-pool.ts # Gzip decompression workers
 ├── streaming/
 │   ├── streaming-manager.ts # Resident set manager, LOD selection
-│   ├── brick-loader.ts      # HTTP Range request brick loading
 │   └── atlas-allocator.ts   # LRU slot allocation
 ├── shaders/
 │   ├── common.wgsl          # Constants, coordinate transforms
@@ -571,7 +581,7 @@ These differences don't make WebGL unsuitable for volume rendering—capable Web
 
 ## Future: WebGPU-Native Optimizations
 
-Kiln currently uses WebGPU for compute shaders, async texture uploads, and native 16-bit support. However, several advanced WebGPU patterns could further improve performance and reduce CPU overhead. This section documents potential optimizations that would make Kiln more "GPU-driven" and truly WebGPU-native.
+Kiln currently uses WebGPU for compute shaders, async texture uploads, and native 16-bit support. Several additional WebGPU patterns could reduce CPU overhead by moving more work to the GPU.
 
 ### GPU-Driven Frustum Culling
 

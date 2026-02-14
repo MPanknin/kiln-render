@@ -5,13 +5,9 @@
  * Implementations handle format-specific details (HTTP fetching, decompression,
  * metadata parsing) while exposing a uniform API for brick streaming.
  *
- * Current implementations:
+ * Implementations:
  * - ShardedDataProvider: Kiln's native sharded binary format
- *
- * Future implementations could include:
  * - ZarrDataProvider: OME-NGFF/Zarr format
- * - NiftiDataProvider: NIfTI medical imaging format
- * - DicomDataProvider: DICOM series
  */
 
 /** Bit depth for volume data */

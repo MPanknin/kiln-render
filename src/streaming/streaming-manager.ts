@@ -15,6 +15,7 @@ import { Camera, extractFrustumPlanes, isAABBInFrustum, multiplyMatrices } from 
 import { Renderer } from '../core/renderer.js';
 import type { DataProvider, VolumeMetadata } from '../data/data-provider.js';
 import { AtlasSlot } from './atlas-allocator.js';
+import { BrickCache } from './brick-cache.js';
 import { PHYSICAL_BRICK_SIZE, getNormalizedSize } from '../core/config.js';
 import { writeToCanvas } from '../core/volume.js';
 
@@ -64,6 +65,9 @@ export class StreamingManager {
 
   // Track empty bricks (so we don't re-check them)
   private emptyBricks = new Set<string>();
+
+  // CPU-side cache of decompressed brick data (avoids re-download after GPU eviction)
+  private brickCache = new BrickCache();
 
   // Whether base LOD has been loaded
   private _baseLodLoaded = false;
@@ -302,6 +306,7 @@ export class StreamingManager {
     this.loadedBricks.clear();
     this.pinnedBricks.clear();
     this.emptyBricks.clear();
+    this.brickCache.clear();
     this.desiredKeys.clear();
     this.loadQueue = [];
     this._baseLodLoaded = false;
@@ -566,15 +571,18 @@ export class StreamingManager {
       return;
     }
 
-    // Load brick data
-    const data = await this.dataProvider.loadBrick(lod, bx, by, bz);
-    if (signal.aborted) return;
-
-    if (!data) return;
+    // Try CPU cache first, fall back to network
+    let data = this.brickCache.get(key) ?? null;
+    if (!data) {
+      data = await this.dataProvider.loadBrick(lod, bx, by, bz);
+      if (signal.aborted) return;
+      if (!data) return;
+      this.brickCache.put(key, data);
+    }
 
     // CRITICAL: Check if still desired before uploading to GPU
     if (!this.desiredKeys.has(key)) {
-      // Brick is no longer needed - camera moved
+      // Brick is no longer needed - camera moved (data stays in CPU cache)
       return;
     }
 

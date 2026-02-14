@@ -1,8 +1,55 @@
-# Data Preparation Guide
+# Data Guide
 
-This guide explains how to convert raw volumetric data into Kiln's binary sharded streaming format.
+Kiln supports two input formats:
 
-## Quick Start
+| Format | Preprocessing | Use Case |
+|--------|---------------|----------|
+| **Kiln sharded binary** | Requires conversion script | Gzip-compressed bricks, HTTP Range streaming |
+| **OME-Zarr (NGFF v0.5)** | None (load directly) | Standard scientific imaging format, chunked arrays |
+
+---
+
+## OME-Zarr
+
+Kiln can load [OME-Zarr](https://ngff.openmicroscopy.org/) volumes directly over HTTP with no preprocessing. Point it at a `.ome.zarr` URL and it streams chunk data on demand.
+
+### Requirements
+
+- OME-NGFF v0.5 with `multiscales` metadata in group attributes
+- 3D arrays with dimensions ordered `[z, y, x]` (standard C-order)
+- Supported dtypes: `uint8`, `int8`, `uint16`, `int16`
+- Multiple resolution levels (datasets within `multiscales`) are used as LODs
+- Voxel spacing is read from `coordinateTransformations` if present
+
+### Usage
+
+Set the volume source URL to a `.ome.zarr` path. Kiln auto-detects the format:
+
+```typescript
+const VOLUME_SOURCE = 'https://example.com/data/scan.ome.zarr';
+```
+
+Brick assembly (fetching Zarr chunks, decompressing, and re-chunking into 66³ bricks with ghost borders) runs in a Web Worker pool off the main thread.
+
+### Public OME-Zarr Datasets
+
+The [OME-Zarr Open SciVis Datasets](https://registry.opendata.aws/ome-zarr-open-scivis/) on AWS provide ready-to-use test volumes:
+
+```typescript
+const VOLUME_SOURCE = 'https://ome-zarr-scivis.s3.us-east-1.amazonaws.com/v0.5/96x2/beechnut.ome.zarr';
+```
+
+### Axis Convention
+
+Zarr stores dimensions as `[z, y, x]` (C-order, x fastest-varying). Kiln uses `[x, y, z]` in its metadata. Only metadata tuples are swapped; no data transposition is needed since the memory layout is identical.
+
+---
+
+## Kiln Sharded Binary
+
+For raw volume files, use the preprocessing script to convert into Kiln's sharded binary format.
+
+### Quick Start
 
 ```bash
 npx ts-node scripts/decompose-volume.ts <input.raw> <W> <H> <D> [options]
@@ -13,14 +60,14 @@ Example:
 npx ts-node scripts/decompose-volume.ts data/chameleon_1024x1024x1080.raw --bits 16
 ```
 
-## Input Format
+### Input Format
 
-Kiln accepts raw binary volume files:
+The script accepts raw binary volume files:
 
 - **8-bit unsigned** (`uint8`) - 1 byte per voxel
 - **16-bit unsigned** (`uint16`) - 2 bytes per voxel, little-endian
 
-### 16-bit Processing Modes
+#### 16-bit Processing Modes
 
 By default, 16-bit volumes are normalized to 8-bit during processing. Use `--native` to preserve full 16-bit precision:
 
@@ -29,7 +76,7 @@ By default, 16-bit volumes are normalized to 8-bit during processing. Use `--nat
 | Normalized | (default) | 8-bit | Smaller files, wider compatibility |
 | Native | `--native` | 16-bit | Full precision, requires `texture-formats-tier1` |
 
-### Filename Conventions
+#### Filename Conventions
 
 The script can parse metadata from filenames:
 
@@ -39,7 +86,7 @@ The script can parse metadata from filenames:
 | `_16_` or `uint16` | `scan_16_512x512x174.raw` | 16-bit data |
 | `X,YxZ,W` (commas) | `ct_0,83x0,82x3,2.raw` | Voxel spacing 0.83×0.82×3.2 |
 
-## Usage
+### Script Usage
 
 ```bash
 npx ts-node scripts/decompose-volume.ts <input.raw> <output-dir> [options]
@@ -49,7 +96,7 @@ npx ts-node scripts/decompose-volume.ts <input.raw> <W> <H> <D> [options]
 
 When dimensions are provided as positional args, the output directory defaults to `public/datasets/<input-name>/`.
 
-### Options
+#### Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -62,7 +109,7 @@ When dimensions are provided as positional args, the output directory defaults t
 | `--native` | Off | Preserve 16-bit precision (don't normalize to 8-bit) |
 | `--output DIR` | Auto | Output directory |
 
-### Examples
+#### Examples
 
 ```bash
 # Parse dimensions from filename
@@ -83,7 +130,7 @@ npx ts-node scripts/decompose-volume.ts data/ct_scan.raw 512 512 400 \
 npx ts-node scripts/decompose-volume.ts data/dicom.raw 512 512 400 --header 2048
 ```
 
-## Output Format
+### Output Format
 
 The script produces a binary sharded format optimized for HTTP Range request streaming:
 
@@ -98,7 +145,7 @@ public/datasets/myvolume/
 └── lod2_index.json
 ```
 
-### volume.json
+#### volume.json
 
 Main metadata file:
 
@@ -129,7 +176,7 @@ Main metadata file:
 The `format` field indicates the voxel format: `"uint8"` (8-bit) or `"uint16"` (16-bit native).
 The `compressed` field indicates bricks are gzip compressed.
 
-### Index Files
+#### Index Files
 
 Each `lodN_index.json` contains byte offsets and per-brick statistics:
 
@@ -152,16 +199,16 @@ The per-brick statistics (`min`, `max`, `avg`) enable:
 - **Empty brick skipping** - Skip bricks where `max < threshold`
 - **Importance-based loading** - Prioritize bricks with higher density variation
 
-## Brick Format Details
+### Brick Format Details
 
-### Physical vs Logical Size
+#### Physical vs Logical Size
 
 - **Logical size**: 64³ voxels (default)
 - **Physical size**: 66³ voxels (logical + 1-voxel border on each side)
 
 The 1-voxel border enables seamless trilinear interpolation at brick boundaries.
 
-### Memory Layout
+#### Memory Layout
 
 Bricks are stored in row-major order (X varies fastest):
 
@@ -169,7 +216,7 @@ Bricks are stored in row-major order (X varies fastest):
 index = x + y * physicalSize + z * physicalSize * physicalSize
 ```
 
-### LOD Generation
+#### LOD Generation
 
 Higher LOD levels are created by 2×2×2 box-filter downsampling:
 - LOD 0: Full resolution
@@ -178,6 +225,8 @@ Higher LOD levels are created by 2×2×2 box-filter downsampling:
 - etc.
 
 The number of LOD levels is automatically calculated based on volume size, capped at 5 levels.
+
+---
 
 ## Hosting for Streaming
 
@@ -204,7 +253,7 @@ npm run dev
 
 Most CDNs (CloudFront, Cloudflare, etc.) support Range requests without special configuration.
 
-## Complete Example
+## Complete Example (Sharded Binary)
 
 Converting the Stag Beetle dataset:
 

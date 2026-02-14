@@ -8,7 +8,7 @@ import { createBox, createAxis } from '../utils/geometry.js';
 import { TransferFunction } from './transfer-function.js';
 import { IndirectionTable } from './indirection.js';
 import { AtlasAllocator, AtlasSlot } from '../streaming/atlas-allocator.js';
-import { volumeShader, wireframeShader, axisShader, computeShader, blitShader } from '../shaders/index.js';
+import { volumeShader, wireframeShader, axisShader, computeShader, blitShader, accumulateShader } from '../shaders/index.js';
 import { getDatasetSize, getNormalizedSize } from './config.js';
 import type { BitDepth } from '../data/data-provider.js';
 
@@ -53,6 +53,9 @@ export class Renderer {
   windowCenter = 0.5;
   windowWidth = 1.0;
 
+  // Render scale for compute shader (0.25–1.0, lower = faster but blurrier)
+  renderScale = 0.75;
+
   // Fragment-based pipelines
   private volumePipeline: GPURenderPipeline;
   private wireframePipeline: GPURenderPipeline;
@@ -62,10 +65,21 @@ export class Renderer {
   private computePipeline: GPUComputePipeline;
   private blitPipeline: GPURenderPipeline;
   private computeBindGroup: GPUBindGroup;
-  private blitBindGroup: GPUBindGroup;
+  private blitBindGroup: GPUBindGroup; // active blit bind group (set per-frame from blitBindGroups)
+  private blitBindGroups: [GPUBindGroup, GPUBindGroup] = null!; // one per accum texture
   private computeUniformBuffer: GPUBuffer;
   private computeOutputTexture: GPUTexture;
   private computeOutputView: GPUTextureView;
+
+  // Temporal accumulation
+  private accumPipeline: GPUComputePipeline;
+  private accumUniformBuffer: GPUBuffer;
+  private accumTextures: [GPUTexture, GPUTexture] = null!;
+  private accumViews: [GPUTextureView, GPUTextureView] = null!;
+  private accumBindGroups: [GPUBindGroup, GPUBindGroup] = null!;
+  private accumIndex = 0; // ping-pong index: write to accumTextures[accumIndex], read from other
+  private accumFrameCount = 0;
+  private prevVP: Float32Array | null = null;
 
   // Fragment bind groups
   private volumeBindGroup: GPUBindGroup;
@@ -95,9 +109,13 @@ export class Renderer {
   private indexCount: number;
   private wireframeIndexCount: number;
 
-  // Screen size for compute shader
+  // Screen size (full resolution)
   private screenWidth = 1;
   private screenHeight = 1;
+
+  // Compute texture size (may be lower than screen when renderScale < 1)
+  private computeWidth = 1;
+  private computeHeight = 1;
 
   // Frame counter for temporal jitter
   private frameIndex = 0;
@@ -312,6 +330,29 @@ export class Renderer {
         { binding: 1, resource: this.blitSampler },
       ],
     });
+
+    // Accumulation pipeline
+    const accumModule = device.createShaderModule({ code: accumulateShader });
+    this.accumPipeline = device.createComputePipeline({
+      layout: 'auto',
+      compute: { module: accumModule, entryPoint: 'main' },
+    });
+
+    // Accumulation uniform buffer: vec2 screenSize (8) + weight (4) + pad (4) = 16
+    this.accumUniformBuffer = device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    // Accumulation textures (ping-pong, will be resized)
+    const dummyTex = () => device.createTexture({
+      size: [1, 1],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.accumTextures = [dummyTex(), dummyTex()];
+    this.accumViews = [this.accumTextures[0].createView(), this.accumTextures[1].createView()];
+    this.accumBindGroups = [null!, null!];
   }
 
   /**
@@ -373,6 +414,11 @@ export class Renderer {
     this.allocator.reset();
   }
 
+  /** Reset temporal accumulation (call when rendering parameters change) */
+  resetAccumulation(): void {
+    this.accumFrameCount = 0;
+  }
+
   /**
    * Set the transfer function and recreate bind groups
    */
@@ -414,7 +460,7 @@ export class Renderer {
     this.screenWidth = width;
     this.screenHeight = height;
 
-    // Resize depth texture
+    // Resize depth texture (always full resolution for overlays)
     this.depthTexture.destroy();
     this.depthTexture = this.device.createTexture({
       size: [width, height],
@@ -423,16 +469,35 @@ export class Renderer {
     });
     this.depthView = this.depthTexture.createView();
 
-    // Resize compute output texture
+    // Resize compute output texture (scaled resolution)
+    this.resizeComputeTexture();
+  }
+
+  /** Recreate compute output texture at current renderScale. Call after changing renderScale. */
+  resizeComputeTexture(): void {
+    this.computeWidth = Math.max(1, Math.round(this.screenWidth * this.renderScale));
+    this.computeHeight = Math.max(1, Math.round(this.screenHeight * this.renderScale));
+
     this.computeOutputTexture.destroy();
     this.computeOutputTexture = this.device.createTexture({
-      size: [width, height],
+      size: [this.computeWidth, this.computeHeight],
       format: 'rgba8unorm',
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
     });
     this.computeOutputView = this.computeOutputTexture.createView();
 
-    // Recreate compute bind group with new output texture
+    // Resize accumulation textures
+    for (const tex of this.accumTextures) tex.destroy();
+    const size: [number, number] = [this.computeWidth, this.computeHeight];
+    const accumUsage = GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING;
+    this.accumTextures = [
+      this.device.createTexture({ size, format: 'rgba8unorm', usage: accumUsage }),
+      this.device.createTexture({ size, format: 'rgba8unorm', usage: accumUsage }),
+    ];
+    this.accumViews = [this.accumTextures[0].createView(), this.accumTextures[1].createView()];
+    this.accumFrameCount = 0;
+    this.accumIndex = 0;
+
     this.recreateComputeBindGroups();
   }
 
@@ -452,13 +517,49 @@ export class Renderer {
       ],
     });
 
-    this.blitBindGroup = this.device.createBindGroup({
-      layout: this.blitPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: this.computeOutputView },
-        { binding: 1, resource: this.blitSampler },
-      ],
-    });
+    // Accumulation bind groups: two configurations for ping-pong
+    // Config 0: read history from accumTextures[1], write to accumTextures[0]
+    // Config 1: read history from accumTextures[0], write to accumTextures[1]
+    const accumLayout = this.accumPipeline.getBindGroupLayout(0);
+    this.accumBindGroups = [
+      this.device.createBindGroup({
+        layout: accumLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.accumUniformBuffer } },
+          { binding: 1, resource: this.computeOutputView },
+          { binding: 2, resource: this.accumViews[1] },
+          { binding: 3, resource: this.accumViews[0] },
+        ],
+      }),
+      this.device.createBindGroup({
+        layout: accumLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.accumUniformBuffer } },
+          { binding: 1, resource: this.computeOutputView },
+          { binding: 2, resource: this.accumViews[0] },
+          { binding: 3, resource: this.accumViews[1] },
+        ],
+      }),
+    ] as [GPUBindGroup, GPUBindGroup];
+
+    // Blit bind groups: one per accumulation texture
+    const blitLayout = this.blitPipeline.getBindGroupLayout(0);
+    this.blitBindGroups = [
+      this.device.createBindGroup({
+        layout: blitLayout,
+        entries: [
+          { binding: 0, resource: this.accumViews[0]! },
+          { binding: 1, resource: this.blitSampler },
+        ],
+      }),
+      this.device.createBindGroup({
+        layout: blitLayout,
+        entries: [
+          { binding: 0, resource: this.accumViews[1]! },
+          { binding: 1, resource: this.blitSampler },
+        ],
+      }),
+    ];
   }
 
   render(colorView: GPUTextureView, camera: Camera) {
@@ -578,6 +679,19 @@ export class Renderer {
   }
 
   private renderCompute(colorView: GPUTextureView, camera: Camera, vp: Float32Array) {
+    // Detect camera movement for temporal accumulation reset
+    let vpChanged = true;
+    if (this.prevVP) {
+      vpChanged = false;
+      for (let i = 0; i < 16; i++) {
+        if (Math.abs(vp[i]! - this.prevVP[i]!) > 1e-6) { vpChanged = true; break; }
+      }
+    }
+    this.prevVP = new Float32Array(vp);
+    if (vpChanged) {
+      this.accumFrameCount = 0;
+    }
+
     // Compute inverse view-projection for ray generation
     const inverseViewProj = invertMatrix(vp);
 
@@ -595,8 +709,8 @@ export class Renderer {
     computeDataView.setInt32(23 * 4, this.getRenderModeInt(), true);  // 23: renderMode (i32)
     computeUniformData.set(getNormalizedSize(), 24);     // 24-26: normalizedSize
     computeUniformData[27] = this.isoValue;              // 27: isoValue
-    computeUniformData[28] = this.screenWidth;            // 28: screenSize.x
-    computeUniformData[29] = this.screenHeight;           // 29: screenSize.y
+    computeUniformData[28] = this.computeWidth;            // 28: screenSize.x
+    computeUniformData[29] = this.computeHeight;          // 29: screenSize.y
     computeDataView.setUint32(30 * 4, this.frameIndex, true);  // 30: frameIndex (u32)
     // 31: padding
     computeUniformData[32] = this.windowCenter;          // 32: windowCenter
@@ -609,13 +723,28 @@ export class Renderer {
     const computePass = encoder.beginComputePass();
     computePass.setPipeline(this.computePipeline);
     computePass.setBindGroup(0, this.computeBindGroup);
-    // Workgroup size is 8x8, so dispatch ceil(width/8) x ceil(height/8)
-    const workgroupsX = Math.ceil(this.screenWidth / 8);
-    const workgroupsY = Math.ceil(this.screenHeight / 8);
+    // Workgroup size is 8x8, dispatch over compute texture (may be < screen)
+    const workgroupsX = Math.ceil(this.computeWidth / 8);
+    const workgroupsY = Math.ceil(this.computeHeight / 8);
     computePass.dispatchWorkgroups(workgroupsX, workgroupsY, 1);
     computePass.end();
 
-    // Blit compute output to screen
+    // Temporal accumulation pass
+    const weight = 1.0 / (this.accumFrameCount + 1);
+    const accumData = new Float32Array(4);
+    accumData[0] = this.computeWidth;
+    accumData[1] = this.computeHeight;
+    accumData[2] = weight;
+    this.device.queue.writeBuffer(this.accumUniformBuffer, 0, accumData as Float32Array<ArrayBuffer>);
+
+    const accumPass = encoder.beginComputePass();
+    accumPass.setPipeline(this.accumPipeline);
+    accumPass.setBindGroup(0, this.accumBindGroups[this.accumIndex]);
+    accumPass.dispatchWorkgroups(workgroupsX, workgroupsY, 1);
+    accumPass.end();
+
+    // Blit accumulated result to screen (read from texture we just wrote)
+    this.blitBindGroup = this.blitBindGroups[this.accumIndex]!;
     const blitPass = encoder.beginRenderPass({
       colorAttachments: [{
         view: colorView,
@@ -629,6 +758,12 @@ export class Renderer {
     blitPass.draw(3); // Fullscreen triangle
 
     blitPass.end();
+
+    // Advance accumulation state (cap at 64 — diminishing returns beyond that)
+    this.accumIndex = 1 - this.accumIndex as 0 | 1;
+    if (this.accumFrameCount < 64) {
+      this.accumFrameCount++;
+    }
 
     // Update wireframe uniforms for overlay pass
     this.device.queue.writeBuffer(this.wireframeUniformBuffer, 0, vp as Float32Array<ArrayBuffer>);

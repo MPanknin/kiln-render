@@ -31,6 +31,7 @@ import lodDebugWGSL from './lod-debug.wgsl?raw';
 import wireframeWGSL from './wireframe.wgsl?raw';
 import axisWGSL from './axis.wgsl?raw';
 import blitWGSL from './blit.wgsl?raw';
+import accumulateWGSL from './accumulate.wgsl?raw';
 
 // Template for replacing ATLAS_SIZE constant (injected at runtime from config)
 function injectConfig(shader: string): string {
@@ -205,3 +206,4 @@ fn main(@builtin(global_invocation_id) globalId: vec3u) {
 export const wireframeShader = wireframeWGSL;
 export const axisShader = axisWGSL;
 export const blitShader = blitWGSL;
+export const accumulateShader = accumulateWGSL;

@@ -47,6 +47,8 @@ export class VolumeUI {
     // Windowing/Leveling for 16-bit data
     windowCenter: 0.5,
     windowWidth: 1.0,
+    // Render scale
+    renderScale: 1.0,
   };
 
   // Stats display (read-only, updated periodically)
@@ -97,6 +99,7 @@ export class VolumeUI {
     this.params.showAxis = renderer.showAxis;
     this.params.windowCenter = renderer.windowCenter;
     this.params.windowWidth = renderer.windowWidth;
+    this.params.renderScale = renderer.renderScale;
 
     this.pane = new Pane({
       title: 'Volume Controls',
@@ -139,6 +142,7 @@ export class VolumeUI {
       },
     }).on('change', (ev: { value: unknown }) => {
       this.renderer.volumeRenderMode = ev.value as VolumeRenderMode;
+      this.renderer.resetAccumulation();
       this.updateVisibility();
     });
 
@@ -162,6 +166,7 @@ export class VolumeUI {
       label: 'Indirection',
     }).on('change', (ev: { value: unknown }) => {
       this.renderer.useIndirection = ev.value as boolean;
+      this.renderer.resetAccumulation();
     });
 
     // Wireframe toggle
@@ -178,6 +183,17 @@ export class VolumeUI {
       this.renderer.showAxis = ev.value as boolean;
     });
 
+    // Render scale slider
+    pane.addBinding(this.params, 'renderScale', {
+      label: 'Render Scale',
+      min: 0.25,
+      max: 1.0,
+      step: 0.25,
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.renderScale = ev.value as number;
+      this.renderer.resizeComputeTexture();
+    });
+
     // Isosurface folder
     this.isoFolder = pane.addFolder({
       title: 'Isosurface',
@@ -190,6 +206,7 @@ export class VolumeUI {
       step: 0.01,
     }).on('change', (ev: { value: unknown }) => {
       this.renderer.isoValue = ev.value as number;
+      this.renderer.resetAccumulation();
     });
 
     // Transfer Function folder
@@ -210,6 +227,7 @@ export class VolumeUI {
       },
     }).on('change', (ev: { value: unknown }) => {
       this.transferFunction.setPreset(ev.value as TFPreset);
+      this.renderer.resetAccumulation();
       this.updateTFPreview();
     });
 
@@ -251,6 +269,7 @@ export class VolumeUI {
       step: 0.01,
     }).on('change', (ev: { value: unknown }) => {
       this.renderer.windowCenter = ev.value as number;
+      this.renderer.resetAccumulation();
     });
 
     this.windowFolder.addBinding(this.params, 'windowWidth', {
@@ -260,6 +279,7 @@ export class VolumeUI {
       step: 0.01,
     }).on('change', (ev: { value: unknown }) => {
       this.renderer.windowWidth = ev.value as number;
+      this.renderer.resetAccumulation();
     });
   }
 
@@ -539,6 +559,7 @@ export class VolumeUI {
 
   private updateTFPreview(): void {
     this.transferFunction.renderPreview(this.tfCanvas);
+    this.renderer.resetAccumulation();
   }
 
   private updateVisibility(): void {

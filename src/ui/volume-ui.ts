@@ -562,6 +562,20 @@ export class VolumeUI {
     this.renderer.resetAccumulation();
   }
 
+  /** Sync UI params from current renderer/camera state (e.g. after applying URL params) */
+  syncFromState(): void {
+    this.params.renderMode = this.renderer.volumeRenderMode;
+    this.params.isoValue = this.renderer.isoValue;
+    this.params.windowCenter = this.renderer.windowCenter;
+    this.params.windowWidth = this.renderer.windowWidth;
+    this.params.renderScale = this.renderer.renderScale;
+    this.params.upAxis = this.camera.getUpAxis();
+    this.params.tfPreset = this.transferFunction.preset;
+    (this.pane as unknown as ExtendedPane).refresh();
+    this.updateVisibility();
+    this.updateTFPreview();
+  }
+
   private updateVisibility(): void {
     const mode = this.params.renderMode;
 

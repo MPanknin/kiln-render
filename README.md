@@ -8,7 +8,7 @@ Kiln streams multi-gigabyte volumes over HTTP, rendering them at interactive fra
 #### 2160.0 MB - 1024 × 1024 × 1080 @ 16-bit
 <img width="1723" height="901" alt="image" src="https://github.com/user-attachments/assets/5f3a8e98-707d-4da4-b7ee-65f8ad5f4a99" />
 
-## Beechnut CT Scan
+## Beechnut micro CT Scan
 #### 3092.0 MB - 1024 × 1024 × 1546 @ 16-bit
 <img width="1722" height="904" alt="image" src="https://github.com/user-attachments/assets/16828573-1f15-45f6-be3d-a46708293bc2" />
 
@@ -48,12 +48,14 @@ npm run build
 npm run test
 ```
 
-The demo loads a sample dataset from S3. To use your own data, see the [Data Guide](DATA_PREPARATION.md).
+The demo loads a sample dataset from S3. To use your own data, see the [Data Guide](docs/data-guide.md).
 
 ## Documentation
 
-- **[Architecture](ARCHITECTURE.md)** - Virtual texturing system, streaming manager, raymarching pipeline, and design decisions
-- **[Data Guide](DATA_PREPARATION.md)** - Supported formats (OME-Zarr, Kiln sharded binary) and data preparation
+- **[Architecture](docs/architecture.md)** - Virtual texturing, streaming manager, and design decisions
+- **[Rendering Pipeline](docs/rendering.md)** - Raymarching, compositing modes, resolution scaling, and temporal accumulation
+- **[Data Guide](docs/data-guide.md)** - Supported formats (OME-Zarr, Kiln sharded binary) and data preparation
+- **[WebGPU Notes](docs/webgpu.md)** - WebGPU vs WebGL comparison and future GPU optimizations
 
 ## UI Controls
 
@@ -68,7 +70,7 @@ The demo loads a sample dataset from S3. To use your own data, see the [Data Gui
 
 ## Why WebGPU?
 
-Kiln requires WebGPU (not WebGL) for native `r16unorm` textures, compute shader raymarching, and asynchronous texture uploads during streaming. See the [Architecture](ARCHITECTURE.md#webgpu-vs-webgl-for-volume-rendering) doc for a detailed comparison.
+Kiln requires WebGPU (not WebGL) for native `r16unorm` textures, compute shader raymarching, and asynchronous texture uploads during streaming. See the [WebGPU Notes](docs/webgpu.md) for a detailed comparison.
 
 ## Credits
 

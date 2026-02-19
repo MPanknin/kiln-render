@@ -18,7 +18,11 @@ fn setupBrick(
     var info: BrickInfo;
 
     let samplePos = rayOrigin + rayDir * t;
-    let voxelPos = normalizedToVoxel(samplePos, normalizedSize, datasetSize);
+    let voxelPos = clamp(
+        normalizedToVoxel(samplePos, normalizedSize, datasetSize),
+        vec3f(0.0),
+        datasetSize - vec3f(0.001)
+    );
     let brickIndex = floor(voxelPos / LOGICAL_BRICK_SIZE);
 
     let brickMinVoxel = brickIndex * LOGICAL_BRICK_SIZE;

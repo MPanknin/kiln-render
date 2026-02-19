@@ -8,9 +8,8 @@
 // Core constants
 export const LOGICAL_BRICK_SIZE = 64;
 export const PHYSICAL_BRICK_SIZE = 66; // 64 + 1 voxel padding on each side
-export const ATLAS_SIZE = 528;         // Grid slots * physical brick size
-// export const ATLAS_SIZE = 660;         // Grid slots * physical brick size
-// export const ATLAS_SIZE = 792;         // Grid slots * physical brick size
+export const ATLAS_SIZE = 528;         // Grid slots * physical brick size - 528, 660, 792, etc.
+export const MAX_BRICK_TRAVERSALS = 512; // Upper bound for shader loop termination
 
 // Derived constants - GRID_SIZE determines how many bricks fit in the atlas
 // ATLAS_SIZE = GRID_SIZE * PHYSICAL_BRICK_SIZE
@@ -96,19 +95,13 @@ export function setDatasetSize(size: [number, number, number], spacing?: [number
   console.log(`  Normalized: ${computeNormalizedSize().map(n => n.toFixed(3)).join('x')}`);
 }
 
-// Legacy exports for compatibility (use with caution - these are snapshots)
-export const DATASET_SIZE: [number, number, number] = datasetSize;
-export const DATASET_GRID: [number, number, number] = computeDatasetGrid();
-export const NORMALIZED_SIZE: [number, number, number] = computeNormalizedSize();
-
-// Grouped config object for convenience
+// Grouped config object (static constants only — use getter functions for dynamic values)
 export const CONFIG = {
+  LOGICAL_BRICK_SIZE,
+  PHYSICAL_BRICK_SIZE,
   BRICK_SIZE,
   ATLAS_SIZE,
   GRID_SIZE,
   TOTAL_BRICK_SLOTS,
-  // These are snapshots - for dynamic values use the getter functions
-  DATASET_SIZE,
-  DATASET_GRID,
-  NORMALIZED_SIZE,
+  MAX_BRICK_TRAVERSALS,
 } as const;

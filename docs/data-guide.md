@@ -1,5 +1,9 @@
 # Data Guide
 
+Supported formats, data preparation, and hosting for streaming.
+
+See also: [Architecture](architecture.md) | [Rendering Pipeline](rendering.md) | [WebGPU Notes](webgpu.md)
+
 Kiln supports two input formats:
 
 | Format | Preprocessing | Use Case |

@@ -11,7 +11,7 @@ import { AtlasSlot } from './streaming/atlas-allocator.js';
 import { ShardedDataProvider } from './data/sharded-provider.js';
 import { ZarrDataProvider } from './data/zarr-provider.js';
 import type { DataProvider } from './data/data-provider.js';
-import { TransferFunction } from './core/transfer-function.js';
+import { TransferFunction, TFPreset } from './core/transfer-function.js';
 import { VolumeUI } from './ui/volume-ui.js';
 import { StreamingManager } from './streaming/streaming-manager.js';
 
@@ -24,12 +24,50 @@ import { StreamingManager } from './streaming/streaming-manager.js';
 // const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/stagbeetle-binary';
 // const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-binary';
 // const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-compressed';
-const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-16bit';
+// const VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-16bit';
 // const VOLUME_SOURCE = 'https://ome-zarr-scivis.s3.us-east-1.amazonaws.com/v0.5/96x2/boston_teapot.ome.zarr';
 // const VOLUME_SOURCE = 'https://ome-zarr-scivis.s3.us-east-1.amazonaws.com/v0.5/96x2/aneurism.ome.zarr';
 // const VOLUME_SOURCE = 'https://ome-zarr-scivis.s3.us-east-1.amazonaws.com/v0.5/96x2/woodbranch.ome.zarr';
 // const VOLUME_SOURCE = 'https://ome-zarr-scivis.s3.us-east-1.amazonaws.com/v0.5/96x2/beechnut.ome.zarr';
 // const VOLUME_SOURCE = 'https://ome-zarr-scivis.s3.us-east-1.amazonaws.com/v0.5/96x2/pig_heart.ome.zarr';
+// Default volume source (can be overridden via ?dataset= URL parameter)
+const DEFAULT_VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-16bit';
+
+/** Parse URL parameters for per-dataset configuration */
+function parseURLParams(): {
+  dataset: string;
+  mode?: VolumeRenderMode;
+  wc?: number;
+  ww?: number;
+  iso?: number;
+  tf?: string;
+  up?: string;
+  sse?: number;
+  scale?: number;
+  cam?: [number, number, number];
+} {
+  const params = new URLSearchParams(window.location.search);
+  let cam: [number, number, number] | undefined;
+  const camStr = params.get('cam');
+  if (camStr) {
+    const parts = camStr.split(',').map(Number);
+    if (parts.length === 3 && parts.every(n => !isNaN(n))) {
+      cam = parts as [number, number, number];
+    }
+  }
+  return {
+    dataset: params.get('dataset') ?? DEFAULT_VOLUME_SOURCE,
+    mode: (params.get('mode') as VolumeRenderMode) ?? undefined,
+    wc: params.has('wc') ? Number(params.get('wc')) : undefined,
+    ww: params.has('ww') ? Number(params.get('ww')) : undefined,
+    iso: params.has('iso') ? Number(params.get('iso')) : undefined,
+    tf: params.get('tf') ?? undefined,
+    up: params.get('up') ?? undefined,
+    sse: params.has('sse') ? Number(params.get('sse')) : undefined,
+    scale: params.has('scale') ? Number(params.get('scale')) : undefined,
+    cam,
+  };
+}
 
 // Capture page load start time for time-to-first-render metric
 const PAGE_LOAD_START = performance.now();
@@ -73,12 +111,16 @@ async function main() {
   const format = navigator.gpu.getPreferredCanvasFormat();
   context.configure({ device, format });
 
+  // Parse URL parameters
+  const urlParams = parseURLParams();
+  const volumeSource = urlParams.dataset;
+
   // Load volume metadata via DataProvider (auto-detect format)
-  console.log(`Loading volume metadata from ${VOLUME_SOURCE}...`);
-  const isZarr = VOLUME_SOURCE.includes('.zarr');
+  console.log(`Loading volume metadata from ${volumeSource}...`);
+  const isZarr = volumeSource.includes('.zarr');
   const dataProvider: DataProvider = isZarr
-    ? new ZarrDataProvider(VOLUME_SOURCE)
-    : new ShardedDataProvider(VOLUME_SOURCE);
+    ? new ZarrDataProvider(volumeSource)
+    : new ShardedDataProvider(volumeSource);
   const metadata = await dataProvider.initialize();
 
   // Configure dataset size from metadata
@@ -321,6 +363,42 @@ async function main() {
   // Create UI
   const ui = new VolumeUI(renderer, camera, transferFunction);
   ui.setStreamingManager(streamingManager, metadata);
+
+  // Apply URL parameters (after UI so we can sync both)
+  if (urlParams.mode) {
+    renderer.volumeRenderMode = urlParams.mode;
+    renderer.resetAccumulation();
+  }
+  if (urlParams.wc !== undefined) {
+    renderer.windowCenter = urlParams.wc;
+    renderer.resetAccumulation();
+  }
+  if (urlParams.ww !== undefined) {
+    renderer.windowWidth = urlParams.ww;
+    renderer.resetAccumulation();
+  }
+  if (urlParams.iso !== undefined) {
+    renderer.isoValue = urlParams.iso;
+    renderer.resetAccumulation();
+  }
+  if (urlParams.tf) {
+    transferFunction.setPreset(urlParams.tf as TFPreset);
+    renderer.resetAccumulation();
+  }
+  if (urlParams.up) {
+    camera.setUpAxis(urlParams.up as UpAxis);
+  }
+  if (urlParams.cam) {
+    camera.setOrbitState(urlParams.cam);
+  }
+  if (urlParams.sse !== undefined) {
+    streamingManager.maxPixelError = urlParams.sse;
+  }
+  if (urlParams.scale !== undefined) {
+    renderer.renderScale = urlParams.scale;
+    renderer.resizeComputeTexture();
+  }
+  ui.syncFromState();
 
   // Render loop
   function frame() {

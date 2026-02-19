@@ -120,6 +120,18 @@ export class Renderer {
   // Frame counter for temporal jitter
   private frameIndex = 0;
 
+  // Pre-allocated scratch buffers (avoid per-frame GC pressure)
+  private readonly vpScratch = new Float32Array(16);
+  private readonly invVPScratch = new Float32Array(16);
+  private readonly fragUniformScratch = new Float32Array(52);
+  private readonly fragUniformView = new DataView(this.fragUniformScratch.buffer);
+  private readonly computeUniformScratch = new Float32Array(34);
+  private readonly computeUniformView = new DataView(this.computeUniformScratch.buffer);
+  private readonly accumScratch = new Float32Array(4);
+  private static readonly IDENTITY_MAT4 = new Float32Array([
+    1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1,
+  ]);
+
   constructor(device: GPUDevice, format: GPUTextureFormat, bitDepth: BitDepth = 8) {
     this.device = device;
 
@@ -566,12 +578,12 @@ export class Renderer {
     const aspect = this.depthTexture.width / this.depthTexture.height;
     const view = camera.getViewMatrix();
     const proj = camera.getProjectionMatrix(aspect);
-    const vp = multiplyMatrices(proj, view);
+    multiplyMatrices(proj, view, this.vpScratch);
 
     if (this.renderMode === 'compute') {
-      this.renderCompute(colorView, camera, vp);
+      this.renderCompute(colorView, camera, this.vpScratch);
     } else {
-      this.renderFragment(colorView, camera, vp);
+      this.renderFragment(colorView, camera, this.vpScratch);
     }
 
     this.frameIndex++;
@@ -587,34 +599,25 @@ export class Renderer {
   }
 
   private renderFragment(colorView: GPUTextureView, camera: Camera, vp: Float32Array) {
-    // Identity model matrix, so inverse is also identity
-    const inverseModel = new Float32Array([
-      1, 0, 0, 0,
-      0, 1, 0, 0,
-      0, 0, 1, 0,
-      0, 0, 0, 1,
-    ]);
-
-    // Update volume uniforms
+    // Update volume uniforms (reuse pre-allocated scratch buffer)
     // Layout: mat4 mvp (64) + mat4 inverseModel (64) + vec3 cameraPos (12) + useIndirection (4)
     //       + vec3 datasetSize (12) + renderMode (4) + vec3 normalizedSize (12) + isoValue (4)
     //       + frameIndex (4) + pad (4) + windowCenter (4) + windowWidth (4) = 208 bytes
-    const uniformData = new Float32Array(52);  // 208 bytes / 4
-    uniformData.set(vp, 0);                    // 0-15: mvp (model is identity)
-    uniformData.set(inverseModel, 16);         // 16-31: inverseModel
-    uniformData.set(camera.position, 32);      // 32-34: cameraPos
-    uniformData[35] = this.useIndirection ? 1.0 : 0.0;  // 35: useIndirection
-    uniformData.set(getDatasetSize(), 36);     // 36-38: datasetSize
-    // renderMode is i32, need to use DataView for proper encoding
-    const uniformDataView = new DataView(uniformData.buffer);
-    uniformDataView.setInt32(39 * 4, this.getRenderModeInt(), true);  // 39: renderMode (i32)
-    uniformData.set(getNormalizedSize(), 40); // 40-42: normalizedSize
-    uniformData[43] = this.isoValue;          // 43: isoValue
-    uniformDataView.setUint32(44 * 4, this.frameIndex, true);  // 44: frameIndex (u32)
+    const d = this.fragUniformScratch;
+    const dv = this.fragUniformView;
+    d.set(vp, 0);                              // 0-15: mvp (model is identity)
+    d.set(Renderer.IDENTITY_MAT4, 16);         // 16-31: inverseModel
+    d.set(camera.position, 32);                // 32-34: cameraPos
+    d[35] = this.useIndirection ? 1.0 : 0.0;  // 35: useIndirection
+    d.set(getDatasetSize(), 36);               // 36-38: datasetSize
+    dv.setInt32(39 * 4, this.getRenderModeInt(), true);  // 39: renderMode (i32)
+    d.set(getNormalizedSize(), 40);            // 40-42: normalizedSize
+    d[43] = this.isoValue;                     // 43: isoValue
+    dv.setUint32(44 * 4, this.frameIndex, true);  // 44: frameIndex (u32)
     // 45: padding
-    uniformData[46] = this.windowCenter;      // 46: windowCenter
-    uniformData[47] = this.windowWidth;       // 47: windowWidth
-    this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData as Float32Array<ArrayBuffer>);
+    d[46] = this.windowCenter;                 // 46: windowCenter
+    d[47] = this.windowWidth;                  // 47: windowWidth
+    this.device.queue.writeBuffer(this.uniformBuffer, 0, d as Float32Array<ArrayBuffer>);
 
     // Update wireframe uniforms
     this.device.queue.writeBuffer(this.wireframeUniformBuffer, 0, vp as Float32Array<ArrayBuffer>);
@@ -675,7 +678,9 @@ export class Renderer {
     const aspect = this.depthTexture.width / this.depthTexture.height;
     const view = camera.getViewMatrix();
     const proj = camera.getProjectionMatrix(aspect);
-    return multiplyMatrices(proj, view);
+    const out = new Float32Array(16);
+    multiplyMatrices(proj, view, out);
+    return out;
   }
 
   private renderCompute(colorView: GPUTextureView, camera: Camera, vp: Float32Array) {
@@ -687,35 +692,35 @@ export class Renderer {
         if (Math.abs(vp[i]! - this.prevVP[i]!) > 1e-6) { vpChanged = true; break; }
       }
     }
-    this.prevVP = new Float32Array(vp);
+    if (!this.prevVP) this.prevVP = new Float32Array(16);
+    this.prevVP.set(vp);
     if (vpChanged) {
       this.accumFrameCount = 0;
     }
 
-    // Compute inverse view-projection for ray generation
-    const inverseViewProj = invertMatrix(vp);
+    // Compute inverse view-projection for ray generation (writes into scratch buffer)
+    invertMatrix(vp, this.invVPScratch);
 
-    // Update compute uniforms
+    // Update compute uniforms (reuse pre-allocated scratch buffer)
     // Layout: mat4 inverseViewProj (64) + vec3 cameraPos (12) + useIndirection (4)
     //       + vec3 datasetSize (12) + renderMode (4) + vec3 normalizedSize (12) + isoValue (4)
     //       + vec2 screenSize (8) + frameIndex (4) + pad (4) + windowCenter (4) + windowWidth (4) = 136 bytes = 34 floats
-    const computeUniformData = new Float32Array(34);
-    computeUniformData.set(inverseViewProj, 0);           // 0-15: inverseViewProj
-    computeUniformData.set(camera.position, 16);          // 16-18: cameraPos
-    computeUniformData[19] = this.useIndirection ? 1.0 : 0.0;  // 19: useIndirection
-    computeUniformData.set(getDatasetSize(), 20);         // 20-22: datasetSize
-    // renderMode is i32, need to use DataView for proper encoding
-    const computeDataView = new DataView(computeUniformData.buffer);
-    computeDataView.setInt32(23 * 4, this.getRenderModeInt(), true);  // 23: renderMode (i32)
-    computeUniformData.set(getNormalizedSize(), 24);     // 24-26: normalizedSize
-    computeUniformData[27] = this.isoValue;              // 27: isoValue
-    computeUniformData[28] = this.computeWidth;            // 28: screenSize.x
-    computeUniformData[29] = this.computeHeight;          // 29: screenSize.y
-    computeDataView.setUint32(30 * 4, this.frameIndex, true);  // 30: frameIndex (u32)
+    const d = this.computeUniformScratch;
+    const dv = this.computeUniformView;
+    d.set(this.invVPScratch, 0);               // 0-15: inverseViewProj
+    d.set(camera.position, 16);                // 16-18: cameraPos
+    d[19] = this.useIndirection ? 1.0 : 0.0;  // 19: useIndirection
+    d.set(getDatasetSize(), 20);               // 20-22: datasetSize
+    dv.setInt32(23 * 4, this.getRenderModeInt(), true);  // 23: renderMode (i32)
+    d.set(getNormalizedSize(), 24);            // 24-26: normalizedSize
+    d[27] = this.isoValue;                     // 27: isoValue
+    d[28] = this.computeWidth;                 // 28: screenSize.x
+    d[29] = this.computeHeight;                // 29: screenSize.y
+    dv.setUint32(30 * 4, this.frameIndex, true);  // 30: frameIndex (u32)
     // 31: padding
-    computeUniformData[32] = this.windowCenter;          // 32: windowCenter
-    computeUniformData[33] = this.windowWidth;           // 33: windowWidth
-    this.device.queue.writeBuffer(this.computeUniformBuffer, 0, computeUniformData as Float32Array<ArrayBuffer>);
+    d[32] = this.windowCenter;                 // 32: windowCenter
+    d[33] = this.windowWidth;                  // 33: windowWidth
+    this.device.queue.writeBuffer(this.computeUniformBuffer, 0, d as Float32Array<ArrayBuffer>);
 
     const encoder = this.device.createCommandEncoder();
 
@@ -731,11 +736,10 @@ export class Renderer {
 
     // Temporal accumulation pass
     const weight = 1.0 / (this.accumFrameCount + 1);
-    const accumData = new Float32Array(4);
-    accumData[0] = this.computeWidth;
-    accumData[1] = this.computeHeight;
-    accumData[2] = weight;
-    this.device.queue.writeBuffer(this.accumUniformBuffer, 0, accumData as Float32Array<ArrayBuffer>);
+    this.accumScratch[0] = this.computeWidth;
+    this.accumScratch[1] = this.computeHeight;
+    this.accumScratch[2] = weight;
+    this.device.queue.writeBuffer(this.accumUniformBuffer, 0, this.accumScratch as Float32Array<ArrayBuffer>);
 
     const accumPass = encoder.beginComputePass();
     accumPass.setPipeline(this.accumPipeline);
@@ -807,21 +811,19 @@ export class Renderer {
   }
 }
 
-function multiplyMatrices(a: Float32Array, b: Float32Array): Float32Array {
-  const result = new Float32Array(16);
+function multiplyMatrices(a: Float32Array, b: Float32Array, out: Float32Array): void {
   for (let i = 0; i < 4; i++) {
     for (let j = 0; j < 4; j++) {
-      result[j * 4 + i] =
+      out[j * 4 + i] =
         a[i]! * b[j * 4]! +
         a[i + 4]! * b[j * 4 + 1]! +
         a[i + 8]! * b[j * 4 + 2]! +
         a[i + 12]! * b[j * 4 + 3]!;
     }
   }
-  return result;
 }
 
-function invertMatrix(m: Float32Array): Float32Array {
+function invertMatrix(m: Float32Array, out: Float32Array): void {
   // Use explicit indexing to avoid TS strict mode issues
   const m0 = m[0]!, m1 = m[1]!, m2 = m[2]!, m3 = m[3]!;
   const m4 = m[4]!, m5 = m[5]!, m6 = m[6]!, m7 = m[7]!;
@@ -866,14 +868,13 @@ function invertMatrix(m: Float32Array): Float32Array {
 
   let det = m0 * inv0 + m1 * inv4 + m2 * inv8 + m3 * inv12;
   if (det === 0) {
-    return new Float32Array(16); // Return zero matrix if singular
+    out.fill(0);
+    return;
   }
 
   det = 1.0 / det;
-  return new Float32Array([
-    inv0 * det, inv1 * det, inv2 * det, inv3 * det,
-    inv4 * det, inv5 * det, inv6 * det, inv7 * det,
-    inv8 * det, inv9 * det, inv10 * det, inv11 * det,
-    inv12 * det, inv13 * det, inv14 * det, inv15 * det,
-  ]);
+  out[0] = inv0 * det;  out[1] = inv1 * det;  out[2] = inv2 * det;  out[3] = inv3 * det;
+  out[4] = inv4 * det;  out[5] = inv5 * det;  out[6] = inv6 * det;  out[7] = inv7 * det;
+  out[8] = inv8 * det;  out[9] = inv9 * det;  out[10] = inv10 * det; out[11] = inv11 * det;
+  out[12] = inv12 * det; out[13] = inv13 * det; out[14] = inv14 * det; out[15] = inv15 * det;
 }

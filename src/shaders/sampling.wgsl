@@ -39,15 +39,30 @@ fn sampleWithIndirection(voxelPos: vec3f) -> f32 {
     return sampleAtlas(voxelPos, indirection, lodScale);
 }
 
+// Sample at an offset, reusing the center brick's indirection when the offset
+// stays in the same brick. Falls back to full lookup at brick boundaries.
+fn sampleGradientOffset(
+    offsetPos: vec3f,
+    centerBrickIndex: vec3f,
+    indirection: vec4u,
+    lodScale: f32,
+) -> f32 {
+    let offsetBrickIndex = floor(offsetPos / LOGICAL_BRICK_SIZE);
+    if (all(offsetBrickIndex == centerBrickIndex)) {
+        return sampleAtlas(offsetPos, indirection, lodScale);
+    }
+    return sampleWithIndirection(offsetPos);
+}
+
 // Compute gradient at a position (for isosurface normals)
 fn computeGradient(voxelPos: vec3f, indirection: vec4u, lodScale: f32) -> vec3f {
-    // Use per-sample indirection lookup to handle brick boundaries correctly
     let h = lodScale;
-    let dx = sampleWithIndirection(voxelPos + vec3f(h, 0.0, 0.0)) -
-             sampleWithIndirection(voxelPos - vec3f(h, 0.0, 0.0));
-    let dy = sampleWithIndirection(voxelPos + vec3f(0.0, h, 0.0)) -
-             sampleWithIndirection(voxelPos - vec3f(0.0, h, 0.0));
-    let dz = sampleWithIndirection(voxelPos + vec3f(0.0, 0.0, h)) -
-             sampleWithIndirection(voxelPos - vec3f(0.0, 0.0, h));
+    let centerBrickIndex = floor(voxelPos / LOGICAL_BRICK_SIZE);
+    let dx = sampleGradientOffset(voxelPos + vec3f(h, 0.0, 0.0), centerBrickIndex, indirection, lodScale) -
+             sampleGradientOffset(voxelPos - vec3f(h, 0.0, 0.0), centerBrickIndex, indirection, lodScale);
+    let dy = sampleGradientOffset(voxelPos + vec3f(0.0, h, 0.0), centerBrickIndex, indirection, lodScale) -
+             sampleGradientOffset(voxelPos - vec3f(0.0, h, 0.0), centerBrickIndex, indirection, lodScale);
+    let dz = sampleGradientOffset(voxelPos + vec3f(0.0, 0.0, h), centerBrickIndex, indirection, lodScale) -
+             sampleGradientOffset(voxelPos - vec3f(0.0, 0.0, h), centerBrickIndex, indirection, lodScale);
     return vec3f(dx, dy, dz);
 }

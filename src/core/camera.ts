@@ -342,6 +342,19 @@ export class Camera {
     return this.upAxis;
   }
 
+  /** Get orbital state: [rotationX, rotationY, distance] */
+  getOrbitState(): [number, number, number] {
+    return [this.rotationX, this.rotationY, this.distance];
+  }
+
+  /** Set orbital state: [rotationX, rotationY, distance] */
+  setOrbitState(state: [number, number, number]): void {
+    this.rotationX = state[0];
+    this.rotationY = state[1];
+    this.distance = state[2];
+    this.updatePosition();
+  }
+
   getViewMatrix(): Float32Array {
     return mat4.lookAt(this.position, this.target, this.upVector) as Float32Array;
   }

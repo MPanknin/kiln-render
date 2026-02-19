@@ -33,9 +33,13 @@ import axisWGSL from './axis.wgsl?raw';
 import blitWGSL from './blit.wgsl?raw';
 import accumulateWGSL from './accumulate.wgsl?raw';
 
-// Template for replacing ATLAS_SIZE constant (injected at runtime from config)
+// Inject all rendering constants from config into shader source
 function injectConfig(shader: string): string {
-  return shader.replace(/ATLAS_SIZE: f32 = \d+\.0/, `ATLAS_SIZE: f32 = ${CONFIG.ATLAS_SIZE}.0`);
+  return shader
+    .replace(/LOGICAL_BRICK_SIZE: f32 = \d+\.0/, `LOGICAL_BRICK_SIZE: f32 = ${CONFIG.LOGICAL_BRICK_SIZE}.0`)
+    .replace(/PHYSICAL_BRICK_SIZE: f32 = \d+\.0/, `PHYSICAL_BRICK_SIZE: f32 = ${CONFIG.PHYSICAL_BRICK_SIZE}.0`)
+    .replace(/ATLAS_SIZE: f32 = \d+\.0/, `ATLAS_SIZE: f32 = ${CONFIG.ATLAS_SIZE}.0`)
+    .replace(/MAX_BRICK_TRAVERSALS: u32 = \d+u/, `MAX_BRICK_TRAVERSALS: u32 = ${CONFIG.MAX_BRICK_TRAVERSALS}u`);
 }
 
 // Shared bindings used by volume shaders

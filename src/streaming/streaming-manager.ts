@@ -643,6 +643,9 @@ export class StreamingManager {
 
     // Track
     this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
+
+    // Reset temporal accumulation — atlas content changed, history buffer is stale
+    this.renderer.resetAccumulation();
   }
 
   // Helper functions

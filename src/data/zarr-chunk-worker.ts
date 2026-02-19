@@ -59,21 +59,36 @@ let PHYSICAL_SIZE = 66;
 let lodParams: ZarrWorkerRequest['lodParams'] = [];
 let is16bit = false;
 
-// Per-worker chunk cache (LRU, avoids re-fetching shared chunks between bricks)
-const chunkCache = new Map<string, { data: ArrayLike<number>; shape: number[] }>();
-const MAX_CACHE = 128;
+// Per-worker chunk cache (LRU, bounded by byte count to prevent OOM)
+const chunkCache = new Map<string, { data: ArrayLike<number>; shape: number[]; bytes: number }>();
+let cacheBytes = 0;
+const MAX_CACHE_BYTES = 128 * 1024 * 1024; // 128 MB per worker
 
 function cacheKey(lod: number, cz: number, cy: number, cx: number): string {
   return `${lod}:${cz}/${cy}/${cx}`;
 }
 
+function estimateBytes(data: ArrayLike<number>): number {
+  if (data instanceof Uint8Array || data instanceof Int8Array) return data.length;
+  if (data instanceof Uint16Array || data instanceof Int16Array) return data.length * 2;
+  if (data instanceof Float32Array || data instanceof Uint32Array || data instanceof Int32Array) return data.length * 4;
+  if (data instanceof Float64Array) return data.length * 8;
+  return data.length * (is16bit ? 2 : 1); // fallback estimate
+}
+
 function cacheSet(key: string, data: ArrayLike<number>, shape: number[]): void {
-  if (chunkCache.has(key)) chunkCache.delete(key);
-  if (chunkCache.size >= MAX_CACHE) {
+  const bytes = estimateBytes(data);
+  if (chunkCache.has(key)) {
+    cacheBytes -= chunkCache.get(key)!.bytes;
+    chunkCache.delete(key);
+  }
+  while (cacheBytes + bytes > MAX_CACHE_BYTES && chunkCache.size > 0) {
     const oldest = chunkCache.keys().next().value!;
+    cacheBytes -= chunkCache.get(oldest)!.bytes;
     chunkCache.delete(oldest);
   }
-  chunkCache.set(key, { data, shape });
+  chunkCache.set(key, { data, shape, bytes });
+  cacheBytes += bytes;
 }
 
 self.onmessage = async (event: MessageEvent<ZarrWorkerRequest>) => {

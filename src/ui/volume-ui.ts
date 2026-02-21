@@ -117,7 +117,7 @@ export class VolumeUI {
 
     // Create stats pane in lower left corner
     const statsContainer = document.createElement('div');
-    statsContainer.style.cssText = 'position: fixed; left: 8px; bottom: 8px; z-index: 1000;';
+    statsContainer.style.cssText = 'position: fixed; left: 8px; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); z-index: 1000;';
     document.body.appendChild(statsContainer);
 
     this.statsPane = new Pane({

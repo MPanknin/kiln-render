@@ -642,7 +642,8 @@ export class StreamingManager {
     this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
 
     // Reset temporal accumulation — atlas content changed, history buffer is stale
-    this.renderer.resetAccumulation();
+    // I hate it. Either ghosting or noise during loading, pick your poison.
+    this.renderer.resetAccumulation(); 
   }
 
   // Helper functions

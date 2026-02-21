@@ -11,8 +11,9 @@
  * - Only metadata tuples need swapping, no data transposition
  */
 
-import { FetchStore, open, root, Array as ZarrArray } from 'zarrita';
+import { open, root, Array as ZarrArray } from 'zarrita';
 import type { DataType, Readable } from 'zarrita';
+import { TolerantFetchStore } from './tolerant-fetch-store.js';
 import { LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE } from '../core/config.js';
 import { ZarrWorkerPool } from './zarr-worker-pool.js';
 import type {
@@ -57,7 +58,7 @@ export class ZarrDataProvider implements DataProvider {
     if (this.metadata) return this.metadata;
 
     // Use zarrita on main thread for lightweight metadata reading only
-    const store = new FetchStore(this.url);
+    const store = new TolerantFetchStore(this.url);
     const rootGroup = await open(root(store), { kind: 'group' });
 
     // Parse OME multiscales from group attributes

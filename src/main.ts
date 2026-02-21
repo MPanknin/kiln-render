@@ -2,6 +2,12 @@
  * Kiln - Brick-based WebGPU Volume Renderer
  */
 
+declare global {
+  interface Window {
+    goatcounter?: { count: (opts: { path: string; title: string; event: boolean }) => void };
+  }
+}
+
 import { Renderer, VolumeRenderMode } from './core/renderer.js';
 import { Camera, UpAxis } from './core/camera.js';
 import { setDatasetSize } from './core/config.js';
@@ -13,8 +19,8 @@ import { VolumeUI } from './ui/volume-ui.js';
 import { StreamingManager } from './streaming/streaming-manager.js';
 
 // Default volume source (can be overridden via ?dataset= URL parameter)
-// const DEFAULT_VOLUME_SOURCE = 'https://ome-zarr-scivis.s3.us-east-1.amazonaws.com/v0.5/96x2/beechnut.ome.zarr';
-const DEFAULT_VOLUME_SOURCE = 'https://kiln-samples.s3.eu-central-1.amazonaws.com/chameleon-16bit';
+const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/chameleon-16bit';
+// const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/beechnut.ome.zarr';
 
 /** Parse URL parameters for per-dataset configuration */
 function parseURLParams(): {
@@ -63,6 +69,7 @@ async function main() {
   const adapter = await navigator.gpu?.requestAdapter();
   if (!adapter) {
     showError('WebGPU not supported');
+    window.goatcounter?.count({ path: '/event/webgpu-failed', title: 'WebGPU not supported', event: true });
     return;
   }
 
@@ -84,10 +91,12 @@ async function main() {
   });
   if (!device) {
     showError('WebGPU device creation failed');
+    window.goatcounter?.count({ path: '/event/webgpu-failed', title: 'WebGPU device creation failed', event: true });
     return;
   }
+  window.goatcounter?.count({ path: '/event/webgpu-ok', title: 'WebGPU initialized', event: true });
 
-  const context = canvas.getContext('webgpu')!;
+  const context = canvas.getContext('webgpu')!
   const format = navigator.gpu.getPreferredCanvasFormat();
   context.configure({ device, format });
 
@@ -204,9 +213,7 @@ async function main() {
   }
 
   // Render loop
-  let frameCount = 0;
   function frame() {
-    frameCount++;
     ui.recordFrame();
 
     if (streamingEnabled) {

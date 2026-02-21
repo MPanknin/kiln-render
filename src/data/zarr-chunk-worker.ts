@@ -12,8 +12,9 @@
  * and uploads the returned buffers to the GPU atlas.
  */
 
-import { FetchStore, open, root, Array as ZarrArray } from 'zarrita';
+import { open, root, Array as ZarrArray } from 'zarrita';
 import type { DataType, Readable } from 'zarrita';
+import { TolerantFetchStore } from './tolerant-fetch-store.js';
 
 /** Messages from main thread to worker */
 export interface ZarrWorkerRequest {
@@ -102,7 +103,7 @@ self.onmessage = async (event: MessageEvent<ZarrWorkerRequest>) => {
       lodParams = event.data.lodParams ?? [];
       is16bit = event.data.is16bit ?? false;
 
-      const store = new FetchStore(url!);
+      const store = new TolerantFetchStore(url!);
       const rootGroup = await open(root(store), { kind: 'group' });
 
       arrays = [];

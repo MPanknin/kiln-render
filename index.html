@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>KILN</title>
   <style>
     body {
@@ -106,7 +106,7 @@
 
     #spinner {
       position: fixed;
-      bottom: 12px;
+      bottom: calc(12px + env(safe-area-inset-bottom, 0px));
       right: 12px;
       width: 16px;
       height: 16px;
@@ -141,7 +141,7 @@
     </button>
   </div>
   <div id="spinner"></div>
-  <div id="toast" class="toast">Link copied to clipboard</div>
+  <div id="toast" class="toast">Current view copied to clipboard</div>
   <script data-goatcounter="https://mpanknin.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
   <script type="module" src="./src/main.ts"></script>
 </body>

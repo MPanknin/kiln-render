@@ -61,7 +61,6 @@ export class DecompressionPool {
       this.workers.push(worker);
     }
 
-    console.log(`DecompressionPool: initialized with ${poolSize} workers`);
   }
 
   /**
@@ -101,7 +100,6 @@ export class DecompressionPool {
     }
     this.workers = [];
     this.pendingRequests.clear();
-    console.log('DecompressionPool: terminated');
   }
 }
 

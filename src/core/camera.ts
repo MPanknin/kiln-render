@@ -342,16 +342,19 @@ export class Camera {
     return this.upAxis;
   }
 
-  /** Get orbital state: [rotationX, rotationY, distance] */
-  getOrbitState(): [number, number, number] {
-    return [this.rotationX, this.rotationY, this.distance];
+  /** Get orbital state: [rotationX, rotationY, distance, targetX, targetY, targetZ] */
+  getOrbitState(): [number, number, number, number, number, number] {
+    return [this.rotationX, this.rotationY, this.distance, this.target[0], this.target[1], this.target[2]];
   }
 
-  /** Set orbital state: [rotationX, rotationY, distance] */
-  setOrbitState(state: [number, number, number]): void {
+  /** Set orbital state: [rotationX, rotationY, distance] or [rotationX, rotationY, distance, targetX, targetY, targetZ] */
+  setOrbitState(state: [number, number, number] | [number, number, number, number, number, number]): void {
     this.rotationX = state[0];
     this.rotationY = state[1];
     this.distance = state[2];
+    if (state.length === 6) {
+      this.target = [state[3], state[4], state[5]];
+    }
     this.updatePosition();
   }
 

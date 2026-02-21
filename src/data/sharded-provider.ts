@@ -100,7 +100,6 @@ export class ShardedDataProvider implements DataProvider {
     this.rawMetadata = await response.json();
     this.metadata = this.convertMetadata(this.rawMetadata!);
 
-    console.log(`Loaded volume: ${this.metadata.name}`);
     return this.metadata;
   }
 

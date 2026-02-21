@@ -171,7 +171,6 @@ export class StreamingManager {
     if (!level) return;
 
     const [gridX, gridY, gridZ] = level.brickGrid;
-    console.log(`Loading base LOD ${maxLod} (${gridX}x${gridY}x${gridZ} = ${level.brickCount} bricks)...`);
 
     for (let bz = 0; bz < gridZ; bz++) {
       for (let by = 0; by < gridY; by++) {
@@ -227,7 +226,6 @@ export class StreamingManager {
 
     this._baseLodLoaded = true;
     this._timeToFirstRender = performance.now() - this.loadStartTime;
-    console.log(`Base LOD ${maxLod} loaded (${this.pinnedBricks.size} pinned bricks) in ${this._timeToFirstRender.toFixed(0)}ms`);
   }
 
   /**
@@ -311,7 +309,6 @@ export class StreamingManager {
     this.loadQueue = [];
     this._baseLodLoaded = false;
     this.renderer.indirection.clearAll();
-    console.log('StreamingManager: cleared all bricks');
 
     // Reload base LOD
     this.loadBaseLod();

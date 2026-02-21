@@ -77,7 +77,6 @@ export function getEmptyBrickThreshold(): number {
 
 export function setEmptyBrickThreshold(threshold: number): void {
   emptyBrickThreshold = threshold;
-  console.log(`Empty brick threshold set to ${threshold}`);
 }
 
 /**
@@ -89,10 +88,6 @@ export function setDatasetSize(size: [number, number, number], spacing?: [number
   if (spacing) {
     voxelSpacing = [...spacing];
   }
-  console.log(`Dataset size set to ${size[0]}x${size[1]}x${size[2]}`);
-  console.log(`  Voxel spacing: ${voxelSpacing.join(' x ')}`);
-  console.log(`  Brick grid: ${computeDatasetGrid().join('x')}`);
-  console.log(`  Normalized: ${computeNormalizedSize().map(n => n.toFixed(3)).join('x')}`);
 }
 
 // Grouped config object (static constants only — use getter functions for dynamic values)

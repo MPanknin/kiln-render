@@ -100,7 +100,6 @@ export class ZarrWorkerPool {
     }
 
     await Promise.all(initPromises);
-    console.log(`ZarrWorkerPool: initialized ${this.poolSize} workers`);
   }
 
   /**

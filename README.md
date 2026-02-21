@@ -1,3 +1,6 @@
+> [!NOTE]
+> Kiln is a research-grade prototype. Some rendering artifacts and incomplete features are expected.
+
 # Kiln
 
 A WebGPU-native out-of-core volume renderer for large virtualized volumetric datasets. 

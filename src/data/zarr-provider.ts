@@ -171,11 +171,6 @@ export class ZarrDataProvider implements DataProvider {
       bitDepth,
     };
 
-    console.log(`Zarr volume: ${this.metadata.name}`);
-    console.log(`  Scales: ${numScales}, dtype: ${dtype}`);
-    for (const level of levels) {
-      console.log(`  LOD ${level.lod}: ${level.dimensions.join('x')} → ${level.brickGrid.join('x')} bricks`);
-    }
 
     // Initialize worker pool — all heavy lifting happens there
     this.workerPool = new ZarrWorkerPool();

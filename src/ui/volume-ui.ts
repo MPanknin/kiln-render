@@ -19,7 +19,7 @@ interface TweakpaneFolder {
 // Extended Pane type with methods that exist at runtime but aren't in types
 interface ExtendedPane extends Pane {
   addBinding: (obj: object, key: string, params?: object) => { on: (event: string, cb: (ev: { value: unknown }) => void) => void };
-  addFolder: (params: { title: string }) => TweakpaneFolder;
+  addFolder: (params: { title: string; expanded?: boolean }) => TweakpaneFolder;
   refresh: () => void;
 }
 
@@ -101,10 +101,19 @@ export class VolumeUI {
     this.params.windowWidth = renderer.windowWidth;
     this.params.renderScale = renderer.renderScale;
 
+    // Create controls pane in top-left corner
+    const controlsContainer = document.createElement('div');
+    controlsContainer.style.cssText = 'position: fixed; left: 8px; top: 8px; z-index: 1000;';
+    document.body.appendChild(controlsContainer);
+
     this.pane = new Pane({
-      title: 'Volume Controls',
+      title: 'Controls',
+      container: controlsContainer,
       expanded: false,
     });
+
+    // Icon-only collapsed state for controls pane
+    this.setupIconCollapse(this.pane, '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/></svg>', 'Controls');
 
     // Create stats pane in lower left corner
     const statsContainer = document.createElement('div');
@@ -112,10 +121,13 @@ export class VolumeUI {
     document.body.appendChild(statsContainer);
 
     this.statsPane = new Pane({
-      title: 'Dataset Stats',
+      title: 'Stats',
       container: statsContainer,
       expanded: false,
     });
+
+    // Icon-only collapsed state for stats pane
+    this.setupIconCollapse(this.statsPane, '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M1 11a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1zm5-4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1zm5-5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1z"/></svg>', 'Stats');
 
     this.tfCanvas = document.createElement('canvas');
     this.tfCanvas.width = 256;
@@ -159,28 +171,6 @@ export class VolumeUI {
       },
     }).on('change', (ev: { value: unknown }) => {
       this.camera.setUpAxis(ev.value as UpAxis);
-    });
-
-    // Indirection toggle
-    pane.addBinding(this.params, 'useIndirection', {
-      label: 'Indirection',
-    }).on('change', (ev: { value: unknown }) => {
-      this.renderer.useIndirection = ev.value as boolean;
-      this.renderer.resetAccumulation();
-    });
-
-    // Wireframe toggle
-    pane.addBinding(this.params, 'showWireframe', {
-      label: 'Wireframe',
-    }).on('change', (ev: { value: unknown }) => {
-      this.renderer.showWireframe = ev.value as boolean;
-    });
-
-    // Axis toggle
-    pane.addBinding(this.params, 'showAxis', {
-      label: 'Axis',
-    }).on('change', (ev: { value: unknown }) => {
-      this.renderer.showAxis = ev.value as boolean;
     });
 
     // Render scale slider
@@ -281,6 +271,28 @@ export class VolumeUI {
       this.renderer.windowWidth = ev.value as number;
       this.renderer.resetAccumulation();
     });
+
+    // Debug folder (collapsed by default)
+    const debugFolder = pane.addFolder({ title: 'Debug', expanded: false });
+
+    debugFolder.addBinding(this.params, 'useIndirection', {
+      label: 'Indirection',
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.useIndirection = ev.value as boolean;
+      this.renderer.resetAccumulation();
+    });
+
+    debugFolder.addBinding(this.params, 'showWireframe', {
+      label: 'Wireframe',
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.showWireframe = ev.value as boolean;
+    });
+
+    debugFolder.addBinding(this.params, 'showAxis', {
+      label: 'Axis',
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.showAxis = ev.value as boolean;
+    });
   }
 
   private setupStatsPane(): void {
@@ -328,7 +340,7 @@ export class VolumeUI {
     });
 
     // Streaming section
-    const streamFolder = statsPane.addFolder({ title: 'Streaming' });
+    const streamFolder = statsPane.addFolder({ title: 'Streaming', expanded: false });
 
     streamFolder.addBinding(this.statsParams, 'atlasUsage', {
       label: 'Atlas',
@@ -361,7 +373,7 @@ export class VolumeUI {
     });
 
     // Network section
-    const netFolder = statsPane.addFolder({ title: 'Network' });
+    const netFolder = statsPane.addFolder({ title: 'Network', expanded: false });
 
     netFolder.addBinding(this.statsParams, 'throughput', {
       label: 'Throughput',
@@ -442,6 +454,12 @@ export class VolumeUI {
         this.statsParams.timeToFirstRender = `${stats.timeToFirstRender.toFixed(0)} ms`;
       } else {
         this.statsParams.timeToFirstRender = 'Loading...';
+      }
+
+      // Update loading spinner
+      const spinner = document.getElementById('spinner');
+      if (spinner) {
+        spinner.classList.toggle('active', stats.pendingCount > 0);
       }
     }
 
@@ -574,6 +592,59 @@ export class VolumeUI {
     (this.pane as unknown as ExtendedPane).refresh();
     this.updateVisibility();
     this.updateTFPreview();
+  }
+
+  /** Make a Tweakpane pane show only an icon when collapsed, full title when expanded */
+  private setupIconCollapse(pane: Pane, iconSvg: string, title: string): void {
+    const el = pane.element;
+    const titleEl = el.querySelector('.tp-rotv_t') as HTMLElement | null;
+    const btn = el.querySelector('.tp-rotv_b') as HTMLElement | null;
+    const arrow = el.querySelector('.tp-rotv_m') as HTMLElement | null;
+    if (!titleEl || !btn) return;
+
+    const applyCollapsed = () => {
+      titleEl.innerHTML = iconSvg;
+      titleEl.style.display = 'flex';
+      titleEl.style.alignItems = 'center';
+      titleEl.style.justifyContent = 'center';
+      btn.style.width = '36px';
+      btn.style.height = '36px';
+      btn.style.padding = '0';
+      btn.style.textAlign = 'center';
+      btn.style.borderRadius = '6px';
+      el.style.width = '36px';
+      if (arrow) arrow.style.display = 'none';
+    };
+
+    const applyExpanded = () => {
+      titleEl.innerHTML = title;
+      titleEl.style.display = '';
+      titleEl.style.alignItems = '';
+      titleEl.style.justifyContent = '';
+      btn.style.width = '';
+      btn.style.height = '';
+      btn.style.padding = '';
+      btn.style.textAlign = '';
+      btn.style.borderRadius = '';
+      el.style.width = '';
+      if (arrow) arrow.style.display = '';
+    };
+
+    // Set initial state
+    applyCollapsed();
+
+    // Listen for expand/collapse
+    btn.addEventListener('click', () => {
+      // Tweakpane toggles after the click, so defer
+      requestAnimationFrame(() => {
+        const isExpanded = el.classList.contains('tp-rotv-expanded');
+        if (isExpanded) {
+          applyExpanded();
+        } else {
+          applyCollapsed();
+        }
+      });
+    });
   }
 
   private updateVisibility(): void {

@@ -15,6 +15,11 @@ const LOD_COLORS: [number, number, number, number][] = [
   [0.0, 1.0, 0.0, 1.0],  // LOD 3: Green
   [0.0, 1.0, 1.0, 1.0],  // LOD 4: Cyan
   [0.0, 0.0, 1.0, 1.0],  // LOD 5: Blue
+  [0.5, 0.0, 0.5, 1.0],  // LOD 6: Purple
+  [1.0, 0.0, 0.5, 1.0],  // LOD 7: Magenta
+  [0.5, 0.5, 0.5, 1.0],  // LOD 8: Gray
+  [0.3, 0.3, 0.3, 1.0],  // LOD 9: Dark Gray
+  [0.8, 0.4, 0.2, 1.0],  // LOD 10: Brown
 ];
 
 interface WireframeBox {

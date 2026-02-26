@@ -27,8 +27,13 @@ fn getLodColor(lodLevel: u32) -> vec3f {
         case 2u: { return vec3f(0.5, 1.0, 0.0); }  // LOD 1 = Yellow-Green
         case 3u: { return vec3f(1.0, 1.0, 0.0); }  // LOD 2 = Yellow
         case 4u: { return vec3f(1.0, 0.5, 0.0); }  // LOD 3 = Orange
-        case 5u: { return vec3f(1.0, 0.0, 0.0); }  // LOD 4 = Red (coarsest)
+        case 5u: { return vec3f(1.0, 0.0, 0.0); }  // LOD 4 = Red
         case 6u: { return vec3f(0.5, 0.0, 0.5); }  // LOD 5 = Purple
+        case 7u: { return vec3f(0.0, 0.0, 1.0); }  // LOD 6 = Blue
+        case 8u: { return vec3f(0.0, 0.5, 0.5); }  // LOD 7 = Cyan
+        case 9u: { return vec3f(1.0, 0.0, 0.5); }  // LOD 8 = Magenta
+        case 10u: { return vec3f(0.5, 0.5, 0.5); } // LOD 9 = Gray
+        case 11u: { return vec3f(0.8, 0.4, 0.2); } // LOD 10 = Brown (coarsest)
         default: { return vec3f(0.2, 0.2, 0.2); } // Not loaded = Dark gray
     }
 }

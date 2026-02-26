@@ -7,7 +7,7 @@ fn lookupIndirection(brickIndex: vec3f) -> vec4u {
 
 // Get the scale factor for a LOD level
 fn getLodScale(indirection: vec4u) -> f32 {
-    // w channel stores lod+1 (0 = not loaded, 1-4 = lod 0-3)
+    // w channel stores lod+1 (0 = not loaded, 1+ = lod level, 255 = empty)
     let lodLevel = f32(indirection.w) - 1.0;
     return exp2(lodLevel);
 }

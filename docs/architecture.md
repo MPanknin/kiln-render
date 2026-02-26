@@ -27,8 +27,8 @@ Kiln implements a **virtual texturing** system that decouples the logical volume
 │                              GPU Resources                                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Atlas Texture (3D)         │  Indirection Texture     │  Compute Pipeline  │
-│  - 528³ r8unorm             │  - Grid³ rgba8uint       │  - Ray generation  │
-│  - 8×8×8 = 512 slots        │  - Per-cell LOD + slot   │  - Brick traversal │
+│  - 660³ r8unorm             │  - Grid³ rgba8uint       │  - Ray generation  │
+│  - 10×10×10 = 1000 slots    │  - Per-cell LOD + slot   │  - Brick traversal │
 │  - 66³ per slot (w/ border) │  - 255 = empty marker    │  - Compositing     │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -87,24 +87,24 @@ When a finer LOD brick loads, it **overwrites** only its specific cell, leaving 
 
 ### 3. Atlas Texture
 
-The **atlas** is a single 3D texture (`528³`) organized as an 8×8×8 grid of 66³ slots. The texture format depends on the source data:
+The **atlas** is a single 3D texture (`660³`) organized as a 10×10×10 grid of 66³ slots. The texture format depends on the source data:
 - **8-bit volumes**: `r8unorm` (1 byte per voxel)
 - **16-bit volumes**: `r16unorm` (2 bytes per voxel, requires WebGPU `texture-formats-tier1` feature)
 
 ```
-Atlas Layout (528³ total)
-┌──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┐
-│ 0,0,0│ 1,0,0│ 2,0,0│ 3,0,0│ 4,0,0│ 5,0,0│ 6,0,0│ 7,0,0│  ← Z=0 layer
-├──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┤
-│ 0,1,0│ 1,1,0│ ...  │      │      │      │      │      │
-├──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┤
-│      │      │      │      │      │      │      │      │
-   ...            512 total slots (8×8×8)           ...
+Atlas Layout (660³ total)
+┌──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┐
+│ 0,0,0│ 1,0,0│ 2,0,0│ 3,0,0│ 4,0,0│ 5,0,0│ 6,0,0│ 7,0,0│ 8,0,0│ 9,0,0│  ← Z=0 layer
+├──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┤
+│ 0,1,0│ 1,1,0│ ...  │      │      │      │      │      │      │      │
+├──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┤
+│      │      │      │      │      │      │      │      │      │      │
+   ...           1,000 total slots (10×10×10)          ...
 ```
 
 Each slot stores 66³ voxels. Atlas size:
-- **8-bit**: 287,496 bytes per slot × 512 slots = **~147 MB** VRAM
-- **16-bit**: 574,992 bytes per slot × 512 slots = **~294 MB** VRAM
+- **8-bit**: 287,496 bytes per slot × 1,000 slots = **~274 MiB** VRAM
+- **16-bit**: 574,992 bytes per slot × 1,000 slots = **~548 MiB** VRAM
 
 The 1-voxel **ghost border** duplicates neighboring brick data to enable hardware trilinear filtering without seams:
 
@@ -285,7 +285,7 @@ Kiln supports both 8-bit and 16-bit unsigned integer volumes:
 | Texture format | `r8unorm` | `r16unorm` |
 | Value range | 0-255 | 0-65535 |
 | Bytes per voxel | 1 | 2 |
-| Atlas size | ~147 MB | ~294 MB |
+| Atlas size | ~274 MiB | ~548 MiB |
 | WebGPU feature | (none) | `texture-formats-tier1` |
 
 ### Windowing/Leveling
@@ -308,24 +308,23 @@ For example, a CT soft tissue window might use center=0.5, width=0.1 to expand a
 
 For a 1024³ volume with 4 LOD levels:
 
+**8-bit volume:**
+
 | Resource | Size | Notes |
 |----------|------|-------|
-| Atlas texture | 147 MB | 528³ × 1 byte |
-| Indirection table | 128 KB | 16×8×16 × 4 bytes (LOD 0 grid) |
-| Brick indices (CPU) | ~2 MB | JSON with offsets/stats |
-| Total VRAM | **~150 MB** | Constant regardless of volume size |
+| Atlas texture | 274 MiB | 660³ × 1 byte |
+| Indirection table | 128 KiB | 16×8×16 × 4 bytes (LOD 0 grid) |
+| Brick indices (CPU) | ~2 MiB | JSON with offsets/stats |
+| Total VRAM | **~274 MiB** | Constant regardless of volume size |
 
-Source data on disk/network:
+**16-bit volume:**
 
-| LOD | Bricks | Disk Size |
-|-----|--------|-----------|
-| 0 | 2,048 | 589 MB |
-| 1 | 256 | 74 MB |
-| 2 | 32 | 9 MB |
-| 3 | 4 | 1 MB |
-| **Total** | 2,340 | **673 MB** |
-
-At any moment, only ~512 bricks (the atlas capacity) are resident, representing <25% of the finest LOD. The system dynamically pages the optimal subset based on view.
+| Resource | Size | Notes |
+|----------|------|-------|
+| Atlas texture | 548 MiB | 660³ × 2 bytes |
+| Indirection table | 128 KiB | 16×8×16 × 4 bytes (LOD 0 grid) |
+| Brick indices (CPU) | ~2 MiB | JSON with offsets/stats |
+| Total VRAM | **~548 MiB** | Constant regardless of volume size |
 
 ---
 

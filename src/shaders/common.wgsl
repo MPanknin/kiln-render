@@ -2,10 +2,10 @@
 
 const LOGICAL_BRICK_SIZE: f32 = 64.0;
 const PHYSICAL_BRICK_SIZE: f32 = 66.0;
-const ATLAS_SIZE: f32 = 528.0;
+const ATLAS_SIZE: f32 = 660.0;
 const BORDER: f32 = 1.0;
 const STEPS_PER_BRICK: f32 = 24.0;
-const MAX_BRICK_TRAVERSALS: u32 = 96u;
+const MAX_BRICK_TRAVERSALS: u32 = 512u;
 const EARLY_EXIT_ALPHA: f32 = 0.95;
 
 const RENDER_MODE_DVR: i32 = 0;

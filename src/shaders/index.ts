@@ -103,6 +103,11 @@ struct Uniforms {
     _pad1: u32,
     windowCenter: f32,
     windowWidth: f32,
+    _pad2: vec2f,
+    clipMin: vec3f,
+    _pad3: f32,
+    clipMax: vec3f,
+    _pad4: f32,
 }
 
 ${sharedCode}
@@ -136,9 +141,16 @@ fn fs(@location(0) modelPos: vec3f) -> @location(0) vec4f {
 
     if (hit.x > hit.y || hit.y <= 0.0) { discard; }
 
-    let tStart = max(hit.x, 0.0);
+    // Apply clipping planes
+    let clipped = applyClippingPlanes(
+        rayOrigin, rayDir, max(hit.x, 0.0), hit.y,
+        uniforms.normalizedSize, uniforms.clipMin, uniforms.clipMax
+    );
+
+    if (clipped.x > clipped.y) { discard; }
+
     let useIndirection = uniforms.useIndirection > 0.5;
-    return rayMarchMode(rayOrigin, rayDir, tStart, hit.y, uniforms.normalizedSize, uniforms.datasetSize, uniforms.renderMode, uniforms.isoValue, useIndirection);
+    return rayMarchMode(rayOrigin, rayDir, clipped.x, clipped.y, uniforms.normalizedSize, uniforms.datasetSize, uniforms.renderMode, uniforms.isoValue, useIndirection);
 }
 `;
 
@@ -157,6 +169,11 @@ struct Uniforms {
     _pad3: f32,
     windowCenter: f32,
     windowWidth: f32,
+    _pad4: vec2f,
+    clipMin: vec3f,
+    _pad5: f32,
+    clipMax: vec3f,
+    _pad6: f32,
 }
 
 ${sharedCode}
@@ -197,9 +214,19 @@ fn main(@builtin(global_invocation_id) globalId: vec3u) {
         return;
     }
 
-    let tStart = max(hit.x, 0.0);
+    // Apply clipping planes
+    let clipped = applyClippingPlanes(
+        rayOrigin, rayDir, max(hit.x, 0.0), hit.y,
+        uniforms.normalizedSize, uniforms.clipMin, uniforms.clipMax
+    );
+
+    if (clipped.x > clipped.y) {
+        textureStore(outputTexture, pixelCoord, vec4f(bgColor, 1.0));
+        return;
+    }
+
     let useIndirection = uniforms.useIndirection > 0.5;
-    let result = rayMarchMode(rayOrigin, rayDir, tStart, hit.y, uniforms.normalizedSize, uniforms.datasetSize, uniforms.renderMode, uniforms.isoValue, useIndirection);
+    let result = rayMarchMode(rayOrigin, rayDir, clipped.x, clipped.y, uniforms.normalizedSize, uniforms.datasetSize, uniforms.renderMode, uniforms.isoValue, useIndirection);
 
     let finalColor = result.rgb + bgColor * (1.0 - result.a);
     textureStore(outputTexture, pixelCoord, vec4f(finalColor, 1.0));

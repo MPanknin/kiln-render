@@ -114,3 +114,29 @@ fn applyWindow(density: f32, windowCenter: f32, windowWidth: f32) -> f32 {
     let maxVal = windowCenter + halfWidth;
     return clamp((density - minVal) / max(windowWidth, 0.001), 0.0, 1.0);
 }
+
+// Apply axis-aligned clipping planes to ray-box intersection
+// clipMin/clipMax are in [0,1] range, converted to normalized volume space
+// Returns modified tStart/tEnd that clip the ray to the specified box
+fn applyClippingPlanes(
+    rayOrigin: vec3f,
+    rayDir: vec3f,
+    tStart: f32,
+    tEnd: f32,
+    normalizedSize: vec3f,
+    clipMin: vec3f,
+    clipMax: vec3f
+) -> vec2f {
+    // Convert [0,1] clip bounds to normalized volume space [-size/2, +size/2]
+    let clipBoxMin = (clipMin - 0.5) * normalizedSize;
+    let clipBoxMax = (clipMax - 0.5) * normalizedSize;
+
+    // Intersect ray with clipping box
+    let clipHit = intersectBox(rayOrigin, rayDir, clipBoxMin, clipBoxMax);
+
+    // Take intersection of original bounds with clip bounds
+    let clippedStart = max(tStart, clipHit.x);
+    let clippedEnd = min(tEnd, clipHit.y);
+
+    return vec2f(clippedStart, clippedEnd);
+}

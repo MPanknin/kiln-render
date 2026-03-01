@@ -53,6 +53,10 @@ export class Renderer {
   windowCenter = 0.5;
   windowWidth = 1.0;
 
+  // Axis-aligned clipping planes (0-1 normalized range)
+  clipMin = new Float32Array([0, 0, 0]);
+  clipMax = new Float32Array([1, 1, 1]);
+
   // Render scale for compute shader (0.25–1.0, lower = faster but blurrier)
   renderScale = 0.5;
 
@@ -123,9 +127,9 @@ export class Renderer {
   // Pre-allocated scratch buffers (avoid per-frame GC pressure)
   private readonly vpScratch = new Float32Array(16);
   private readonly invVPScratch = new Float32Array(16);
-  private readonly fragUniformScratch = new Float32Array(52);
+  private readonly fragUniformScratch = new Float32Array(56);
   private readonly fragUniformView = new DataView(this.fragUniformScratch.buffer);
-  private readonly computeUniformScratch = new Float32Array(34);
+  private readonly computeUniformScratch = new Float32Array(44);
   private readonly computeUniformView = new DataView(this.computeUniformScratch.buffer);
   private readonly accumScratch = new Float32Array(4);
   private static readonly IDENTITY_MAT4 = new Float32Array([
@@ -178,9 +182,10 @@ export class Renderer {
     // Create uniform buffers
     // Volume: mat4 mvp (64) + mat4 inverseModel (64) + vec3 cameraPos (12) + useIndirection (4)
     //       + vec3 datasetSize (12) + renderMode (4) + vec3 normalizedSize (12) + isoValue (4)
-    //       + frameIndex (4) + pad (12) = 192, but WGSL alignment requires 208
+    //       + frameIndex (4) + pad (4) + windowCenter (4) + windowWidth (4)
+    //       + clipMin vec3 (12) + pad (4) + clipMax vec3 (12) + pad (4) = 224 bytes
     this.uniformBuffer = device.createBuffer({
-      size: 208,
+      size: 224,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -302,9 +307,10 @@ export class Renderer {
 
     // Compute uniform buffer: mat4 inverseViewProj (64) + vec3 cameraPos (12) + useIndirection (4)
     //                       + vec3 datasetSize (12) + renderMode (4) + vec3 normalizedSize (12) + isoValue (4)
-    //                       + vec2 screenSize (8) + frameIndex (4) + pad (4) + windowCenter (4) + windowWidth (4) = 144
+    //                       + vec2 screenSize (8) + frameIndex (4) + pad (4) + windowCenter (4) + windowWidth (4)
+    //                       + clipMin vec3 (12) + pad (4) + clipMax vec3 (12) + pad (4) = 176 bytes
     this.computeUniformBuffer = device.createBuffer({
-      size: 144,
+      size: 176,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -614,9 +620,13 @@ export class Renderer {
     d.set(getNormalizedSize(), 40);            // 40-42: normalizedSize
     d[43] = this.isoValue;                     // 43: isoValue
     dv.setUint32(44 * 4, this.frameIndex, true);  // 44: frameIndex (u32)
-    // 45: padding
+    // 45: _pad1
     d[46] = this.windowCenter;                 // 46: windowCenter
     d[47] = this.windowWidth;                  // 47: windowWidth
+    // 48-49: _pad2 (vec2f for alignment)
+    d.set(this.clipMin, 50);                   // 50-52: clipMin
+    // 53: _pad3
+    d.set(this.clipMax, 54);                   // 54-56: clipMax (actually only uses 54-55, implicit padding after)
     this.device.queue.writeBuffer(this.uniformBuffer, 0, d as Float32Array<ArrayBuffer>);
 
     // Update wireframe uniforms
@@ -717,9 +727,14 @@ export class Renderer {
     d[28] = this.computeWidth;                 // 28: screenSize.x
     d[29] = this.computeHeight;                // 29: screenSize.y
     dv.setUint32(30 * 4, this.frameIndex, true);  // 30: frameIndex (u32)
-    // 31: padding
+    // 31: _pad3
     d[32] = this.windowCenter;                 // 32: windowCenter
     d[33] = this.windowWidth;                  // 33: windowWidth
+    // 34-35: _pad4 (vec2f for alignment)
+    d.set(this.clipMin, 36);                   // 36-38: clipMin
+    // 39: _pad5
+    d.set(this.clipMax, 40);                   // 40-42: clipMax
+    // 43: _pad6
     this.device.queue.writeBuffer(this.computeUniformBuffer, 0, d as Float32Array<ArrayBuffer>);
 
     const encoder = this.device.createCommandEncoder();

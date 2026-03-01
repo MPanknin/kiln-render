@@ -49,6 +49,13 @@ export class VolumeUI {
     windowWidth: 1.0,
     // Render scale
     renderScale: 0.5,
+    // Clipping planes (0-1 range for each axis)
+    clipMinX: 0.0,
+    clipMaxX: 1.0,
+    clipMinY: 0.0,
+    clipMaxY: 1.0,
+    clipMinZ: 0.0,
+    clipMaxZ: 1.0,
   };
 
   // Stats display (read-only, updated periodically)
@@ -269,6 +276,75 @@ export class VolumeUI {
       step: 0.01,
     }).on('change', (ev: { value: unknown }) => {
       this.renderer.windowWidth = ev.value as number;
+      this.renderer.resetAccumulation();
+    });
+
+    // Clipping Planes folder
+    const clipFolder = pane.addFolder({
+      title: 'Clipping Planes',
+      expanded: false,
+    });
+
+    // X-axis
+    clipFolder.addBinding(this.params, 'clipMinX', {
+      label: 'X Min',
+      min: 0,
+      max: 1,
+      step: 0.01,
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.clipMin[0] = ev.value as number;
+      this.renderer.resetAccumulation();
+    });
+
+    clipFolder.addBinding(this.params, 'clipMaxX', {
+      label: 'X Max',
+      min: 0,
+      max: 1,
+      step: 0.01,
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.clipMax[0] = ev.value as number;
+      this.renderer.resetAccumulation();
+    });
+
+    // Y-axis
+    clipFolder.addBinding(this.params, 'clipMinY', {
+      label: 'Y Min',
+      min: 0,
+      max: 1,
+      step: 0.01,
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.clipMin[1] = ev.value as number;
+      this.renderer.resetAccumulation();
+    });
+
+    clipFolder.addBinding(this.params, 'clipMaxY', {
+      label: 'Y Max',
+      min: 0,
+      max: 1,
+      step: 0.01,
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.clipMax[1] = ev.value as number;
+      this.renderer.resetAccumulation();
+    });
+
+    // Z-axis
+    clipFolder.addBinding(this.params, 'clipMinZ', {
+      label: 'Z Min',
+      min: 0,
+      max: 1,
+      step: 0.01,
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.clipMin[2] = ev.value as number;
+      this.renderer.resetAccumulation();
+    });
+
+    clipFolder.addBinding(this.params, 'clipMaxZ', {
+      label: 'Z Max',
+      min: 0,
+      max: 1,
+      step: 0.01,
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.clipMax[2] = ev.value as number;
       this.renderer.resetAccumulation();
     });
 

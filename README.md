@@ -100,7 +100,7 @@ Kiln is MIT licensed, so you are free to use, modify, and integrate it. We plan 
 
 ## Credits
 
-Sample datasets from the [Open SciVis Datasets](https://klacansky.com/open-scivis-datasets/) collection:
+Sample datasets from the [Open SciVis Datasets](https://github.com/sci-visus/open-scivis-datasets) collection:
 
 - **Chameleon** - CT scan of *Chamaeleo calyptratus*. Digital Morphology, 2003.
 - **Beechnut** - MicroCT scan of a dried beechnut. Computer-Assisted Paleoanthropology group and Visualization and MultiMedia Lab, University of Zurich.

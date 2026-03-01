@@ -17,7 +17,7 @@ Kiln streams multi-gigabyte volumes over HTTP, rendering them at interactive fra
 
 ## Beechnut micro CT Scan (experimental OME-Zarr)
 #### 3092.0 MB - 1024 × 1024 × 1546 @ 16-bit
-<a href="https://mpanknin.github.io/kiln-render/?dataset=https%3A%2F%2Fd39zu0xtgv0613.cloudfront.net%2Fbeechnut.ome.zarr&mode=dvr&wc=0.22&ww=0.11&iso=0.20&tf=grayscale&up=-y&scale=0.5&cam=-0.090%2C2.130%2C3.171%2C-0.072%2C-0.025%2C-0.013" target="_blank">Live Demo</a>
+<a href="https://mpanknin.github.io/kiln-render/?dataset=https%3A%2F%2Fd39zu0xtgv0613.cloudfront.net%2Fbeechnut.ome.zarr&mode=dvr&wc=0.22&ww=0.14&iso=0.20&tf=grayscale&up=-y&scale=0.5&cam=-0.090%2C2.130%2C3.171%2C-0.072%2C-0.025%2C-0.013" target="_blank">Live Demo</a>
 
 <img width="1722" height="905" alt="image" src="https://github.com/user-attachments/assets/17268259-5977-4a9b-b4c0-a1756a024857" />
 

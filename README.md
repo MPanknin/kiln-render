@@ -13,13 +13,13 @@ Kiln streams multi-gigabyte volumes over HTTP, rendering them at interactive fra
 #### 2160.0 MB - 1024 × 1024 × 1080 @ 16-bit
 <a href="https://mpanknin.github.io/kiln-render/?mode=dvr&wc=0.35&ww=0.55&iso=0.20&tf=grayscale&up=-y&scale=0.5&cam=0.070%2C3.630%2C3.930%2C0.108%2C0.001%2C-0.066" target="_blank">Live Demo</a>
 
-<img width="1725" height="907" alt="image" src="https://github.com/user-attachments/assets/25ae5fa5-7fe6-49d1-b3b1-51784c6220a2" />
+<img width="1725" height="907" alt="553008107-25ae5fa5-7fe6-49d1-b3b1-51784c6220a2" src="https://github.com/user-attachments/assets/f5da8ea1-a924-4ba6-9f29-6f6c18369405" />
 
 ## Beechnut micro CT Scan (experimental OME-Zarr)
 #### 3092.0 MB - 1024 × 1024 × 1546 @ 16-bit
 <a href="https://mpanknin.github.io/kiln-render/?dataset=https%3A%2F%2Fd39zu0xtgv0613.cloudfront.net%2Fbeechnut.ome.zarr&mode=dvr&wc=0.22&ww=0.14&iso=0.20&tf=grayscale&up=-y&scale=0.5&cam=-0.090%2C2.130%2C3.171%2C-0.072%2C-0.025%2C-0.013" target="_blank">Live Demo</a>
 
-<img width="1722" height="905" alt="image" src="https://github.com/user-attachments/assets/17268259-5977-4a9b-b4c0-a1756a024857" />
+<img width="1722" height="905" alt="553008573-17268259-5977-4a9b-b4c0-a1756a024857" src="https://github.com/user-attachments/assets/02cffc17-bf44-422b-8752-9bf4edc96d89" />
 
 ## Overview
 

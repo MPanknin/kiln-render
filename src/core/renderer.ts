@@ -54,7 +54,7 @@ export class Renderer {
   windowWidth = 1.0;
 
   // Render scale for compute shader (0.25–1.0, lower = faster but blurrier)
-  renderScale = 0.75;
+  renderScale = 0.5;
 
   // Fragment-based pipelines
   private volumePipeline: GPURenderPipeline;

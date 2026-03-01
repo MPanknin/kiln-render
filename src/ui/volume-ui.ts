@@ -48,7 +48,7 @@ export class VolumeUI {
     windowCenter: 0.5,
     windowWidth: 1.0,
     // Render scale
-    renderScale: 1.0,
+    renderScale: 0.5,
   };
 
   // Stats display (read-only, updated periodically)

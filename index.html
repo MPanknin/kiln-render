@@ -108,15 +108,26 @@
       position: fixed;
       bottom: calc(12px + env(safe-area-inset-bottom, 0px));
       right: 12px;
+      width: 36px;
+      height: 36px;
+      border-radius: 6px;
+      background: rgba(28, 28, 30, 0.95);
+      z-index: 1001;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #spinner::before {
+      content: '';
       width: 16px;
       height: 16px;
       border: 2px solid rgba(187, 188, 196, 0.15);
       border-top-color: rgba(187, 188, 196, 0.5);
       border-radius: 50%;
-      z-index: 1001;
-      pointer-events: none;
-      opacity: 0;
-      transition: opacity 0.3s;
       animation: spin 0.8s linear infinite;
     }
 

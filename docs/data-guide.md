@@ -228,7 +228,7 @@ Higher LOD levels are created by 2×2×2 box-filter downsampling:
 - LOD 2: Quarter resolution
 - etc.
 
-The number of LOD levels is automatically calculated based on volume size, capped at 5 levels.
+The number of LOD levels is automatically calculated based on volume size, capped at 11 levels (LOD 0-10).
 
 ---
 

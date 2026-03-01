@@ -11,7 +11,7 @@ Kiln streams multi-gigabyte volumes over HTTP, rendering them at interactive fra
 
 ## Chameleon CT Scan
 #### 2160.0 MB - 1024 × 1024 × 1080 @ 16-bit
-<a href="https://mpanknin.github.io/kiln-render/?mode=dvr&wc=0.5&ww=1.0&iso=0.20&tf=coolwarm&up=-y&scale=0.5&cam=0.070%2C3.630%2C3.930%2C0.108%2C0.001%2C-0.066" target="_blank">Live Demo</a>
+<a href="https://mpanknin.github.io/kiln-render/?mode=dvr&wc=0.35&ww=0.55&iso=0.20&tf=grayscale&up=-y&scale=0.5&cam=0.070%2C3.630%2C3.930%2C0.108%2C0.001%2C-0.066" target="_blank">Live Demo</a>
 
 <img width="1725" height="907" alt="image" src="https://github.com/user-attachments/assets/25ae5fa5-7fe6-49d1-b3b1-51784c6220a2" />
 
@@ -87,7 +87,7 @@ Kiln requires WebGPU (not WebGL) for native `r16unorm` textures, compute shader 
 Kiln requires WebGPU. Chrome/Edge 113+ and Safari 26+ support it out of the box. Firefox ships WebGPU by default in recent versions (141+), though support may be partial on some platforms — check `dom.webgpu.enabled` if needed. Make sure hardware acceleration is enabled in your browser settings.
 
 **How much VRAM does Kiln use?**
-The atlas is a fixed-size 3D texture. With the default 512 brick slots it uses roughly ~150 MB for 8-bit data and ~300 MB for 16-bit data. You can increase the atlas size in `config.ts` for higher quality at the cost of more VRAM, but usage always stays constant regardless of dataset size.
+The atlas is a fixed-size 3D texture. With the default 1,000 brick slots it uses ~274 MiB for 8-bit data and ~548 MiB for 16-bit data. You can adjust the atlas size in `config.ts` for different quality/memory tradeoffs, but usage always stays constant regardless of dataset size.
 
 **Can I load my own data?**
 Yes. Kiln supports its own sharded binary format as well as an experimantal integration for OME-Zarr datasets. See the [Data Guide](docs/data-guide.md) for details on how to prepare and serve your data.

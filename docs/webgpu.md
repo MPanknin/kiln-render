@@ -135,7 +135,7 @@ struct IndirectDispatch {
 
 ### Bindless Textures (Future WebGPU Feature)
 
-**Current approach**: Single 528³ atlas texture with indirection table for virtual addressing.
+**Current approach**: Single 660³ atlas texture with indirection table for virtual addressing.
 
 **True bindless approach**: Each brick as a separate texture, indexed dynamically in shader.
 

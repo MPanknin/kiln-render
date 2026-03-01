@@ -8,7 +8,7 @@
 // Core constants
 export const LOGICAL_BRICK_SIZE = 64;
 export const PHYSICAL_BRICK_SIZE = 66; // 64 + 1 voxel padding on each side
-export const ATLAS_SIZE = 528;         // Grid slots * physical brick size - 528, 660, 792, etc.
+export const ATLAS_SIZE = 660;         // Grid slots * physical brick size - 528, 660, 792, etc.
 export const MAX_BRICK_TRAVERSALS = 512; // Upper bound for shader loop termination
 
 // Derived constants - GRID_SIZE determines how many bricks fit in the atlas

@@ -19,8 +19,8 @@ import { VolumeUI } from './ui/volume-ui.js';
 import { StreamingManager } from './streaming/streaming-manager.js';
 
 // Default volume source (can be overridden via ?dataset= URL parameter)
-const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/chameleon-16bit';
-// const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/beechnut.ome.zarr';
+// const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/chameleon-16bit';
+const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/beechnut.ome.zarr';
 
 /** Parse URL parameters for per-dataset configuration */
 function parseURLParams(): {

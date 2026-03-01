@@ -111,7 +111,7 @@ export class IndirectionTable {
           this.data[idx + 0] = atlasX;
           this.data[idx + 1] = atlasY;
           this.data[idx + 2] = atlasZ;
-          // Store LOD level + 1 (0 = not loaded, 1-4 = lod 0-3)
+          // Store LOD level + 1 (0 = not loaded, 1+ = lod level, 255 = empty)
           this.data[idx + 3] = lod + 1;
         }
       }

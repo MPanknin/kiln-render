@@ -1,7 +1,7 @@
 > [!NOTE]
 > Kiln is a research-grade prototype. Some rendering artifacts and incomplete features are expected.
 > 
-> [Read the full write-up on dev.to](https://dev.to/mpanknin/building-kiln-streaming-multi-gb-volumes-in-the-browser-48hl-temp-slug-9894239?preview=3c3a3ca6a809141c4972dd2ea8f9190e6ddc292079a4920991ecdf65c5071ed0db1c31219330eb9e4b9ec30a8a7cd920c90977395c57b6c01c660bb4)
+> [Read the full write-up on dev.to](https://dev.to/mpanknin/kiln-webgpu-native-out-of-core-volume-rendering-for-multi-gb-datasets-2alb)
 
 # Kiln
 

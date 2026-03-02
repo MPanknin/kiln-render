@@ -12,6 +12,13 @@ Kiln is built on WebGPU rather than WebGL. This section documents the technical 
 
 WebGPU provides native `r16unorm` texture format, where 16-bit unsigned integers are stored directly and normalized to `[0,1]` floats during sampling. Hardware trilinear filtering works correctly on the 16-bit values.
 
+**Fallback chain**: Kiln detects format support at runtime and falls back if needed:
+- **r16unorm** (preferred) — native 16-bit normalized integers
+- **r16float** (fallback) — 16-bit floats if unorm unsupported
+- **r8unorm** (last resort) — workers downsample 16→8 bit via high-byte extraction (`>> 8`)
+
+The r8unorm fallback triggers a console warning and shows `(⚠️ downsampled)` in the UI. Users can enable experimental WebGPU features (Chrome: `chrome://flags/#enable-unsafe-webgpu`) for full 16-bit support.
+
 WebGL lacks native 16-bit single-channel textures. Common workarounds include:
 - **Two-channel packing**: Store high/low bytes in separate channels, reconstruct in shader
 - **Float textures**: Use `R32F` (wastes memory, requires `OES_texture_float`)

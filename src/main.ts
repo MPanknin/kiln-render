@@ -127,9 +127,7 @@ async function main() {
       effectiveBitDepth = 8;
       console.warn(
         '[Kiln] ⚠️  GPU does not support 16-bit textures (r16unorm/r16float).\n' +
-        'Downsampling to 8-bit (quality loss). For full precision, enable:\n' +
-        '  Chrome: chrome://flags/#enable-unsafe-webgpu\n' +
-        '  Firefox: WebGPU support is experimental on Linux'
+        'Downsampling to 8-bit (quality loss).'
       );
     }
   } else {

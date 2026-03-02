@@ -43,6 +43,7 @@ export class ZarrWorkerPool {
     logicalBrickSize: number,
     physicalBrickSize: number,
     is16bit: boolean,
+    targetBitDepth?: 8 | 16,
   ): Promise<void> {
     this.is16bit = is16bit;
     const initPromises: Promise<void>[] = [];
@@ -93,6 +94,7 @@ export class ZarrWorkerPool {
         const req: ZarrWorkerRequest = {
           type: 'init', id, url, paths,
           lodParams, logicalBrickSize, physicalBrickSize, is16bit,
+          targetBitDepth,
         };
         worker.postMessage(req);
       });
@@ -100,6 +102,30 @@ export class ZarrWorkerPool {
     }
 
     await Promise.all(initPromises);
+  }
+
+  /**
+   * Reconfigure target bit depth after initialization (e.g., if format detection requires downsampling)
+   */
+  async setTargetBitDepth(bitDepth: 8 | 16): Promise<void> {
+    const promises: Promise<void>[] = [];
+    for (const worker of this.workers) {
+      const promise = new Promise<void>((resolve, reject) => {
+        const id = this.requestId++;
+        this.pendingRequests.set(id, {
+          resolve: () => resolve(),
+          reject: (e) => reject(e),
+        });
+        const req: ZarrWorkerRequest = {
+          type: 'setTargetBitDepth',
+          id,
+          targetBitDepth: bitDepth,
+        };
+        worker.postMessage(req);
+      });
+      promises.push(promise);
+    }
+    await Promise.all(promises);
   }
 
   /**

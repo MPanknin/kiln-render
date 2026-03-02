@@ -19,6 +19,7 @@ export class DecompressionPool {
   private requestId = 0;
   private pendingRequests = new Map<number, PendingRequest>();
   private _enabled = true;
+  private targetBitDepth: 8 | 16 = 16;
 
   /** Whether compression is enabled (can be toggled for backwards compatibility) */
   get enabled(): boolean {
@@ -27,6 +28,14 @@ export class DecompressionPool {
 
   set enabled(value: boolean) {
     this._enabled = value;
+  }
+
+  /**
+   * Set target bit depth for decompressed data
+   * If source is 16-bit and target is 8-bit, worker will downsample
+   */
+  setTargetBitDepth(bitDepth: 8 | 16): void {
+    this.targetBitDepth = bitDepth;
   }
 
   constructor(poolSize: number = navigator.hardwareConcurrency ? Math.min(navigator.hardwareConcurrency, 4) : 2) {
@@ -75,7 +84,11 @@ export class DecompressionPool {
 
       this.pendingRequests.set(id, { resolve, reject });
 
-      const request: DecompressRequest = { id, data: compressedData };
+      const request: DecompressRequest = {
+        id,
+        data: compressedData,
+        targetBitDepth: this.targetBitDepth
+      };
       // Transfer ownership to worker (zero-copy)
       worker.postMessage(request, [compressedData]);
     });

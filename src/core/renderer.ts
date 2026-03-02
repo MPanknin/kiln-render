@@ -127,20 +127,20 @@ export class Renderer {
   // Pre-allocated scratch buffers (avoid per-frame GC pressure)
   private readonly vpScratch = new Float32Array(16);
   private readonly invVPScratch = new Float32Array(16);
-  private readonly fragUniformScratch = new Float32Array(56);
+  private readonly fragUniformScratch = new Float32Array(60);
   private readonly fragUniformView = new DataView(this.fragUniformScratch.buffer);
-  private readonly computeUniformScratch = new Float32Array(44);
+  private readonly computeUniformScratch = new Float32Array(48);
   private readonly computeUniformView = new DataView(this.computeUniformScratch.buffer);
   private readonly accumScratch = new Float32Array(4);
   private static readonly IDENTITY_MAT4 = new Float32Array([
     1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1,
   ]);
 
-  constructor(device: GPUDevice, format: GPUTextureFormat, bitDepth: BitDepth = 8) {
+  constructor(device: GPUDevice, format: GPUTextureFormat, bitDepth: BitDepth, textureFormat: GPUTextureFormat) {
     this.device = device;
 
-    // Create volume canvas (empty) with specified bit depth
-    this.canvas = createVolumeCanvas(device, bitDepth);
+    // Create volume canvas (empty) with specified bit depth and format
+    this.canvas = createVolumeCanvas(device, bitDepth, textureFormat);
 
     // Create indirection table for virtual texturing
     this.indirection = new IndirectionTable(device);
@@ -182,10 +182,10 @@ export class Renderer {
     // Create uniform buffers
     // Volume: mat4 mvp (64) + mat4 inverseModel (64) + vec3 cameraPos (12) + useIndirection (4)
     //       + vec3 datasetSize (12) + renderMode (4) + vec3 normalizedSize (12) + isoValue (4)
-    //       + frameIndex (4) + pad (4) + windowCenter (4) + windowWidth (4)
-    //       + clipMin vec3 (12) + pad (4) + clipMax vec3 (12) + pad (4) = 224 bytes
+    //       + frameIndex (4) + pad (4) + windowCenter (4) + windowWidth (4) + pad2 vec2 (8)
+    //       + clipMin vec3 (12) + pad3 (4) + clipMax vec3 (12) + pad4 (4) = 240 bytes
     this.uniformBuffer = device.createBuffer({
-      size: 224,
+      size: 240,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -307,10 +307,10 @@ export class Renderer {
 
     // Compute uniform buffer: mat4 inverseViewProj (64) + vec3 cameraPos (12) + useIndirection (4)
     //                       + vec3 datasetSize (12) + renderMode (4) + vec3 normalizedSize (12) + isoValue (4)
-    //                       + vec2 screenSize (8) + frameIndex (4) + pad (4) + windowCenter (4) + windowWidth (4)
-    //                       + clipMin vec3 (12) + pad (4) + clipMax vec3 (12) + pad (4) = 176 bytes
+    //                       + vec2 screenSize (8) + frameIndex (4) + pad3 (4) + windowCenter (4) + windowWidth (4)
+    //                       + pad4 vec2 (8) + clipMin vec3 (12) + pad5 (4) + clipMax vec3 (12) + pad6 (4) = 192 bytes
     this.computeUniformBuffer = device.createBuffer({
-      size: 176,
+      size: 192,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 

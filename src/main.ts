@@ -17,6 +17,8 @@ import type { DataProvider } from './data/data-provider.js';
 import { TransferFunction, TFPreset } from './core/transfer-function.js';
 import { VolumeUI } from './ui/volume-ui.js';
 import { StreamingManager } from './streaming/streaming-manager.js';
+import { detectBest16BitFormat } from './core/volume.js';
+import { getDecompressionPool } from './data/decompression-pool.js';
 
 // Default volume source (can be overridden via ?dataset= URL parameter)
 const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/chameleon-16bit';
@@ -104,20 +106,49 @@ async function main() {
   const urlParams = parseURLParams();
   const volumeSource = urlParams.dataset;
 
-  // Load volume metadata via DataProvider (auto-detect format)
+  // Create data provider (but don't initialize yet)
   const isZarr = volumeSource.includes('.zarr');
   const dataProvider: DataProvider = isZarr
     ? new ZarrDataProvider(volumeSource)
     : new ShardedDataProvider(volumeSource);
+
+  // Initialize metadata to get bit depth
   const metadata = await dataProvider.initialize();
+  const sourceBitDepth = dataProvider.getBitDepth();
+
+  // Detect best texture format and compute effective bit depth
+  let effectiveBitDepth = sourceBitDepth;
+  let textureFormat: GPUTextureFormat;
+
+  if (sourceBitDepth === 16) {
+    textureFormat = detectBest16BitFormat(device);
+    if (textureFormat === 'r8unorm') {
+      // Fallback: will downsample to 8-bit in workers
+      effectiveBitDepth = 8;
+      console.warn(
+        '[Kiln] ⚠️  GPU does not support 16-bit textures (r16unorm/r16float).\n' +
+        'Downsampling to 8-bit (quality loss).'
+      );
+    }
+  } else {
+    textureFormat = 'r8unorm';
+  }
+
+  if (effectiveBitDepth !== sourceBitDepth) {
+    if (isZarr) {
+      await (dataProvider as ZarrDataProvider).setTargetBitDepth(effectiveBitDepth);
+    } else {
+      const decompressionPool = getDecompressionPool();
+      decompressionPool.setTargetBitDepth(effectiveBitDepth);
+    }
+  }
 
   // Configure dataset size from metadata
   const spacing = metadata.voxelSpacing;
   setDatasetSize(metadata.dimensions, spacing);
 
-  // Create renderer with appropriate bit depth from metadata
-  const bitDepth = dataProvider.getBitDepth();
-  const renderer = new Renderer(device, format, bitDepth);
+  // Create renderer with effective bit depth and texture format
+  const renderer = new Renderer(device, format, effectiveBitDepth, textureFormat);
 
   // Create transfer function and connect to renderer
   const transferFunction = new TransferFunction(device);

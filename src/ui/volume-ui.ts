@@ -69,6 +69,7 @@ export class VolumeUI {
     fileSize: '',
     spacing: '',
     lodLevels: '',
+    textureFormat: '',
     // Streaming
     atlasUsage: '',
     loadedBricks: '',
@@ -415,6 +416,11 @@ export class VolumeUI {
       readonly: true,
     });
 
+    dataFolder.addBinding(this.statsParams, 'textureFormat', {
+      label: 'Format',
+      readonly: true,
+    });
+
     // Streaming section
     const streamFolder = statsPane.addFolder({ title: 'Streaming', expanded: false });
 
@@ -482,6 +488,9 @@ export class VolumeUI {
     this.statsParams.spacing = `${spacing[0].toFixed(2)} × ${spacing[1].toFixed(2)} × ${spacing[2].toFixed(2)}`;
 
     this.statsParams.lodLevels = `${metadata.levels.length} (LOD 0-${metadata.maxLod})`;
+
+    const format = this.renderer.canvas.format;
+    this.statsParams.textureFormat = format + (format === 'r8unorm' && metadata.bitDepth === 16 ? ' (⚠️ downsampled)' : '');
 
     // Start periodic stats update
     this.startStatsUpdate();

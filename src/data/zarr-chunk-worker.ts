@@ -18,7 +18,7 @@ import { TolerantFetchStore } from './tolerant-fetch-store.js';
 
 /** Messages from main thread to worker */
 export interface ZarrWorkerRequest {
-  type: 'init' | 'loadBrick';
+  type: 'init' | 'loadBrick' | 'setTargetBitDepth';
   id: number;
   /** For 'init': dataset URL and array paths */
   url?: string;
@@ -38,11 +38,12 @@ export interface ZarrWorkerRequest {
     csx: number; csy: number; csz: number;
   }[];
   is16bit?: boolean;
+  targetBitDepth?: 8 | 16;
 }
 
 /** Messages from worker to main thread */
 export interface ZarrWorkerResponse {
-  type: 'init' | 'loadBrick';
+  type: 'init' | 'loadBrick' | 'setTargetBitDepth';
   id: number;
   error?: string;
   /** For 'loadBrick': assembled brick data (transferable) */
@@ -59,6 +60,7 @@ let LOGICAL_SIZE = 64;
 let PHYSICAL_SIZE = 66;
 let lodParams: ZarrWorkerRequest['lodParams'] = [];
 let is16bit = false;
+let targetBitDepth: 8 | 16 = 16;
 
 // Per-worker chunk cache (LRU, bounded by byte count to prevent OOM)
 const chunkCache = new Map<string, { data: ArrayLike<number>; shape: number[]; bytes: number }>();
@@ -95,6 +97,13 @@ function cacheSet(key: string, data: ArrayLike<number>, shape: number[]): void {
 self.onmessage = async (event: MessageEvent<ZarrWorkerRequest>) => {
   const { type, id } = event.data;
 
+  if (type === 'setTargetBitDepth') {
+    targetBitDepth = event.data.targetBitDepth ?? 16;
+    const resp: ZarrWorkerResponse = { type: 'setTargetBitDepth', id };
+    (self as unknown as Worker).postMessage(resp);
+    return;
+  }
+
   if (type === 'init') {
     try {
       const { url, paths } = event.data;
@@ -102,6 +111,7 @@ self.onmessage = async (event: MessageEvent<ZarrWorkerRequest>) => {
       PHYSICAL_SIZE = event.data.physicalBrickSize ?? 66;
       lodParams = event.data.lodParams ?? [];
       is16bit = event.data.is16bit ?? false;
+      targetBitDepth = event.data.targetBitDepth ?? (is16bit ? 16 : 8);
 
       const store = new TolerantFetchStore(url!);
       const rootGroup = await open(root(store), { kind: 'group' });
@@ -242,8 +252,34 @@ async function assembleBrick(
   }
 
   const voxelCount = physSize * physSize * physSize;
+
+  // Handle 16-bit → 8-bit conversion if needed (for r8unorm fallback)
+  let outputBrick = brick;
+  if (is16bit && targetBitDepth === 8) {
+    const uint16Brick = brick as Uint16Array;
+    const uint8Brick = new Uint8Array(uint16Brick.length);
+
+    // Downsample: take high byte (>> 8)
+    let min8 = Infinity;
+    let max8 = -Infinity;
+    let sum8 = 0;
+
+    for (let i = 0; i < uint16Brick.length; i++) {
+      const val8 = (uint16Brick[i] ?? 0) >> 8;
+      uint8Brick[i] = val8;
+      min8 = Math.min(min8, val8);
+      max8 = Math.max(max8, val8);
+      sum8 += val8;
+    }
+
+    outputBrick = uint8Brick;
+    min = min8 === Infinity ? 0 : min8;
+    max = max8 === -Infinity ? 0 : max8;
+    sum = sum8;
+  }
+
   return {
-    buffer: brick.buffer as ArrayBuffer,
+    buffer: outputBrick.buffer as ArrayBuffer,
     min: min === Infinity ? 0 : min,
     max: max === -Infinity ? 0 : max,
     avg: sum / voxelCount,

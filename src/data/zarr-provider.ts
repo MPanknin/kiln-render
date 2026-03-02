@@ -44,6 +44,7 @@ export class ZarrDataProvider implements DataProvider {
 
   /** Worker pool for off-main-thread brick loading */
   private workerPool: ZarrWorkerPool | null = null;
+  private targetBitDepth?: 8 | 16;
 
   // Network tracking (approximate — workers do the actual fetching)
   private totalBytesDownloaded = 0;
@@ -52,6 +53,16 @@ export class ZarrDataProvider implements DataProvider {
 
   constructor(url: string) {
     this.url = url.replace(/\/$/, '');
+  }
+
+  /**
+   * Set target bit depth for worker output
+   */
+  async setTargetBitDepth(bitDepth: 8 | 16): Promise<void> {
+    this.targetBitDepth = bitDepth;
+    if (this.workerPool) {
+      await this.workerPool.setTargetBitDepth(bitDepth);
+    }
   }
 
   async initialize(): Promise<VolumeMetadata> {
@@ -179,6 +190,7 @@ export class ZarrDataProvider implements DataProvider {
       this.url, arrayPaths, lodParams,
       LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE,
       bitDepth === 16,
+      this.targetBitDepth,
     );
 
     return this.metadata;

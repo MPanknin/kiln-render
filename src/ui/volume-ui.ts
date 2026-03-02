@@ -35,6 +35,9 @@ export class VolumeUI {
   private isDraggingPoint = false;
   private dragPointIndex = -1;
 
+  // Callback for when user changes render scale
+  private onRenderScaleChange: ((scale: number) => void) | null = null;
+
   // Tweakpane params object
   private params = {
     renderMode: 'dvr' as VolumeRenderMode,
@@ -188,8 +191,11 @@ export class VolumeUI {
       max: 1.0,
       step: 0.25,
     }).on('change', (ev: { value: unknown }) => {
-      this.renderer.renderScale = ev.value as number;
+      const scale = ev.value as number;
+      this.renderer.renderScale = scale;
       this.renderer.resizeComputeTexture();
+      // Notify callback if set (for dynamic scaling during interaction)
+      this.onRenderScaleChange?.(scale);
     });
 
     // Isosurface folder
@@ -471,6 +477,11 @@ export class VolumeUI {
   /**
    * Set the streaming manager and metadata for stats display
    */
+  /** Set callback for when user changes render scale via UI */
+  setRenderScaleCallback(callback: (scale: number) => void): void {
+    this.onRenderScaleChange = callback;
+  }
+
   setStreamingManager(manager: StreamingManager, metadata: VolumeMetadata): void {
     this.streamingManager = manager;
 

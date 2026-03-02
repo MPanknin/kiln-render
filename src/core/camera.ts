@@ -17,6 +17,8 @@ export class Camera {
   private rotationY = 3.5;
   private isDragging = false;
   private isPanning = false;
+  private isZooming = false;
+  private zoomTimer: number | null = null;
   private lastX = 0;
   private lastY = 0;
 
@@ -93,6 +95,13 @@ export class Camera {
       // Zoom limits for normalized space
       this.distance = Math.max(0.5, Math.min(10, this.distance));
       this.updatePosition();
+
+      this.isZooming = true;
+      if (this.zoomTimer !== null) clearTimeout(this.zoomTimer);
+      this.zoomTimer = setTimeout(() => {
+        this.isZooming = false;
+        this.zoomTimer = null;
+      }, 200) as unknown as number;
     }, { passive: false });
 
     // Touch controls
@@ -356,6 +365,10 @@ export class Camera {
       this.target = [state[3], state[4], state[5]];
     }
     this.updatePosition();
+  }
+
+   isInteracting(): boolean {
+    return this.isDragging || this.isPanning || this.isZooming;
   }
 
   getViewMatrix(): Float32Array {

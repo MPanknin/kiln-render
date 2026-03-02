@@ -101,6 +101,9 @@ export class StreamingManager {
   // Frame counter for LRU
   private frameCount = 0;
 
+  // Debounced accumulation reset (wait for streaming to settle)
+  private resetAccumulationTimer: number | null = null;
+
   // Screen-Space Error (SSE) threshold in pixels
   // Split to finer LOD when projected voxel error exceeds this value
   // Lower = higher quality, more bricks loaded
@@ -641,9 +644,18 @@ export class StreamingManager {
     // Track
     this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
 
-    // Reset temporal accumulation — atlas content changed, history buffer is stale
-    // I hate it. Either ghosting or noise during loading, pick your poison.
-    this.renderer.resetAccumulation(); 
+    // Schedule accumulation reset to prevent constant flickering during streaming bursts
+    this.scheduleAccumulationReset();
+  }
+
+  private scheduleAccumulationReset(): void {
+    if (this.resetAccumulationTimer !== null) {
+      clearTimeout(this.resetAccumulationTimer);
+    }
+    this.resetAccumulationTimer = setTimeout(() => {
+      this.renderer.resetAccumulation();
+      this.resetAccumulationTimer = null;
+    }, 100) as unknown as number;
   }
 
   // Helper functions

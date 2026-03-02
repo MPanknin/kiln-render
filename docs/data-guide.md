@@ -134,6 +134,10 @@ npx ts-node scripts/decompose-volume.ts data/ct_scan.raw 512 512 400 \
 npx ts-node scripts/decompose-volume.ts data/dicom.raw 512 512 400 --header 2048
 ```
 
+### Important: Coarsest LOD Size
+
+Kiln currently loads the entire coarsest (highest) LOD at startup and keeps it pinned in the atlas. If your dataset's coarsest LOD has a large brick grid (e.g., 8×8×8 = 512 bricks), it will consume over half the default 1,000-slot atlas, limiting space for high-resolution bricks. Keep the coarsest LOD small (ideally ≤4×4×4 grid) by setting appropriate `--max-lod` during preprocessing.
+
 ### Output Format
 
 The script produces a binary sharded format optimized for HTTP Range request streaming:

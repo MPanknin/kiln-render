@@ -112,6 +112,9 @@ async function main() {
     ? new ZarrDataProvider(volumeSource)
     : new ShardedDataProvider(volumeSource);
 
+  // Store for cleanup on page unload
+  globalDataProvider = dataProvider;
+
   // Initialize metadata to get bit depth
   const metadata = await dataProvider.initialize();
   const sourceBitDepth = dataProvider.getBitDepth();
@@ -175,9 +178,16 @@ async function main() {
   new ResizeObserver(resize).observe(canvas);
   resize();
 
+  // Store desired render scale
+  let userRenderScale = renderer.renderScale;
+
   // Create UI
   const ui = new VolumeUI(renderer, camera, transferFunction);
   ui.setStreamingManager(streamingManager, metadata);
+
+  ui.setRenderScaleCallback((scale) => {
+    userRenderScale = scale;
+  });
 
   // Apply URL parameters (after UI so we can sync both)
   if (urlParams.mode) {
@@ -210,7 +220,8 @@ async function main() {
     streamingManager.maxPixelError = urlParams.sse;
   }
   if (urlParams.scale !== undefined) {
-    renderer.renderScale = urlParams.scale;
+    userRenderScale = urlParams.scale;
+    renderer.renderScale = userRenderScale;
     renderer.resizeComputeTexture();
   }
   ui.syncFromState();
@@ -247,6 +258,15 @@ async function main() {
   function frame() {
     ui.recordFrame();
 
+    // Drop to 0.25 during camera interaction
+    const isInteracting = camera.isInteracting();
+    const targetScale = isInteracting ? 0.25 : userRenderScale;
+
+    if (renderer.renderScale !== targetScale) {
+      renderer.renderScale = targetScale;
+      renderer.resizeComputeTexture();
+    }
+
     if (streamingEnabled) {
       streamingManager.update(camera, canvas!);
     }
@@ -266,5 +286,14 @@ function showError(message: string) {
   }
   console.error(message);
 }
+
+// Store provider for cleanup
+let globalDataProvider: DataProvider | null = null;
+
+// Cleanup workers on page unload
+window.addEventListener('beforeunload', () => {
+  globalDataProvider?.dispose();
+  getDecompressionPool().terminate();
+});
 
 main().catch((e) => showError(e.message));

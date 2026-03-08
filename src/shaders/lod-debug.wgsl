@@ -31,7 +31,7 @@ fn rayMarchLOD(
             let density = sampleAtlas(voxel, brick.indirection, brick.lodScale);
 
             // Use LOD color with TF opacity
-            let tfColor = textureSampleLevel(tfTexture, tfSampler, density, 0.0);
+            let tfColor = textureSampleLevel(tfTexture, tfSampler, vec2f(density, 0.5), 0.0);
             let lodColor = getLodColor(brick.indirection.w);
             composeSampleWithColor(density, brick.stepSize, maxDim, vec4f(lodColor, tfColor.a), &color, &alpha);
 

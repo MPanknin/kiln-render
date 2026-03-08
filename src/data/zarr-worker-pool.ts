@@ -43,7 +43,7 @@ export class ZarrWorkerPool {
     logicalBrickSize: number,
     physicalBrickSize: number,
     is16bit: boolean,
-    targetBitDepth?: 8 | 16,
+    targetFormat?: 'r8unorm' | 'r16unorm' | 'r16float',
   ): Promise<void> {
     this.is16bit = is16bit;
     const initPromises: Promise<void>[] = [];
@@ -62,7 +62,7 @@ export class ZarrWorkerPool {
 
         if (error) {
           pending.reject(new Error(error));
-        } else if (msgType === 'init') {
+        } else if (msgType === 'init' || msgType === 'setTargetFormat') {
           pending.resolve(undefined);
         } else if (msgType === 'loadBrick' && data) {
           const typedData = this.is16bit
@@ -94,7 +94,7 @@ export class ZarrWorkerPool {
         const req: ZarrWorkerRequest = {
           type: 'init', id, url, paths,
           lodParams, logicalBrickSize, physicalBrickSize, is16bit,
-          targetBitDepth,
+          targetFormat,
         };
         worker.postMessage(req);
       });
@@ -105,9 +105,10 @@ export class ZarrWorkerPool {
   }
 
   /**
-   * Reconfigure target bit depth after initialization (e.g., if format detection requires downsampling)
+   * Reconfigure target texture format after initialization
+   * Format determines output format: r8unorm (8-bit), r16unorm (16-bit uint), r16float (16-bit float)
    */
-  async setTargetBitDepth(bitDepth: 8 | 16): Promise<void> {
+  async setTargetFormat(format: 'r8unorm' | 'r16unorm' | 'r16float'): Promise<void> {
     const promises: Promise<void>[] = [];
     for (const worker of this.workers) {
       const promise = new Promise<void>((resolve, reject) => {
@@ -117,9 +118,9 @@ export class ZarrWorkerPool {
           reject: (e) => reject(e),
         });
         const req: ZarrWorkerRequest = {
-          type: 'setTargetBitDepth',
+          type: 'setTargetFormat',
           id,
-          targetBitDepth: bitDepth,
+          targetFormat: format,
         };
         worker.postMessage(req);
       });

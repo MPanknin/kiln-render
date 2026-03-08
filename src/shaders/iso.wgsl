@@ -48,7 +48,7 @@ fn rayMarchISO(
 
                 if (length(gradient) >= 0.001) {
                     let normal = -normalize(gradient);
-                    let tfColor = textureSampleLevel(tfTexture, tfSampler, isoValue, 0.0);
+                    let tfColor = textureSampleLevel(tfTexture, tfSampler, vec2f(isoValue, 0.5), 0.0);
                     return vec4f(phongLighting(normal, -rayDir, tfColor.rgb), 1.0);
                 }
             }

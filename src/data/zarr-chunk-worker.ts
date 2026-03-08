@@ -15,10 +15,11 @@
 import { open, root, Array as ZarrArray } from 'zarrita';
 import type { DataType, Readable } from 'zarrita';
 import { TolerantFetchStore } from './tolerant-fetch-store.js';
+import { uint16ToFloat16 } from '../utils/float16.js';
 
 /** Messages from main thread to worker */
 export interface ZarrWorkerRequest {
-  type: 'init' | 'loadBrick' | 'setTargetBitDepth';
+  type: 'init' | 'loadBrick' | 'setTargetFormat';
   id: number;
   /** For 'init': dataset URL and array paths */
   url?: string;
@@ -38,12 +39,13 @@ export interface ZarrWorkerRequest {
     csx: number; csy: number; csz: number;
   }[];
   is16bit?: boolean;
-  targetBitDepth?: 8 | 16;
+  /** Target texture format: r8unorm (8-bit), r16unorm (16-bit uint), r16float (16-bit float) */
+  targetFormat?: 'r8unorm' | 'r16unorm' | 'r16float';
 }
 
 /** Messages from worker to main thread */
 export interface ZarrWorkerResponse {
-  type: 'init' | 'loadBrick' | 'setTargetBitDepth';
+  type: 'init' | 'loadBrick' | 'setTargetFormat';
   id: number;
   error?: string;
   /** For 'loadBrick': assembled brick data (transferable) */
@@ -60,7 +62,7 @@ let LOGICAL_SIZE = 64;
 let PHYSICAL_SIZE = 66;
 let lodParams: ZarrWorkerRequest['lodParams'] = [];
 let is16bit = false;
-let targetBitDepth: 8 | 16 = 16;
+let targetFormat: 'r8unorm' | 'r16unorm' | 'r16float' = 'r16unorm';
 
 // Per-worker chunk cache (LRU, bounded by byte count to prevent OOM)
 const chunkCache = new Map<string, { data: ArrayLike<number>; shape: number[]; bytes: number }>();
@@ -97,9 +99,9 @@ function cacheSet(key: string, data: ArrayLike<number>, shape: number[]): void {
 self.onmessage = async (event: MessageEvent<ZarrWorkerRequest>) => {
   const { type, id } = event.data;
 
-  if (type === 'setTargetBitDepth') {
-    targetBitDepth = event.data.targetBitDepth ?? 16;
-    const resp: ZarrWorkerResponse = { type: 'setTargetBitDepth', id };
+  if (type === 'setTargetFormat') {
+    targetFormat = event.data.targetFormat ?? 'r16unorm';
+    const resp: ZarrWorkerResponse = { type: 'setTargetFormat', id };
     (self as unknown as Worker).postMessage(resp);
     return;
   }
@@ -111,7 +113,7 @@ self.onmessage = async (event: MessageEvent<ZarrWorkerRequest>) => {
       PHYSICAL_SIZE = event.data.physicalBrickSize ?? 66;
       lodParams = event.data.lodParams ?? [];
       is16bit = event.data.is16bit ?? false;
-      targetBitDepth = event.data.targetBitDepth ?? (is16bit ? 16 : 8);
+      targetFormat = event.data.targetFormat ?? 'r16unorm';
 
       const store = new TolerantFetchStore(url!);
       const rootGroup = await open(root(store), { kind: 'group' });
@@ -253,9 +255,11 @@ async function assembleBrick(
 
   const voxelCount = physSize * physSize * physSize;
 
-  // Handle 16-bit → 8-bit conversion if needed (for r8unorm fallback)
+  // Handle format conversions based on targetFormat
   let outputBrick = brick;
-  if (is16bit && targetBitDepth === 8) {
+
+  if (is16bit && targetFormat === 'r8unorm') {
+    // 16-bit → 8-bit conversion (downsample for r8unorm fallback)
     const uint16Brick = brick as Uint16Array;
     const uint8Brick = new Uint8Array(uint16Brick.length);
 
@@ -276,7 +280,14 @@ async function assembleBrick(
     min = min8 === Infinity ? 0 : min8;
     max = max8 === -Infinity ? 0 : max8;
     sum = sum8;
+  } else if (is16bit && targetFormat === 'r16float') {
+    // 16-bit uint → float16 conversion (for r16float texture format)
+    const uint16Brick = brick as Uint16Array;
+    const float16Brick = uint16ToFloat16(uint16Brick);
+    outputBrick = float16Brick;
+    // Stats remain in original uint16 range (0-65535)
   }
+  // else: r16unorm or 8-bit source - no conversion needed
 
   return {
     buffer: outputBrick.buffer as ArrayBuffer,

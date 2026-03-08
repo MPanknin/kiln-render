@@ -27,10 +27,12 @@ export class TransferFunction {
       { x: 1.0, y: 1.0 }
     ];
 
+    // Use 2D texture (256x1) instead of 1D for Safari compatibility
+    // Safari doesn't support textureSampleLevel on 1D textures in compute shaders
     this.texture = device.createTexture({
-      size: [this.size],
+      size: [this.size, 1],
       format: 'rgba8unorm',
-      dimension: '1d',
+      dimension: '2d',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
 
@@ -208,8 +210,8 @@ export class TransferFunction {
     this.device.queue.writeTexture(
       { texture: this.texture },
       data,
-      { bytesPerRow: this.size * 4 },
-      [this.size]
+      { bytesPerRow: this.size * 4, rowsPerImage: 1 },
+      [this.size, 1]
     );
   }
 

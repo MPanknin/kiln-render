@@ -137,13 +137,6 @@ export class ShardedDataProvider implements DataProvider {
   }
 
   /**
-   * Get bit depth
-   */
-  getBitDepth(): BitDepth {
-    return this.metadata?.bitDepth ?? 8;
-  }
-
-  /**
    * Get brick grid for a LOD level
    */
   getBrickGrid(lod: number): [number, number, number] {

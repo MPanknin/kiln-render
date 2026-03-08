@@ -40,6 +40,6 @@ fn rayMarchMIP(
 
     // Apply windowing to final max density before TF lookup
     let windowedDensity = applyWindow(maxDensity, windowCenter, windowWidth);
-    let tfColor = textureSampleLevel(tfTexture, tfSampler, windowedDensity, 0.0);
+    let tfColor = textureSampleLevel(tfTexture, tfSampler, vec2f(windowedDensity, 0.5), 0.0);
     return vec4f(tfColor.rgb * windowedDensity, 1.0);
 }

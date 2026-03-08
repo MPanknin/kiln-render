@@ -44,7 +44,7 @@ export class ZarrDataProvider implements DataProvider {
 
   /** Worker pool for off-main-thread brick loading */
   private workerPool: ZarrWorkerPool | null = null;
-  private targetBitDepth?: 8 | 16;
+  private targetFormat?: 'r8unorm' | 'r16unorm' | 'r16float';
 
   // Network tracking (approximate — workers do the actual fetching)
   private totalBytesDownloaded = 0;
@@ -56,12 +56,13 @@ export class ZarrDataProvider implements DataProvider {
   }
 
   /**
-   * Set target bit depth for worker output
+   * Set target texture format for worker output
+   * Format determines output format: r8unorm (8-bit), r16unorm (16-bit uint), r16float (16-bit float)
    */
-  async setTargetBitDepth(bitDepth: 8 | 16): Promise<void> {
-    this.targetBitDepth = bitDepth;
+  async setTargetFormat(format: 'r8unorm' | 'r16unorm' | 'r16float'): Promise<void> {
+    this.targetFormat = format;
     if (this.workerPool) {
-      await this.workerPool.setTargetBitDepth(bitDepth);
+      await this.workerPool.setTargetFormat(format);
     }
   }
 
@@ -190,7 +191,7 @@ export class ZarrDataProvider implements DataProvider {
       this.url, arrayPaths, lodParams,
       LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE,
       bitDepth === 16,
-      this.targetBitDepth,
+      this.targetFormat,
     );
 
     return this.metadata;
@@ -199,10 +200,6 @@ export class ZarrDataProvider implements DataProvider {
   getMetadata(): VolumeMetadata {
     if (!this.metadata) throw new Error('Metadata not loaded. Call initialize() first.');
     return this.metadata;
-  }
-
-  getBitDepth(): BitDepth {
-    return this.metadata?.bitDepth ?? 8;
   }
 
   getBrickGrid(lod: number): [number, number, number] {

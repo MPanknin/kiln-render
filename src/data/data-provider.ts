@@ -97,11 +97,6 @@ export interface DataProvider {
   getMetadata(): VolumeMetadata;
 
   /**
-   * Get the bit depth of the volume (8 or 16)
-   */
-  getBitDepth(): BitDepth;
-
-  /**
    * Get the brick grid dimensions for a specific LOD level
    */
   getBrickGrid(lod: number): [number, number, number];

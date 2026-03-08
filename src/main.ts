@@ -115,18 +115,17 @@ async function main() {
   // Store for cleanup on page unload
   globalDataProvider = dataProvider;
 
-  // Initialize metadata to get bit depth
+  // Initialize metadata
   const metadata = await dataProvider.initialize();
-  const sourceBitDepth = dataProvider.getBitDepth();
+  const sourceBitDepth = metadata.bitDepth;
 
-  // Detect best texture format and compute effective bit depth
-  let effectiveBitDepth = sourceBitDepth;
+  // Detect best texture format
   let textureFormat: GPUTextureFormat;
+  let effectiveBitDepth = sourceBitDepth;
 
   if (sourceBitDepth === 16) {
     textureFormat = detectBest16BitFormat(device);
     if (textureFormat === 'r8unorm') {
-      // Fallback: will downsample to 8-bit in workers
       effectiveBitDepth = 8;
       console.warn(
         '[Kiln] ⚠️  GPU does not support 16-bit textures (r16unorm/r16float).\n' +
@@ -137,12 +136,14 @@ async function main() {
     textureFormat = 'r8unorm';
   }
 
-  if (effectiveBitDepth !== sourceBitDepth) {
+  // Configure workers to output the correct format
+  if (textureFormat !== 'r16unorm' || sourceBitDepth !== 16) {
+    // Need format conversion: r8unorm (8-bit) or r16float (float16)
     if (isZarr) {
-      await (dataProvider as ZarrDataProvider).setTargetBitDepth(effectiveBitDepth);
+      await (dataProvider as ZarrDataProvider).setTargetFormat(textureFormat as 'r8unorm' | 'r16float');
     } else {
       const decompressionPool = getDecompressionPool();
-      decompressionPool.setTargetBitDepth(effectiveBitDepth);
+      decompressionPool.setTargetFormat(textureFormat as 'r8unorm' | 'r16float');
     }
   }
 

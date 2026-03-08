@@ -6,11 +6,13 @@
  */
 
 import { gunzipSync } from 'fflate';
+import { uint16ToFloat16 } from '../utils/float16.js';
 
 export interface DecompressRequest {
   id: number;
   data: ArrayBuffer;
-  targetBitDepth?: 8 | 16;
+  /** Target texture format: r8unorm (8-bit), r16unorm (16-bit uint), r16float (16-bit float) */
+  targetFormat?: 'r8unorm' | 'r16unorm' | 'r16float';
 }
 
 export interface DecompressResponse {
@@ -21,15 +23,15 @@ export interface DecompressResponse {
 
 // Worker message handler
 self.onmessage = (event: MessageEvent<DecompressRequest>) => {
-  const { id, data, targetBitDepth } = event.data;
+  const { id, data, targetFormat } = event.data;
 
   try {
     const compressed = new Uint8Array(data);
     let decompressed = gunzipSync(compressed);
 
-    // Handle 16-bit → 8-bit conversion if needed
-    if (targetBitDepth === 8 && decompressed.byteLength % 2 === 0) {
-      // Assume decompressed data is 16-bit (Uint16) if we're asked for 8-bit output
+    // Handle format conversions based on targetFormat
+    if (targetFormat === 'r8unorm' && decompressed.byteLength % 2 === 0) {
+      // 16-bit → 8-bit conversion (downsample for r8unorm fallback)
       const uint16Data = new Uint16Array(decompressed.buffer, decompressed.byteOffset, decompressed.byteLength / 2);
       const uint8Data = new Uint8Array(uint16Data.length);
 
@@ -38,7 +40,13 @@ self.onmessage = (event: MessageEvent<DecompressRequest>) => {
       }
 
       decompressed = uint8Data;
+    } else if (targetFormat === 'r16float' && decompressed.byteLength % 2 === 0) {
+      // 16-bit uint → float16 conversion (for r16float texture format)
+      const uint16Data = new Uint16Array(decompressed.buffer, decompressed.byteOffset, decompressed.byteLength / 2);
+      const float16Data = uint16ToFloat16(uint16Data);
+      decompressed = float16Data;
     }
+    // else: r16unorm or already 8-bit - no conversion needed
 
     // Get the underlying ArrayBuffer for transfer
     const buffer = decompressed.buffer as ArrayBuffer;

@@ -60,7 +60,7 @@ export function createVolumeCanvas(device: GPUDevice, bitDepth: BitDepth, format
 /**
  * Write volume data into canvas at specified offset
  * Handles both 8-bit and 16-bit data based on canvas bitDepth
-  */
+ */
 export function writeToCanvas(
   device: GPUDevice,
   canvas: VolumeCanvas,

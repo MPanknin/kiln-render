@@ -47,7 +47,7 @@ const sharedBindings = /* wgsl */ `
 @group(0) @binding(1) var volumeSampler: sampler;
 @group(0) @binding(2) var volumeTexture: texture_3d<f32>;
 @group(0) @binding(3) var tfSampler: sampler;
-@group(0) @binding(4) var tfTexture: texture_1d<f32>;
+@group(0) @binding(4) var tfTexture: texture_2d<f32>;
 @group(0) @binding(6) var indirectionTexture: texture_3d<u32>;
 `;
 

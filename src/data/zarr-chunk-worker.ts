@@ -256,7 +256,7 @@ async function assembleBrick(
   const voxelCount = physSize * physSize * physSize;
 
   // Handle format conversions based on targetFormat
-  let outputBrick = brick;
+  let outputBrick: Uint8Array | Uint16Array = brick;
 
   if (is16bit && targetFormat === 'r8unorm') {
     // 16-bit → 8-bit conversion (downsample for r8unorm fallback)
@@ -289,8 +289,12 @@ async function assembleBrick(
   }
   // else: r16unorm or 8-bit source - no conversion needed
 
+  const buffer = outputBrick.buffer instanceof ArrayBuffer
+    ? outputBrick.buffer
+    : outputBrick.buffer.slice(0);
+
   return {
-    buffer: outputBrick.buffer as ArrayBuffer,
+    buffer: buffer as ArrayBuffer,
     min: min === Infinity ? 0 : min,
     max: max === -Infinity ? 0 : max,
     avg: sum / voxelCount,

@@ -27,7 +27,7 @@ self.onmessage = (event: MessageEvent<DecompressRequest>) => {
 
   try {
     const compressed = new Uint8Array(data);
-    let decompressed = gunzipSync(compressed);
+    let decompressed: Uint8Array | Uint16Array = gunzipSync(compressed);
 
     // Handle format conversions based on targetFormat
     if (targetFormat === 'r8unorm' && decompressed.byteLength % 2 === 0) {
@@ -49,14 +49,16 @@ self.onmessage = (event: MessageEvent<DecompressRequest>) => {
     // else: r16unorm or already 8-bit - no conversion needed
 
     // Get the underlying ArrayBuffer for transfer
-    const buffer = decompressed.buffer as ArrayBuffer;
+    const buffer = decompressed.buffer instanceof ArrayBuffer
+      ? decompressed.buffer
+      : decompressed.buffer.slice(0);
 
     // Transfer ownership back to main thread (zero-copy)
     const response: DecompressResponse = {
       id,
-      data: buffer,
+      data: buffer as ArrayBuffer,
     };
-    (self as unknown as Worker).postMessage(response, [buffer]);
+    (self as unknown as Worker).postMessage(response, [buffer as ArrayBuffer]);
   } catch (error) {
     const response: DecompressResponse = {
       id,

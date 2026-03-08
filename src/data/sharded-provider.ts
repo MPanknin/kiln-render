@@ -20,7 +20,6 @@ import type {
   LodLevel,
   BrickData,
   BrickStats,
-  BitDepth,
   NetworkStats,
 } from './data-provider.js';
 

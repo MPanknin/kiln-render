@@ -38,7 +38,7 @@ export class DecompressionPool {
     this.targetFormat = format;
   }
 
-  constructor(poolSize: number = navigator.hardwareConcurrency ? Math.min(navigator.hardwareConcurrency, 4) : 2) {
+  constructor(poolSize: number = navigator.hardwareConcurrency ? Math.min(navigator.hardwareConcurrency, 8) : 4) {
     for (let i = 0; i < poolSize; i++) {
       const worker = new Worker(
         new URL('./decompression-worker.ts', import.meta.url),

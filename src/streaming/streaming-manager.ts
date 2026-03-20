@@ -96,7 +96,7 @@ export class StreamingManager {
   private inFlightRequests = new Map<string, AbortController>();
 
   // Max concurrent requests
-  private maxConcurrentRequests = 4;
+  private maxConcurrentRequests = 8;
 
   // Frame counter for LRU
   private frameCount = 0;

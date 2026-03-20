@@ -29,8 +29,8 @@ export class ZarrWorkerPool {
 
   constructor(
     private poolSize: number = navigator.hardwareConcurrency
-      ? Math.min(navigator.hardwareConcurrency, 4)
-      : 2
+      ? Math.min(navigator.hardwareConcurrency, 8)
+      : 4
   ) {}
 
   /**

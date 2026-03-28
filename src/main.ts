@@ -36,6 +36,8 @@ function parseURLParams(): {
   sse?: number;
   scale?: number;
   cam?: [number, number, number] | [number, number, number, number, number, number];
+  clipMin?: [number, number, number];
+  clipMax?: [number, number, number];
 } {
   const params = new URLSearchParams(window.location.search);
   let cam: [number, number, number] | [number, number, number, number, number, number] | undefined;
@@ -46,6 +48,24 @@ function parseURLParams(): {
       cam = parts as typeof cam;
     }
   }
+
+  let clipMin: [number, number, number] | undefined;
+  let clipMax: [number, number, number] | undefined;
+  const clipMinStr = params.get('clipMin');
+  const clipMaxStr = params.get('clipMax');
+  if (clipMinStr) {
+    const parts = clipMinStr.split(',').map(Number);
+    if (parts.length === 3 && parts.every(n => !isNaN(n))) {
+      clipMin = parts as [number, number, number];
+    }
+  }
+  if (clipMaxStr) {
+    const parts = clipMaxStr.split(',').map(Number);
+    if (parts.length === 3 && parts.every(n => !isNaN(n))) {
+      clipMax = parts as [number, number, number];
+    }
+  }
+
   return {
     dataset: params.get('dataset') ?? DEFAULT_VOLUME_SOURCE,
     mode: (params.get('mode') as VolumeRenderMode) ?? undefined,
@@ -57,6 +77,8 @@ function parseURLParams(): {
     sse: params.has('sse') ? Number(params.get('sse')) : undefined,
     scale: params.has('scale') ? Number(params.get('scale')) : undefined,
     cam,
+    clipMin,
+    clipMax,
   };
 }
 
@@ -225,6 +247,14 @@ async function main() {
     renderer.renderScale = userRenderScale;
     renderer.resizeComputeTexture();
   }
+  if (urlParams.clipMin) {
+    renderer.clipMin.set(urlParams.clipMin);
+    renderer.resetAccumulation();
+  }
+  if (urlParams.clipMax) {
+    renderer.clipMax.set(urlParams.clipMax);
+    renderer.resetAccumulation();
+  }
   ui.syncFromState();
 
   // Share button: build URL from current state and copy to clipboard
@@ -242,6 +272,16 @@ async function main() {
       p.set('scale', renderer.renderScale.toFixed(2));
       const [rx, ry, dist, tx, ty, tz] = camera.getOrbitState();
       p.set('cam', `${rx.toFixed(3)},${ry.toFixed(3)},${dist.toFixed(3)},${tx.toFixed(3)},${ty.toFixed(3)},${tz.toFixed(3)}`);
+
+      const clipMin = renderer.clipMin;
+      const clipMax = renderer.clipMax;
+      if (clipMin[0]! !== 0 || clipMin[1]! !== 0 || clipMin[2]! !== 0) {
+        p.set('clipMin', `${clipMin[0]!.toFixed(2)},${clipMin[1]!.toFixed(2)},${clipMin[2]!.toFixed(2)}`);
+      }
+      if (clipMax[0]! !== 1 || clipMax[1]! !== 1 || clipMax[2]! !== 1) {
+        p.set('clipMax', `${clipMax[0]!.toFixed(2)},${clipMax[1]!.toFixed(2)},${clipMax[2]!.toFixed(2)}`);
+      }
+
       const url = `${window.location.origin}${window.location.pathname}?${p.toString()}`;
       navigator.clipboard.writeText(url).then(() => {
         shareBtn.classList.add('copied');

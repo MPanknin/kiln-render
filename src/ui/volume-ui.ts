@@ -685,6 +685,12 @@ export class VolumeUI {
     this.params.renderScale = this.renderer.renderScale;
     this.params.upAxis = this.camera.getUpAxis();
     this.params.tfPreset = this.transferFunction.preset;
+    this.params.clipMinX = this.renderer.clipMin[0]!;
+    this.params.clipMinY = this.renderer.clipMin[1]!;
+    this.params.clipMinZ = this.renderer.clipMin[2]!;
+    this.params.clipMaxX = this.renderer.clipMax[0]!;
+    this.params.clipMaxY = this.renderer.clipMax[1]!;
+    this.params.clipMaxZ = this.renderer.clipMax[2]!;
     (this.pane as unknown as ExtendedPane).refresh();
     this.updateVisibility();
     this.updateTFPreview();

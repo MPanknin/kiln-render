@@ -52,10 +52,13 @@ bun run build
 bun run test
 ```
 
-The demo loads a sample dataset from S3. To use your own data, see the [Data Guide](docs/data-guide.md).
+The demo loads a sample dataset from S3.
+
+**→ Using the deployed version?** See the [Usage Guide](docs/usage-guide.md) to load custom datasets via URL parameters.
 
 ## Documentation
 
+- **[Usage Guide](docs/usage-guide.md)** - Loading custom datasets, URL parameters, share button, and troubleshooting
 - **[Architecture](docs/architecture.md)** - Virtual texturing, streaming manager, and design decisions
 - **[Rendering Pipeline](docs/rendering.md)** - Raymarching, compositing modes, resolution scaling, and temporal accumulation
 - **[Data Guide](docs/data-guide.md)** - Supported formats (OME-Zarr, Kiln sharded binary) and data preparation
@@ -85,7 +88,7 @@ Kiln requires WebGPU. Chrome/Edge 113+ and Safari 26+ support it out of the box.
 The atlas is a fixed-size 3D texture. With the default 1,000 brick slots it uses ~274 MiB for 8-bit data and ~548 MiB for 16-bit data. You can adjust the atlas size in `config.ts` for different quality/memory tradeoffs, but usage always stays constant regardless of dataset size.
 
 **Can I load my own data?**
-Yes. Kiln supports its own sharded binary format as well as an experimantal integration for OME-Zarr datasets. See the [Data Guide](docs/data-guide.md) for details on how to prepare and serve your data.
+Yes! The easiest way is to use OME-Zarr datasets directly via URL parameters. See the [Usage Guide](docs/usage-guide.md) for instructions on loading custom datasets and troubleshooting visibility issues. For advanced preprocessing, see the [Data Guide](docs/data-guide.md).
 
 **What are the known rendering issues?**
 Brick boundary seams are still visible in some cases, especially in isosurface (ISO) mode where normal estimation samples across brick edges. LOD transitions can also produce brief visual discontinuities while bricks stream in. These are known issues and will be addressed in the future.

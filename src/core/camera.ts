@@ -32,6 +32,9 @@ export class Camera {
   private upAxis: UpAxis = '-y';
   private upVector: [number, number, number] = [0, -1, 0];
 
+  // Clamp away from poles to avoid degenerate view matrix
+  private poleEpsilon = 0.001;
+
   constructor(canvas: HTMLCanvasElement) {
     this.position = new Float32Array(3);
     this.updatePosition();
@@ -65,16 +68,14 @@ export class Camera {
         if (baseAxis === 'y' && isNegative) hSign = 1;
         this.rotationY += hSign * dx * 0.01;
         this.rotationX += dy * 0.01;
-        this.rotationX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.rotationX));
+        this.rotationX = Math.max(-Math.PI / 2 + this.poleEpsilon, Math.min(Math.PI / 2 - this.poleEpsilon, this.rotationX));
       } else if (this.isPanning) {
         // Pan: move target in screen space
         const panSpeed = this.distance * 0.002;
-        const right = this.getRightVector();
-        const up = this.getUpVectorLocal();
-        // Note: dy is inverted (drag up = move target up = subtract)
-        this.target[0] -= (dx * right[0] - dy * up[0]) * panSpeed;
-        this.target[1] -= (dx * right[1] - dy * up[1]) * panSpeed;
-        this.target[2] -= (dx * right[2] - dy * up[2]) * panSpeed;
+        const { right, up } = this.getScreenSpaceVectors();
+        this.target[0] -= (dx * right[0]! - dy * up[0]!) * panSpeed;
+        this.target[1] -= (dx * right[1]! - dy * up[1]!) * panSpeed;
+        this.target[2] -= (dx * right[2]! - dy * up[2]!) * panSpeed;
       }
 
       this.updatePosition();
@@ -156,7 +157,7 @@ export class Camera {
         if (baseAxis === 'y' && isNegative) hSign = 1;
         this.rotationY += hSign * dx * 0.01;
         this.rotationX += dy * 0.01;
-        this.rotationX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.rotationX));
+        this.rotationX = Math.max(-Math.PI / 2 + this.poleEpsilon, Math.min(Math.PI / 2 - this.poleEpsilon, this.rotationX));
 
         this.updatePosition();
 
@@ -180,11 +181,10 @@ export class Camera {
 
         if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
           const panSpeed = this.distance * 0.002;
-          const right = this.getRightVector();
-          const up = this.getUpVectorLocal();
-          this.target[0] -= (dx * right[0] - dy * up[0]) * panSpeed;
-          this.target[1] -= (dx * right[1] - dy * up[1]) * panSpeed;
-          this.target[2] -= (dx * right[2] - dy * up[2]) * panSpeed;
+          const { right, up } = this.getScreenSpaceVectors();
+          this.target[0] -= (dx * right[0]! - dy * up[0]!) * panSpeed;
+          this.target[1] -= (dx * right[1]! - dy * up[1]!) * panSpeed;
+          this.target[2] -= (dx * right[2]! - dy * up[2]!) * panSpeed;
         }
         this.lastTouchCenter = currentCenter;
 
@@ -272,40 +272,14 @@ export class Camera {
     }
   }
 
-  /** Get camera right vector (screen X direction in world space) */
-  private getRightVector(): [number, number, number] {
-    const cosY = Math.cos(this.rotationY);
-    const sinY = Math.sin(this.rotationY);
-    const sign = this.upAxis.startsWith('-') ? -1 : 1;
-    const baseAxis = this.upAxis.replace('-', '') as 'x' | 'y' | 'z';
-
-    switch (baseAxis) {
-      case 'x':
-        return [0, -sinY * sign, cosY * sign];
-      case 'y':
-        return [cosY * sign, 0, -sinY * sign];
-      case 'z':
-        return [-sinY * sign, cosY * sign, 0];
-    }
-  }
-
-  /** Get camera up vector in view space (screen Y direction in world space) */
-  private getUpVectorLocal(): [number, number, number] {
-    const cosX = Math.cos(this.rotationX);
-    const sinX = Math.sin(this.rotationX);
-    const cosY = Math.cos(this.rotationY);
-    const sinY = Math.sin(this.rotationY);
-    const sign = this.upAxis.startsWith('-') ? -1 : 1;
-    const baseAxis = this.upAxis.replace('-', '') as 'x' | 'y' | 'z';
-
-    switch (baseAxis) {
-      case 'x':
-        return [sign * cosX, sinX * cosY, sinX * sinY];
-      case 'y':
-        return [sinX * sinY, sign * cosX, sinX * cosY];
-      case 'z':
-        return [sinX * cosY, sinX * sinY, sign * cosX];
-    }
+  /** Get screen-space right and up vectors from view matrix for panning */
+  private getScreenSpaceVectors(): { right: [number, number, number]; up: [number, number, number] } {
+    const viewMatrix = this.getViewMatrix();
+    // View matrix columns (column-major order): right is column 0, up is column 1
+    return {
+      right: [viewMatrix[0]!, viewMatrix[4]!, viewMatrix[8]!],
+      up: [viewMatrix[1]!, viewMatrix[5]!, viewMatrix[9]!],
+    };
   }
 
   /**

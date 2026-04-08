@@ -98,6 +98,9 @@ export class StreamingManager {
   // Max concurrent requests
   private maxConcurrentRequests = 8;
 
+  // Callback for when base LOD is loaded with brick data
+  private onBaseLodLoaded: ((brickData: (Uint8Array | Uint16Array)[]) => void) | null = null;
+
   // Frame counter for LRU
   private frameCount = 0;
 
@@ -165,6 +168,11 @@ export class StreamingManager {
     this.loadBaseLod();
   }
 
+  /** Set callback to be invoked when base LOD is loaded with brick data */
+  setBaseLodLoadedCallback(callback: (brickData: (Uint8Array | Uint16Array)[]) => void): void {
+    this.onBaseLodLoaded = callback;
+  }
+
   /**
    * Load and pin the coarsest LOD level (ensures no holes)
    */
@@ -174,6 +182,9 @@ export class StreamingManager {
     if (!level) return;
 
     const [gridX, gridY, gridZ] = level.brickGrid;
+
+    // Collect all brick data for histogram computation
+    const allBrickData: (Uint8Array | Uint16Array)[] = [];
 
     for (let bz = 0; bz < gridZ; bz++) {
       for (let by = 0; by < gridY; by++) {
@@ -191,6 +202,9 @@ export class StreamingManager {
           // Load brick data
           const data = await this.dataProvider.loadBrick(maxLod, bx, by, bz);
           if (!data) continue;
+
+          // Store for histogram computation
+          allBrickData.push(data);
 
           // Allocate slot
           const result = this.renderer.allocator.allocate(this.frameCount);
@@ -229,6 +243,11 @@ export class StreamingManager {
 
     this._baseLodLoaded = true;
     this._timeToFirstRender = performance.now() - this.loadStartTime;
+
+    // Notify callback with base LOD brick data
+    if (allBrickData.length > 0 && this.onBaseLodLoaded) {
+      this.onBaseLodLoaded(allBrickData);
+    }
   }
 
   /**

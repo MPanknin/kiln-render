@@ -7,7 +7,8 @@ import { TransferFunction, TFPreset } from '../core/transfer-function.js';
 import { Renderer, VolumeRenderMode } from '../core/renderer.js';
 import { Camera, UpAxis } from '../core/camera.js';
 import { StreamingManager } from '../streaming/streaming-manager.js';
-import type { VolumeMetadata } from '../data/data-provider.js';
+import type { VolumeMetadata, BitDepth } from '../data/data-provider.js';
+import { computeHistogram } from '../core/histogram.js';
 
 // Tweakpane's types don't fully export FolderApi, so use a minimal interface
 interface TweakpaneFolder {
@@ -30,6 +31,7 @@ export class VolumeUI {
   private camera: Camera;
   private transferFunction: TransferFunction;
   private streamingManager: StreamingManager | null = null;
+  private metadata: VolumeMetadata | null = null;
 
   private tfCanvas: HTMLCanvasElement;
   private isDraggingPoint = false;
@@ -274,6 +276,7 @@ export class VolumeUI {
     }).on('change', (ev: { value: unknown }) => {
       this.renderer.windowCenter = ev.value as number;
       this.renderer.resetAccumulation();
+      this.updateTFPreview();
     });
 
     this.windowFolder.addBinding(this.params, 'windowWidth', {
@@ -284,6 +287,7 @@ export class VolumeUI {
     }).on('change', (ev: { value: unknown }) => {
       this.renderer.windowWidth = ev.value as number;
       this.renderer.resetAccumulation();
+      this.updateTFPreview();
     });
 
     // Clipping Planes folder
@@ -484,6 +488,7 @@ export class VolumeUI {
 
   setStreamingManager(manager: StreamingManager, metadata: VolumeMetadata): void {
     this.streamingManager = manager;
+    this.metadata = metadata;
 
     // Set static metadata info
     const dims = metadata.dimensions;
@@ -502,6 +507,11 @@ export class VolumeUI {
 
     const format = this.renderer.canvas.format;
     this.statsParams.textureFormat = format + (format === 'r8unorm' && metadata.bitDepth === 16 ? ' (⚠️ downsampled)' : '');
+
+    // Set up histogram computation when base LOD is loaded
+    manager.setBaseLodLoadedCallback((brickData) => {
+      this.onBaseLodLoaded(brickData);
+    });
 
     // Start periodic stats update
     this.startStatsUpdate();
@@ -672,8 +682,25 @@ export class VolumeUI {
   }
 
   private updateTFPreview(): void {
-    this.transferFunction.renderPreview(this.tfCanvas);
+    this.transferFunction.renderPreview(
+      this.tfCanvas,
+      this.renderer.windowCenter,
+      this.renderer.windowWidth
+    );
     this.renderer.resetAccumulation();
+  }
+
+  refreshTFPreview(): void {
+    this.updateTFPreview();
+  }
+
+  /** Called when base LOD is loaded - computes and displays histogram */
+  private onBaseLodLoaded(brickData: (Uint8Array | Uint16Array)[]): void {
+    if (!this.metadata) return;
+
+    const histogram = computeHistogram(brickData, this.metadata.bitDepth);
+    this.transferFunction.setHistogram(histogram);
+    this.updateTFPreview();
   }
 
   /** Sync UI params from current renderer/camera state (e.g. after applying URL params) */

@@ -17,6 +17,8 @@ export class TransferFunction {
   private opacityPoints: OpacityPoint[];
   preset: TFPreset = 'grayscale';
 
+  private histogram: Uint32Array | null = null;
+
   constructor(device: GPUDevice) {
     this.device = device;
     this.colorData = new Uint8Array(this.size * 3);
@@ -215,8 +217,12 @@ export class TransferFunction {
     );
   }
 
+  setHistogram(histogram: Uint32Array): void {
+    this.histogram = histogram;
+  }
+
   // Generate a canvas preview of the TF (for UI display)
-  renderPreview(canvas: HTMLCanvasElement): void {
+  renderPreview(canvas: HTMLCanvasElement, windowCenter?: number, windowWidth?: number): void {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -251,6 +257,11 @@ export class TransferFunction {
       ctx.fillRect(x, 0, 1, h);
     }
 
+    // Draw histogram on top
+    if (this.histogram) {
+      this.renderHistogram(ctx, w, h, windowCenter, windowWidth);
+    }
+
     // Draw opacity curve
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
     ctx.lineWidth = 2;
@@ -278,6 +289,58 @@ export class TransferFunction {
       ctx.strokeStyle = '#000';
       ctx.lineWidth = 1;
       ctx.stroke();
+    }
+  }
+
+  private renderHistogram(
+    ctx: CanvasRenderingContext2D,
+    w: number,
+    h: number,
+    windowCenter?: number,
+    windowWidth?: number
+  ): void {
+    if (!this.histogram) return;
+
+    // Find max for normalization (use log scale for better visibility)
+    let maxCount = 0;
+    for (let i = 0; i < this.histogram.length; i++) {
+      maxCount = Math.max(maxCount, this.histogram[i]!);
+    }
+    if (maxCount === 0) return;
+
+    // Calculate window range if provided
+    let windowMin = 0;
+    let windowMax = 1;
+    if (windowCenter !== undefined && windowWidth !== undefined) {
+      const halfWidth = windowWidth * 0.5;
+      windowMin = windowCenter - halfWidth;
+      windowMax = windowCenter + halfWidth;
+    }
+
+    // Draw histogram bars in black on top of color table
+    const barWidth = w / this.histogram.length;
+    for (let i = 0; i < this.histogram.length; i++) {
+      const count = this.histogram[i]!;
+      if (count === 0) continue;
+
+      // Log scale for better visibility of low-frequency bins
+      const normalizedHeight = Math.log(1 + count) / Math.log(1 + maxCount);
+      const barHeight = normalizedHeight * h * 0.9;
+
+      const x = (i / this.histogram.length) * w;
+      const t = i / (this.histogram.length - 1);
+
+      // Check if bin is within window range
+      const inWindow = t >= windowMin && t <= windowMax;
+
+      // Black bars with opacity based on window range
+      if (inWindow) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      } else {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+      }
+
+      ctx.fillRect(x, h - barHeight, Math.max(1, barWidth), barHeight);
     }
   }
 }

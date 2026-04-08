@@ -39,6 +39,7 @@ export class LocalZarrDataProvider implements DataProvider {
   private statsCache = new Map<string, BrickStats>();
   private totalBytes = 0;
   private requestCount = 0;
+  private recentDownloads: { timestamp: number; bytes: number }[] = [];
 
   constructor(dirHandle: FileSystemDirectoryHandle) {
     this.dirHandle = dirHandle;
@@ -175,8 +176,10 @@ export class LocalZarrDataProvider implements DataProvider {
       const key = `${lod}:${bx}/${by}/${bz}`;
       this.statsCache.set(key, result.stats);
 
-      this.totalBytes += result.data.byteLength;
+      const bytes = result.data.byteLength;
+      this.totalBytes += bytes;
       this.requestCount++;
+      this.recentDownloads.push({ timestamp: performance.now(), bytes });
 
       return result.data;
     } catch (e) {
@@ -297,9 +300,15 @@ export class LocalZarrDataProvider implements DataProvider {
   }
 
   getNetworkStats(): NetworkStats {
+    const now = performance.now();
+    const windowMs = 2000;
+    const cutoff = now - windowMs;
+    this.recentDownloads = this.recentDownloads.filter(d => d.timestamp > cutoff);
+    const recentBytes = this.recentDownloads.reduce((sum, d) => sum + d.bytes, 0);
+
     return {
       totalBytesDownloaded: this.totalBytes,
-      recentBytesPerSecond: 0,
+      recentBytesPerSecond: (recentBytes / windowMs) * 1000,
       requestCount: this.requestCount,
     };
   }

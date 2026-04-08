@@ -1,0 +1,62 @@
+name: Deploy Preview
+
+on:
+  push:
+    branches-ignore:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Extract branch name
+        shell: bash
+        run: echo "branch=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
+        id: extract_branch
+
+      - name: Sanitize branch name for URL
+        shell: bash
+        run: echo "sanitized=$(echo '${{ steps.extract_branch.outputs.branch }}' | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+        id: sanitize
+
+      - name: Build with branch-specific base
+        run: npm run build
+        env:
+          VITE_BASE: /kiln-render/preview/${{ steps.sanitize.outputs.sanitized }}/
+
+      - name: Deploy to gh-pages branch
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          destination_dir: preview/${{ steps.sanitize.outputs.sanitized }}
+          keep_files: true
+
+      - name: Comment PR with preview URL
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const branchName = '${{ steps.sanitize.outputs.sanitized }}';
+            const previewUrl = `https://${{ github.repository_owner }}.github.io/kiln-render/preview/${branchName}/`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🚀 Preview deployed to: ${previewUrl}`
+            });

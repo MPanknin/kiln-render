@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>KILN</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background-color: #222;
+    }
+
+    canvas {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+
+    #error {
+      color: #ff6b6b;
+      background: #2a2a2a;
+      padding: 20px;
+      border-radius: 8px;
+      max-width: 500px;
+      display: none;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 1000;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+
+    :root {
+      --tp-base-background-color: hsl(230, 5%, 9%);
+      --tp-base-shadow-color: hsla(0, 0%, 0%, 0.3);
+      --tp-container-background-color: rgba(187, 188, 196, 0.05);
+      --tp-container-background-color-active: rgba(187, 188, 196, 0.15);
+      --tp-container-background-color-focus: rgba(187, 188, 196, 0.1);
+      --tp-container-background-color-hover: rgba(187, 188, 196, 0.08);
+    }
+
+    .toolbar {
+      position: fixed;
+      top: 8px;
+      right: 8px;
+      z-index: 1000;
+      display: flex;
+      gap: 6px;
+    }
+
+    .toolbar-btn {
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-radius: 6px;
+      background: rgba(28, 28, 30, 0.95);
+      color: rgb(187, 188, 196);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .toolbar-btn:hover {
+      background: rgba(44, 44, 46, 0.95);
+      color: #fff;
+    }
+
+    .toolbar-btn svg {
+      width: 20px;
+      height: 20px;
+      fill: currentColor;
+    }
+
+    .toolbar-btn.copied {
+      background: rgba(40, 160, 80, 0.85);
+      color: #fff;
+    }
+
+    .toast {
+      position: fixed;
+      top: 48px;
+      right: 8px;
+      background: rgba(40, 160, 80, 0.9);
+      color: #fff;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 13px;
+      padding: 6px 12px;
+      border-radius: 6px;
+      z-index: 1001;
+      opacity: 0;
+      transition: opacity 0.2s;
+      pointer-events: none;
+    }
+
+    .toast.visible {
+      opacity: 1;
+    }
+
+    #spinner {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 48px;
+      height: 48px;
+      border-radius: 6px;
+      background: rgba(28, 28, 30, 0.95);
+      z-index: 1001;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #spinner::before {
+      content: '';
+      width: 24px;
+      height: 24px;
+      border: 3px solid rgba(187, 188, 196, 0.15);
+      border-top-color: rgba(187, 188, 196, 0.5);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    #spinner.active {
+      opacity: 1;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+  <script type="module" crossorigin src="/kiln-render/assets/index-i9LbEnI8.js"></script>
+</head>
+<body>
+  <canvas></canvas>
+  <div id="error"></div>
+  <div class="toolbar">
+    <a href="https://github.com/MPanknin/kiln-render" target="_blank" rel="noopener" class="toolbar-btn" title="View on GitHub">
+      <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+    </a>
+    <button id="share-btn" class="toolbar-btn" title="Copy link to current view">
+      <svg viewBox="0 0 16 16"><path d="M13.5 1a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM11 2.5a2.5 2.5 0 1 1 .603 1.628l-6.718 3.12a2.5 2.5 0 0 1 0 1.504l6.718 3.12a2.5 2.5 0 1 1-.488.876l-6.718-3.12a2.5 2.5 0 1 1 0-3.256l6.718-3.12A2.5 2.5 0 0 1 11 2.5zm-8.5 4a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm11 5.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z"/></svg>
+    </button>
+  </div>
+  <div id="spinner"></div>
+  <div id="toast" class="toast">Current view copied to clipboard</div>
+  <script data-goatcounter="https://mpanknin.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>

@@ -7,7 +7,7 @@ import { TransferFunction, TFPreset } from '../core/transfer-function.js';
 import { Renderer, VolumeRenderMode } from '../core/renderer.js';
 import { Camera, UpAxis } from '../core/camera.js';
 import { StreamingManager } from '../streaming/streaming-manager.js';
-import type { VolumeMetadata, BitDepth } from '../data/data-provider.js';
+import type { VolumeMetadata } from '../data/data-provider.js';
 import { computeHistogram } from '../core/histogram.js';
 
 // Tweakpane's types don't fully export FolderApi, so use a minimal interface

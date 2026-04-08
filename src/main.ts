@@ -13,12 +13,19 @@ import { Camera, UpAxis } from './core/camera.js';
 import { setDatasetSize } from './core/config.js';
 import { ShardedDataProvider } from './data/sharded-provider.js';
 import { ZarrDataProvider } from './data/zarr-provider.js';
+import { LocalZarrDataProvider } from './data/local-zarr-provider.js';
 import type { DataProvider } from './data/data-provider.js';
 import { TransferFunction, TFPreset } from './core/transfer-function.js';
 import { VolumeUI } from './ui/volume-ui.js';
 import { StreamingManager } from './streaming/streaming-manager.js';
 import { detectBest16BitFormat } from './core/volume.js';
 import { getDecompressionPool } from './data/decompression-pool.js';
+import {
+  isFileSystemAccessSupported,
+  promptForZarrDirectory,
+  getStoredHandle,
+  requestPermission
+} from './data/local-loader.js';
 
 // Default volume source (can be overridden via ?dataset= URL parameter)
 const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/chameleon-16bit';
@@ -128,11 +135,27 @@ async function main() {
   const urlParams = parseURLParams();
   const volumeSource = urlParams.dataset;
 
-  // Create data provider (but don't initialize yet)
-  const isZarr = volumeSource.includes('.zarr');
-  const dataProvider: DataProvider = isZarr
-    ? new ZarrDataProvider(volumeSource)
-    : new ShardedDataProvider(volumeSource);
+  // Check for local zarr handle (with permission check)
+  let dataProvider: DataProvider;
+  let isLocalZarr = false;
+
+  const storedHandle = await getStoredHandle();
+  if (storedHandle && sessionStorage.getItem('useLocalZarr') === 'true') {
+    const hasPermission = await requestPermission(storedHandle);
+    if (hasPermission) {
+      dataProvider = new LocalZarrDataProvider(storedHandle);
+      isLocalZarr = true;
+      sessionStorage.removeItem('useLocalZarr');
+    } else {
+      // No permission, fall back to HTTP
+      const isZarr = volumeSource.includes('.zarr');
+      dataProvider = isZarr ? new ZarrDataProvider(volumeSource) : new ShardedDataProvider(volumeSource);
+    }
+  } else {
+    // Create HTTP data provider
+    const isZarr = volumeSource.includes('.zarr');
+    dataProvider = isZarr ? new ZarrDataProvider(volumeSource) : new ShardedDataProvider(volumeSource);
+  }
 
   // Store for cleanup on page unload
   globalDataProvider = dataProvider;
@@ -158,10 +181,10 @@ async function main() {
     textureFormat = 'r8unorm';
   }
 
-  // Configure workers to output the correct format
-  if (textureFormat !== 'r16unorm' || sourceBitDepth !== 16) {
-    // Need format conversion: r8unorm (8-bit) or r16float (float16)
-    if (isZarr) {
+  // Configure workers to output the correct format (only for HTTP providers)
+  if (!isLocalZarr && (textureFormat !== 'r16unorm' || sourceBitDepth !== 16)) {
+    const isHttpZarr = volumeSource.includes('.zarr');
+    if (isHttpZarr) {
       await (dataProvider as ZarrDataProvider).setTargetFormat(textureFormat as 'r8unorm' | 'r16float');
     } else {
       const decompressionPool = getDecompressionPool();
@@ -317,6 +340,32 @@ async function main() {
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+
+  // Setup local zarr button
+  setupLocalLoadButton();
+}
+
+function setupLocalLoadButton() {
+  const btn = document.getElementById('local-zarr-btn');
+  if (!btn) return;
+
+  if (!isFileSystemAccessSupported()) {
+    btn.style.display = 'none';
+    return;
+  }
+
+  btn.addEventListener('click', async () => {
+    try {
+      await promptForZarrDirectory();
+      sessionStorage.setItem('useLocalZarr', 'true');
+      window.location.reload();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Failed to load local dataset';
+      if (!message.includes('cancelled') && !message.includes('aborted')) {
+        showError(message);
+      }
+    }
+  });
 }
 
 function showError(message: string) {

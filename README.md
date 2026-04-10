@@ -62,7 +62,7 @@ From the [Open SciVis Datasets](https://github.com/sci-visus/open-scivis-dataset
 
 ## License
 
-MIT
+Apache 2.0
 
 ---
 

@@ -233,7 +233,7 @@ export class TransferFunction {
     ctx.fillStyle = '#1a1a1a';
     ctx.fillRect(0, 0, w, h);
 
-    // Draw checkerboard pattern (for transparency visualization)
+    // Draw checkerboard pattern
     const checkSize = 8;
     ctx.fillStyle = '#2a2a2a';
     for (let y = 0; y < h; y += checkSize) {
@@ -257,7 +257,7 @@ export class TransferFunction {
       ctx.fillRect(x, 0, 1, h);
     }
 
-    // Draw histogram on top
+    // Draw histogram (with window transform applied internally)
     if (this.histogram) {
       this.renderHistogram(ctx, w, h, windowCenter, windowWidth);
     }
@@ -292,14 +292,19 @@ export class TransferFunction {
     }
   }
 
-  private renderHistogram(
-    ctx: CanvasRenderingContext2D,
-    w: number,
-    h: number,
-    windowCenter?: number,
-    windowWidth?: number
-  ): void {
+  private renderHistogram(ctx: CanvasRenderingContext2D, w: number, h: number, windowCenter?: number, windowWidth?: number): void {
     if (!this.histogram) return;
+
+    // Calculate zoom/pan for windowed view
+    let scale = 1;
+    let offsetX = 0;
+
+    if (windowCenter !== undefined && windowWidth !== undefined) {
+      const halfWidth = windowWidth * 0.5;
+      const windowMin = windowCenter - halfWidth;
+      scale = 1.0 / windowWidth;
+      offsetX = -windowMin * scale * w;
+    }
 
     // Find max for normalization (use log scale for better visibility)
     let maxCount = 0;
@@ -308,40 +313,29 @@ export class TransferFunction {
     }
     if (maxCount === 0) return;
 
-    // Calculate window range if provided
-    let windowMin = 0;
-    let windowMax = 1;
-    if (windowCenter !== undefined && windowWidth !== undefined) {
-      const halfWidth = windowWidth * 0.5;
-      windowMin = windowCenter - halfWidth;
-      windowMax = windowCenter + halfWidth;
-    }
+    // Save state and apply zoom/pan transform for histogram only
+    ctx.save();
+    ctx.translate(offsetX, 0);
+    ctx.scale(scale, 1);
 
-    // Draw histogram bars in black on top of color table
+    // Draw histogram bars
     const barWidth = w / this.histogram.length;
     for (let i = 0; i < this.histogram.length; i++) {
       const count = this.histogram[i]!;
       if (count === 0) continue;
 
-      // Log scale for better visibility of low-frequency bins
+      const x = (i / this.histogram.length) * w;
+
+      // Log scale for better visibility
       const normalizedHeight = Math.log(1 + count) / Math.log(1 + maxCount);
       const barHeight = normalizedHeight * h * 0.9;
 
-      const x = (i / this.histogram.length) * w;
-      const t = i / (this.histogram.length - 1);
-
-      // Check if bin is within window range
-      const inWindow = t >= windowMin && t <= windowMax;
-
-      // Black bars with opacity based on window range
-      if (inWindow) {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-      } else {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
-      }
-
+      // Darker bars for data (blends with TF background)
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
       ctx.fillRect(x, h - barHeight, Math.max(1, barWidth), barHeight);
     }
+
+    ctx.restore();
   }
 }
 

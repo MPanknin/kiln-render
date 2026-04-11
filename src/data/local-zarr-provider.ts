@@ -1,47 +1,24 @@
 /**
  * LocalZarrDataProvider - Load OME-Zarr from local filesystem
+ *
+ * Uses File System Access API to read local Zarr datasets.
+ * Unlike ZarrDataProvider, this runs on the main thread since
+ * FileSystemDirectoryHandle cannot be transferred to workers.
  */
 
 import { open, root, Array as ZarrArray } from 'zarrita';
 import type { DataType } from 'zarrita';
 import { FileSystemStore } from './filesystem-store.js';
-import { LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE } from '../core/config.js';
-import type {
-  DataProvider,
-  VolumeMetadata,
-  LodLevel,
-  BrickData,
-  BrickStats,
-  BitDepth,
-  NetworkStats,
-} from './data-provider.js';
+import { BaseZarrProvider, type LodParams } from './base-zarr-provider.js';
+import type { VolumeMetadata, BrickData, BrickStats } from './data-provider.js';
 
-interface OmeMultiscales {
-  axes: { name: string; type: string }[];
-  datasets: { path: string; coordinateTransformations?: { type: string; scale?: number[] }[] }[];
-}
-
-export class LocalZarrDataProvider implements DataProvider {
+export class LocalZarrDataProvider extends BaseZarrProvider {
   private dirHandle: FileSystemDirectoryHandle;
-  private metadata: VolumeMetadata | null = null;
   private arrays: ZarrArray<DataType, any>[] = [];
-  private lodParams: {
-    scaleX: number;
-    scaleY: number;
-    scaleZ: number;
-    actualDimX: number;
-    actualDimY: number;
-    actualDimZ: number;
-    csx: number;
-    csy: number;
-    csz: number;
-  }[] = [];
-  private statsCache = new Map<string, BrickStats>();
-  private totalBytes = 0;
-  private requestCount = 0;
-  private recentDownloads: { timestamp: number; bytes: number }[] = [];
+  private lodParams: LodParams[] = [];
 
   constructor(dirHandle: FileSystemDirectoryHandle) {
+    super();
     this.dirHandle = dirHandle;
   }
 
@@ -52,111 +29,27 @@ export class LocalZarrDataProvider implements DataProvider {
     const rootGroup = await open(root(store), { kind: 'group' });
 
     const attrs = rootGroup.attrs as Record<string, unknown>;
-    const omeAttr = attrs['ome'] as { multiscales?: OmeMultiscales[] } | undefined;
-    const multiscales = omeAttr?.multiscales ?? [];
-
-    if (multiscales.length === 0) {
+    const omeAttr = attrs['ome'] as { multiscales?: any[] } | undefined;
+    const ms = (omeAttr?.multiscales ?? [])[0];
+    if (!ms) {
       throw new Error('No OME multiscales metadata found');
     }
 
-    const ms = multiscales[0]!;
-    const numScales = ms.datasets.length;
-
+    // Open arrays to read metadata
     this.arrays = [];
     for (const ds of ms.datasets) {
       const arr = await open(rootGroup.resolve(ds.path), { kind: 'array' });
       this.arrays.push(arr);
     }
 
-    const dtype = this.arrays[0]!.dtype;
-    let bitDepth: BitDepth;
-    if (dtype === 'uint8' || dtype === 'int8') {
-      bitDepth = 8;
-    } else if (dtype === 'uint16' || dtype === 'int16') {
-      bitDepth = 16;
-    } else {
-      throw new Error(`Unsupported dtype: ${dtype}`);
-    }
+    // Parse metadata using base class helper
+    const name = this.dirHandle.name.replace(/\.ome\.zarr|\.zarr/, '');
+    const { metadata, lodParams } = this.parseOmeMetadata(attrs, this.arrays, name);
 
-    let voxelSpacing: [number, number, number] | undefined;
-    const transforms = ms.datasets[0]?.coordinateTransformations;
-    if (transforms) {
-      const scaleTransform = transforms.find(t => t.type === 'scale');
-      if (scaleTransform?.scale) {
-        const s = scaleTransform.scale;
-        voxelSpacing = [s[s.length - 1]!, s[s.length - 2]!, s[s.length - 3]!];
-      }
-    }
-
-    const lod0Shape = this.arrays[0]!.shape;
-    const lod0Dims: [number, number, number] = [
-      lod0Shape[lod0Shape.length - 1]!,
-      lod0Shape[lod0Shape.length - 2]!,
-      lod0Shape[lod0Shape.length - 3]!,
-    ];
-
-    const levels: LodLevel[] = [];
-    for (let i = 0; i < numScales; i++) {
-      const arr = this.arrays[i]!;
-      const shape = arr.shape;
-      const chunkShape = (arr as any).codecs?.[0]?.configuration?.chunk_shape ?? (arr as any).chunks;
-
-      const actualDimX = shape[shape.length - 1]!;
-      const actualDimY = shape[shape.length - 2]!;
-      const actualDimZ = shape[shape.length - 3]!;
-
-      const virtualDimX = Math.round(lod0Dims[0] / Math.pow(2, i));
-      const virtualDimY = Math.round(lod0Dims[1] / Math.pow(2, i));
-      const virtualDimZ = Math.round(lod0Dims[2] / Math.pow(2, i));
-
-      this.lodParams.push({
-        scaleX: actualDimX / virtualDimX,
-        scaleY: actualDimY / virtualDimY,
-        scaleZ: actualDimZ / virtualDimZ,
-        actualDimX,
-        actualDimY,
-        actualDimZ,
-        csx: chunkShape[chunkShape.length - 1]!,
-        csy: chunkShape[chunkShape.length - 2]!,
-        csz: chunkShape[chunkShape.length - 3]!,
-      });
-
-      const brickGrid: [number, number, number] = [
-        Math.ceil(virtualDimX / LOGICAL_BRICK_SIZE),
-        Math.ceil(virtualDimY / LOGICAL_BRICK_SIZE),
-        Math.ceil(virtualDimZ / LOGICAL_BRICK_SIZE),
-      ];
-
-      levels.push({
-        lod: i,
-        dimensions: [virtualDimX, virtualDimY, virtualDimZ],
-        brickGrid,
-        brickCount: brickGrid[0] * brickGrid[1] * brickGrid[2],
-      });
-    }
-
-    this.metadata = {
-      name: this.dirHandle.name.replace(/\.ome\.zarr|\.zarr/, ''),
-      dimensions: levels[0]!.dimensions,
-      voxelSpacing,
-      brickSize: LOGICAL_BRICK_SIZE,
-      physicalBrickSize: PHYSICAL_BRICK_SIZE,
-      maxLod: numScales - 1,
-      levels,
-      bitDepth,
-    };
+    this.metadata = metadata;
+    this.lodParams = lodParams;
 
     return this.metadata;
-  }
-
-  getMetadata(): VolumeMetadata {
-    if (!this.metadata) throw new Error('Not initialized');
-    return this.metadata;
-  }
-
-  getBrickGrid(lod: number): [number, number, number] {
-    const level = this.metadata?.levels.find(l => l.lod === lod);
-    return level?.brickGrid ?? [0, 0, 0];
   }
 
   async loadBrick(lod: number, bx: number, by: number, bz: number): Promise<BrickData | null> {
@@ -173,13 +66,9 @@ export class LocalZarrDataProvider implements DataProvider {
     try {
       const result = await this.assembleBrick(lod, bx, by, bz);
 
-      const key = `${lod}:${bx}/${by}/${bz}`;
-      this.statsCache.set(key, result.stats);
-
-      const bytes = result.data.byteLength;
-      this.totalBytes += bytes;
-      this.requestCount++;
-      this.recentDownloads.push({ timestamp: performance.now(), bytes });
+      // Cache stats and track bytes
+      this.cacheBrickStats(lod, bx, by, bz, result.stats);
+      this.recordDownload(result.data.byteLength);
 
       return result.data;
     } catch (e) {
@@ -188,27 +77,16 @@ export class LocalZarrDataProvider implements DataProvider {
     }
   }
 
-  async isBrickEmpty(lod: number, bx: number, by: number, bz: number, maxThreshold?: number): Promise<boolean> {
-    const stats = await this.getBrickStats(lod, bx, by, bz);
-    if (!stats) return false;
-    const threshold = maxThreshold ?? 1;
-    return stats.max < threshold;
-  }
-
-  async getBrickStats(lod: number, bx: number, by: number, bz: number): Promise<BrickStats | null> {
-    const key = `${lod}:${bx}/${by}/${bz}`;
-    return this.statsCache.get(key) ?? null;
-  }
-
   private async assembleBrick(lod: number, bx: number, by: number, bz: number): Promise<{ data: BrickData; stats: BrickStats }> {
     const arr = this.arrays[lod]!;
     const params = this.lodParams[lod]!;
     const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz } = params;
-    const physSize = PHYSICAL_BRICK_SIZE;
+    const physSize = this.metadata!.physicalBrickSize;
+    const logicalSize = this.metadata!.brickSize;
 
-    const vStartX = bx * LOGICAL_BRICK_SIZE - 1;
-    const vStartY = by * LOGICAL_BRICK_SIZE - 1;
-    const vStartZ = bz * LOGICAL_BRICK_SIZE - 1;
+    const vStartX = bx * logicalSize - 1;
+    const vStartY = by * logicalSize - 1;
+    const vStartZ = bz * logicalSize - 1;
 
     const aStartX = Math.max(0, Math.floor(Math.max(0, vStartX) * scaleX));
     const aStartY = Math.max(0, Math.floor(Math.max(0, vStartY) * scaleY));
@@ -299,22 +177,8 @@ export class LocalZarrDataProvider implements DataProvider {
     };
   }
 
-  getNetworkStats(): NetworkStats {
-    const now = performance.now();
-    const windowMs = 2000;
-    const cutoff = now - windowMs;
-    this.recentDownloads = this.recentDownloads.filter(d => d.timestamp > cutoff);
-    const recentBytes = this.recentDownloads.reduce((sum, d) => sum + d.bytes, 0);
-
-    return {
-      totalBytesDownloaded: this.totalBytes,
-      recentBytesPerSecond: (recentBytes / windowMs) * 1000,
-      requestCount: this.requestCount,
-    };
-  }
-
   dispose(): void {
-    this.statsCache.clear();
+    this.brickStatsCache.clear();
     this.arrays = [];
   }
 }

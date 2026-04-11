@@ -199,6 +199,22 @@ async function main() {
   // Create renderer with effective bit depth and texture format
   const renderer = new Renderer(device, format, effectiveBitDepth, textureFormat);
 
+  if (effectiveBitDepth === 16) {
+    if (metadata.window) {
+      const { start, end, min, max } = metadata.window;
+      const range = max - min;
+      if (range > 0) {
+        const windowCenter = ((start + end) / 2 - min) / range;
+        const windowWidth = (end - start) / range;
+        renderer.windowCenter = Math.max(0, Math.min(1, windowCenter));
+        renderer.windowWidth = Math.max(0.01, Math.min(1, windowWidth));
+      }
+    } else {
+      renderer.windowCenter = 0.5;
+      renderer.windowWidth = 1.0;
+    }
+  }
+
   // Create transfer function and connect to renderer
   const transferFunction = new TransferFunction(device);
   renderer.setTransferFunction(transferFunction);
@@ -240,12 +256,15 @@ async function main() {
     renderer.volumeRenderMode = urlParams.mode;
     renderer.resetAccumulation();
   }
-  if (urlParams.wc !== undefined) {
-    renderer.windowCenter = urlParams.wc;
-    renderer.resetAccumulation();
-  }
-  if (urlParams.ww !== undefined) {
-    renderer.windowWidth = urlParams.ww;
+  const hasWindowParams = urlParams.wc !== undefined || urlParams.ww !== undefined;
+  // Don't auto-level if url requests a specific window
+  if (hasWindowParams) {
+    if (urlParams.wc !== undefined) {
+      renderer.windowCenter = urlParams.wc;
+    }
+    if (urlParams.ww !== undefined) {
+      renderer.windowWidth = urlParams.ww;
+    }
     renderer.resetAccumulation();
   }
   if (urlParams.iso !== undefined) {
@@ -284,6 +303,21 @@ async function main() {
   const shareBtn = document.getElementById('share-btn');
   if (shareBtn) {
     shareBtn.addEventListener('click', () => {
+      const toast = document.getElementById('toast');
+
+      // Check if this is a local dataset - can't be shared via URL
+      if (isLocalZarr) {
+        if (toast) {
+          toast.textContent = 'Local datasets cannot be shared via link';
+          toast.classList.add('visible');
+          setTimeout(() => {
+            toast.classList.remove('visible');
+            toast.textContent = 'Current view copied to clipboard'; 
+          }, 2500);
+        }
+        return;
+      }
+
       const p = new URLSearchParams();
       if (volumeSource !== DEFAULT_VOLUME_SOURCE) p.set('dataset', volumeSource);
       p.set('mode', renderer.volumeRenderMode);
@@ -309,7 +343,6 @@ async function main() {
       navigator.clipboard.writeText(url).then(() => {
         shareBtn.classList.add('copied');
         setTimeout(() => shareBtn.classList.remove('copied'), 1500);
-        const toast = document.getElementById('toast');
         if (toast) {
           toast.classList.add('visible');
           setTimeout(() => toast.classList.remove('visible'), 1500);
@@ -358,7 +391,7 @@ function setupLocalLoadButton() {
     try {
       await promptForZarrDirectory();
       sessionStorage.setItem('useLocalZarr', 'true');
-      window.location.reload();
+      window.location.href = window.location.pathname;
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Failed to load local dataset';
       if (!message.includes('cancelled') && !message.includes('aborted')) {

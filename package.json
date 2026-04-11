@@ -1,6 +1,6 @@
 {
   "name": "kiln",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A WebGPU-native out-of-core renderer for large virtualized volumetric data",
   "author": {
     "name": "Martin Panknin",

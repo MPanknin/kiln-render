@@ -140,27 +140,6 @@ struct IndirectDispatch {
 
 ---
 
-### Bindless Textures (Future WebGPU Feature)
-
-**Current approach**: Single 660³ atlas texture with indirection table for virtual addressing.
-
-**True bindless approach**: Each brick as a separate texture, indexed dynamically in shader.
-
-**WebGPU status**: Not yet supported. WebGPU lacks:
-- `VK_EXT_descriptor_indexing` equivalent
-- Dynamic non-uniform texture array indexing
-- Unbounded descriptor arrays
-
-**Why the atlas is still correct for now**:
-- Hardware trilinear filtering works across the atlas
-- Single bind group (no rebinding overhead)
-- Indirection table already provides "virtual bindless" semantics
-- Cache-coherent memory layout
-
-**When to revisit**: If WebGPU adds `texture_2d_array` with dynamic indexing or descriptor indexing extensions, individual brick textures could reduce atlas management complexity.
-
----
-
 ### Subgroup Operations
 
 **Current approach**: Each thread operates independently in compute shaders.
@@ -241,31 +220,3 @@ Pass 2: Raymarch only within each pixel's assigned bricks
 **Tradeoffs**:
 - More complex pipeline
 - May not benefit dense volumes where most rays hit most bricks
-
----
-
-### Optimization Roadmap
-
-| Optimization | Complexity | Impact | WebGPU Status |
-|--------------|------------|--------|---------------|
-| GPU frustum culling | Medium | High for large brick counts | Ready |
-| Indirect dispatch | Low | Medium (enables GPU-driven) | Ready |
-| Bindless textures | N/A | Blocked | Not in WebGPU spec |
-| Subgroup operations | Medium | Medium (reduced divergence) | Feature flag |
-| Timestamp queries | Low | Profiling only | Feature flag |
-| Multi-draw indirect | High | Situational | Ready |
-
-**Recommended priority**:
-1. GPU frustum culling + indirect dispatch (biggest win, medium effort)
-2. Timestamp queries (low effort, valuable for optimization)
-3. Subgroup operations (if targeting modern hardware)
-
----
-
-## References
-
-- Virtual Texturing / Megatextures (id Tech 5)
-- Sparse Voxel Octrees
-- Out-of-core volume rendering (VTK, ParaView)
-- NVIDIA IndeX brick-based streaming
-- OpenVDS (OSDU)

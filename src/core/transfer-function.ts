@@ -17,6 +17,8 @@ export class TransferFunction {
   private opacityPoints: OpacityPoint[];
   preset: TFPreset = 'grayscale';
 
+  private histogram: Uint32Array | null = null;
+
   constructor(device: GPUDevice) {
     this.device = device;
     this.colorData = new Uint8Array(this.size * 3);
@@ -215,8 +217,12 @@ export class TransferFunction {
     );
   }
 
+  setHistogram(histogram: Uint32Array): void {
+    this.histogram = histogram;
+  }
+
   // Generate a canvas preview of the TF (for UI display)
-  renderPreview(canvas: HTMLCanvasElement): void {
+  renderPreview(canvas: HTMLCanvasElement, windowCenter?: number, windowWidth?: number): void {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -227,7 +233,7 @@ export class TransferFunction {
     ctx.fillStyle = '#1a1a1a';
     ctx.fillRect(0, 0, w, h);
 
-    // Draw checkerboard pattern (for transparency visualization)
+    // Draw checkerboard pattern
     const checkSize = 8;
     ctx.fillStyle = '#2a2a2a';
     for (let y = 0; y < h; y += checkSize) {
@@ -249,6 +255,11 @@ export class TransferFunction {
 
       ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${a})`;
       ctx.fillRect(x, 0, 1, h);
+    }
+
+    // Draw histogram (with window transform applied internally)
+    if (this.histogram) {
+      this.renderHistogram(ctx, w, h, windowCenter, windowWidth);
     }
 
     // Draw opacity curve
@@ -279,6 +290,52 @@ export class TransferFunction {
       ctx.lineWidth = 1;
       ctx.stroke();
     }
+  }
+
+  private renderHistogram(ctx: CanvasRenderingContext2D, w: number, h: number, windowCenter?: number, windowWidth?: number): void {
+    if (!this.histogram) return;
+
+    // Calculate zoom/pan for windowed view
+    let scale = 1;
+    let offsetX = 0;
+
+    if (windowCenter !== undefined && windowWidth !== undefined) {
+      const halfWidth = windowWidth * 0.5;
+      const windowMin = windowCenter - halfWidth;
+      scale = 1.0 / windowWidth;
+      offsetX = -windowMin * scale * w;
+    }
+
+    // Find max for normalization (use log scale for better visibility)
+    let maxCount = 0;
+    for (let i = 0; i < this.histogram.length; i++) {
+      maxCount = Math.max(maxCount, this.histogram[i]!);
+    }
+    if (maxCount === 0) return;
+
+    // Save state and apply zoom/pan transform for histogram only
+    ctx.save();
+    ctx.translate(offsetX, 0);
+    ctx.scale(scale, 1);
+
+    // Draw histogram bars
+    const barWidth = w / this.histogram.length;
+    for (let i = 0; i < this.histogram.length; i++) {
+      const count = this.histogram[i]!;
+      if (count === 0) continue;
+
+      const x = (i / this.histogram.length) * w;
+
+      // Log scale for better visibility
+      const normalizedHeight = Math.log(1 + count) / Math.log(1 + maxCount);
+      const barHeight = normalizedHeight * h * 0.9;
+
+      // Darker bars for data (blends with TF background)
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      ctx.fillRect(x, h - barHeight, Math.max(1, barWidth), barHeight);
+    }
+
+    ctx.restore();
   }
 }
 

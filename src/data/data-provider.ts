@@ -60,6 +60,13 @@ export interface VolumeMetadata {
   levels: LodLevel[];
   /** Bit depth of volume data */
   bitDepth: BitDepth;
+  /** Window/level metadata (optional, from OMERO or similar) */
+  window?: {
+    start: number;
+    end: number;
+    min: number;
+    max: number;
+  };
 }
 
 /**

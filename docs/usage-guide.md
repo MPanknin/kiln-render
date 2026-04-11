@@ -23,20 +23,28 @@ https://mpanknin.github.io/kiln-render/?dataset=YOUR_DATASET_URL
 
 OME-Zarr is easiest for external users - no preprocessing required, just point to a URL.
 
-> ⚠️ **Experimental feature:** Start with small datasets (< 500 MB) first, then scale up. Large datasets (> 4 GB) may feel sluggish dependong on network bandwidth.
+> ⚠️ **Experimental feature:** Start with small datasets (< 500 MB) first, then scale up. Large datasets (> 4 GB) may feel sluggish depending on network bandwidth.
 
-## Troubleshooting: Nothing Visible
+**Supported formats:**
+- OME-NGFF v0.5 only (v0.4 not supported)
+- Single-channel datasets (multi-channel/RGB not supported)
+- `uint8` and `uint16` data types only (no signed integers or floats)
 
-**If you see a black screen after loading, adjust Window/Level:**
+See the [Data Guide](data-guide.md) for full format requirements.
 
-1. Open **Controls** panel (gear icon, top-left)
-2. Find **Window/Level** section
-3. Try these settings:
-   - **Window Center**: `0.5`, **Window Width**: `1.0` (full range)
-   - Or try **Center**: `0.2`, **Width**: `0.3` (narrow, for low-density data)
-   - Switch to **MIP** mode to see any visible data
+### Local Datasets (File System Access API)
 
-**Why?** Different datasets have different value ranges. Your data might occupy only a small portion (e.g., 0.1-0.3) of the normalized 0-1 range. Window/Level adjusts contrast to make features visible.
+Load local Zarr datasets directly from your filesystem using the "Load Local" button.
+
+> **Browser requirement:** Local dataset loading requires the File System Access API, which is currently **only supported in Chrome/Edge**. Safari and Firefox do not support this feature.
+
+**How it works:**
+1. Click "Load Local" button
+2. Select a `.zarr` or `.ome.zarr` directory
+3. Grant read permission when prompted
+4. Dataset loads with auto-leveling based on OMERO metadata (if available)
+
+**Note:** When you load a local dataset, all URL parameters are cleared to ensure the new dataset loads with fresh defaults.
 
 ---
 
@@ -74,3 +82,43 @@ Use the URL to:
 - Share specific views with colleagues
 - Bookmark configurations
 - Embed in documentation
+
+---
+
+## UI Controls
+
+| Control | Description |
+|---------|-------------|
+| **Mode** | DVR, MIP, ISO, or LOD visualization |
+| **Up Axis** | Camera orientation (X, Y, Z, -X, -Y, -Z) |
+| **Indirection** | Toggle virtual texturing on/off |
+| **Wireframe** | Show volume bounding box |
+| **Transfer Function** | Color/opacity presets and interactive curve editing |
+| **Window/Level** | Contrast adjustment for 16-bit data (center and width) |
+| **Gradient Opacity** | Modulate opacity based on gradient magnitude |
+| **Ambient Occlusion** | Local AO approximation (6-sample) |
+| **Clipping Planes** | Min/Max clipping bounds per axis |
+
+---
+
+## FAQ
+
+### Which browsers are supported?
+
+Kiln requires WebGPU. Chrome/Edge 113+ and Safari 26+ support it out of the box. Firefox ships WebGPU by default in recent versions (141+), though support may be partial on some platforms — check `dom.webgpu.enabled` if needed. Make sure hardware acceleration is enabled in your browser settings.
+
+### How much VRAM does Kiln use?
+
+The atlas is a fixed-size 3D texture. With the default 1,000 brick slots it uses ~274 MiB for 8-bit data and ~548 MiB for 16-bit data. You can adjust the atlas size in `config.ts` for different quality/memory tradeoffs, but usage always stays constant regardless of dataset size.
+
+### Can I load my own data?
+
+Yes! The easiest way is to use OME-Zarr datasets directly via URL parameters. See the "Loading Custom Datasets" section above for instructions. For advanced preprocessing, see the [Data Guide](data-guide.md).
+
+### What are the known rendering issues?
+
+Brick boundary seams are still visible in some cases, especially in isosurface (ISO) mode where normal estimation samples across brick edges. LOD transitions can also produce brief visual discontinuities while bricks stream in. These are known issues and will be addressed in the future.
+
+### Can I use Kiln in my own application?
+
+Kiln is Apache 2.0 licensed, so you are free to use, modify, and integrate it. We plan to provide an installable npm package in the future, but for now Kiln is a standalone viewer. There is no stable public API yet and the internals may change, so if you build on top of it, pinning to a specific commit is recommended.

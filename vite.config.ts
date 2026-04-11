@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  base: '/kiln-render/',
+  base: process.env.VITE_BASE || '/kiln-render/',
   server: {
     port: 3000,
     open: true,

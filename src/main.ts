@@ -13,12 +13,18 @@ import { Camera, UpAxis } from './core/camera.js';
 import { setDatasetSize } from './core/config.js';
 import { ShardedDataProvider } from './data/sharded-provider.js';
 import { ZarrDataProvider } from './data/zarr-provider.js';
+import { LocalZarrDataProvider } from './data/local-zarr-provider.js';
 import type { DataProvider } from './data/data-provider.js';
 import { TransferFunction, TFPreset } from './core/transfer-function.js';
 import { VolumeUI } from './ui/volume-ui.js';
 import { StreamingManager } from './streaming/streaming-manager.js';
 import { detectBest16BitFormat } from './core/volume.js';
 import { getDecompressionPool } from './data/decompression-pool.js';
+import {
+  promptForZarrDirectory,
+  getStoredHandle,
+  requestPermission
+} from './data/local-loader.js';
 
 // Default volume source (can be overridden via ?dataset= URL parameter)
 const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/chameleon-16bit';
@@ -128,11 +134,29 @@ async function main() {
   const urlParams = parseURLParams();
   const volumeSource = urlParams.dataset;
 
-  // Create data provider (but don't initialize yet)
-  const isZarr = volumeSource.includes('.zarr');
-  const dataProvider: DataProvider = isZarr
-    ? new ZarrDataProvider(volumeSource)
-    : new ShardedDataProvider(volumeSource);
+  // Check for local zarr handle (with permission check)
+  let dataProvider: DataProvider;
+  let isLocalZarr = false;
+
+  const params = new URLSearchParams(window.location.search);
+  const useLocal = params.get('local') === 'true';
+  const storedHandle = await getStoredHandle();
+
+  if (useLocal && storedHandle) {
+    const hasPermission = await requestPermission(storedHandle);
+    if (hasPermission) {
+      dataProvider = new LocalZarrDataProvider(storedHandle);
+      isLocalZarr = true;
+    } else {
+      // No permission, fall back to HTTP
+      const isZarr = volumeSource.includes('.zarr');
+      dataProvider = isZarr ? new ZarrDataProvider(volumeSource) : new ShardedDataProvider(volumeSource);
+    }
+  } else {
+    // Create HTTP data provider
+    const isZarr = volumeSource.includes('.zarr');
+    dataProvider = isZarr ? new ZarrDataProvider(volumeSource) : new ShardedDataProvider(volumeSource);
+  }
 
   // Store for cleanup on page unload
   globalDataProvider = dataProvider;
@@ -158,10 +182,10 @@ async function main() {
     textureFormat = 'r8unorm';
   }
 
-  // Configure workers to output the correct format
-  if (textureFormat !== 'r16unorm' || sourceBitDepth !== 16) {
-    // Need format conversion: r8unorm (8-bit) or r16float (float16)
-    if (isZarr) {
+  // Configure workers to output the correct format (only for HTTP providers)
+  if (!isLocalZarr && (textureFormat !== 'r16unorm' || sourceBitDepth !== 16)) {
+    const isHttpZarr = volumeSource.includes('.zarr');
+    if (isHttpZarr) {
       await (dataProvider as ZarrDataProvider).setTargetFormat(textureFormat as 'r8unorm' | 'r16float');
     } else {
       const decompressionPool = getDecompressionPool();
@@ -175,6 +199,22 @@ async function main() {
 
   // Create renderer with effective bit depth and texture format
   const renderer = new Renderer(device, format, effectiveBitDepth, textureFormat);
+
+  if (effectiveBitDepth === 16) {
+    if (metadata.window) {
+      const { start, end, min, max } = metadata.window;
+      const range = max - min;
+      if (range > 0) {
+        const windowCenter = ((start + end) / 2 - min) / range;
+        const windowWidth = (end - start) / range;
+        renderer.windowCenter = Math.max(0, Math.min(1, windowCenter));
+        renderer.windowWidth = Math.max(0.01, Math.min(1, windowWidth));
+      }
+    } else {
+      renderer.windowCenter = 0.5;
+      renderer.windowWidth = 1.0;
+    }
+  }
 
   // Create transfer function and connect to renderer
   const transferFunction = new TransferFunction(device);
@@ -217,12 +257,15 @@ async function main() {
     renderer.volumeRenderMode = urlParams.mode;
     renderer.resetAccumulation();
   }
-  if (urlParams.wc !== undefined) {
-    renderer.windowCenter = urlParams.wc;
-    renderer.resetAccumulation();
-  }
-  if (urlParams.ww !== undefined) {
-    renderer.windowWidth = urlParams.ww;
+  const hasWindowParams = urlParams.wc !== undefined || urlParams.ww !== undefined;
+  // Don't auto-level if url requests a specific window
+  if (hasWindowParams) {
+    if (urlParams.wc !== undefined) {
+      renderer.windowCenter = urlParams.wc;
+    }
+    if (urlParams.ww !== undefined) {
+      renderer.windowWidth = urlParams.ww;
+    }
     renderer.resetAccumulation();
   }
   if (urlParams.iso !== undefined) {
@@ -261,6 +304,21 @@ async function main() {
   const shareBtn = document.getElementById('share-btn');
   if (shareBtn) {
     shareBtn.addEventListener('click', () => {
+      const toast = document.getElementById('toast');
+
+      // Check if this is a local dataset - can't be shared via URL
+      if (isLocalZarr) {
+        if (toast) {
+          toast.textContent = 'Local datasets cannot be shared via link';
+          toast.classList.add('visible');
+          setTimeout(() => {
+            toast.classList.remove('visible');
+            toast.textContent = 'Current view copied to clipboard'; 
+          }, 2500);
+        }
+        return;
+      }
+
       const p = new URLSearchParams();
       if (volumeSource !== DEFAULT_VOLUME_SOURCE) p.set('dataset', volumeSource);
       p.set('mode', renderer.volumeRenderMode);
@@ -286,7 +344,6 @@ async function main() {
       navigator.clipboard.writeText(url).then(() => {
         shareBtn.classList.add('copied');
         setTimeout(() => shareBtn.classList.remove('copied'), 1500);
-        const toast = document.getElementById('toast');
         if (toast) {
           toast.classList.add('visible');
           setTimeout(() => toast.classList.remove('visible'), 1500);
@@ -317,6 +374,84 @@ async function main() {
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+
+  // Setup dataset dialog
+  setupDatasetDialog();
+}
+
+function setupDatasetDialog() {
+  const dialog = document.getElementById('dataset-dialog') as HTMLDialogElement;
+  const loadDatasetBtn = document.getElementById('load-dataset-btn');
+  const localBtn = document.getElementById('local-zarr-btn');
+  const remoteInput = document.getElementById('remote-url-input') as HTMLInputElement;
+  const remoteLoadBtn = document.getElementById('remote-load-btn');
+  const cancelBtn = document.getElementById('dialog-cancel-btn');
+
+  if (!dialog || !loadDatasetBtn) return;
+
+  // Open dialog when clicking load dataset button
+  loadDatasetBtn.addEventListener('click', () => {
+    dialog.showModal();
+  });
+
+  // Close dialog on cancel
+  cancelBtn?.addEventListener('click', () => {
+    dialog.close();
+  });
+
+  // Close dialog when clicking backdrop
+  dialog.addEventListener('click', (e) => {
+    const rect = dialog.getBoundingClientRect();
+    if (
+      e.clientX < rect.left ||
+      e.clientX > rect.right ||
+      e.clientY < rect.top ||
+      e.clientY > rect.bottom
+    ) {
+      dialog.close();
+    }
+  });
+
+  // Local directory picker
+  if (localBtn) {
+    // Check if File System Access API is supported
+    const isSupported = 'showDirectoryPicker' in window;
+    if (!isSupported) {
+      (localBtn as HTMLButtonElement).disabled = true;
+      localBtn.textContent = 'Not supported in this browser';
+    } else {
+      localBtn.addEventListener('click', async () => {
+        try {
+          await promptForZarrDirectory();
+          // Reload with local=true param to trigger local zarr loading
+          window.location.href = window.location.pathname + '?local=true';
+        } catch (e) {
+          const message = e instanceof Error ? e.message : 'Failed to load local dataset';
+          if (!message.includes('cancelled') && !message.includes('aborted')) {
+            showError(message);
+          }
+        }
+      });
+    }
+  }
+
+  // Remote URL loading
+  if (remoteInput && remoteLoadBtn) {
+    const loadRemote = () => {
+      const url = remoteInput.value.trim();
+      if (!url) return;
+
+      // Navigate to the new dataset URL
+      window.location.href = window.location.pathname + '?dataset=' + encodeURIComponent(url);
+    };
+
+    remoteLoadBtn.addEventListener('click', loadRemote);
+    remoteInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        loadRemote();
+      }
+    });
+  }
 }
 
 function showError(message: string) {

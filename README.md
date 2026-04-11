@@ -1,8 +1,12 @@
 # Kiln
 
-A WebGPU-native out-of-core volume rendering system for large virtualized volumetric datasets. 
+A WebGPU-native out-of-core volume rendering system for large virtualized volumetric datasets.
 
 Kiln streams multi-gigabyte volumes over HTTP, rendering them at interactive framerates using a fixed-size VRAM page cache and virtual texture indirection.
+
+**Documentation:** [Usage Guide](docs/usage-guide.md) · [Architecture](docs/architecture.md) · [Rendering Pipeline](docs/rendering.md) · [Data Guide](docs/data-guide.md) · [WebGPU Notes](docs/webgpu.md) · [References](docs/references.md)
+
+---
 
 ## Chameleon CT Scan
 #### 2160.0 MB - 1024 × 1024 × 1080 @ 16-bit
@@ -16,25 +20,14 @@ Kiln streams multi-gigabyte volumes over HTTP, rendering them at interactive fra
 
 <img width="1722" height="905" alt="553008573-17268259-5977-4a9b-b4c0-a1756a024857" src="https://github.com/user-attachments/assets/02cffc17-bf44-422b-8752-9bf4edc96d89" />
 
-## Overview
-
-Kiln implements **virtual texturing for volumetric data** in the browser using WebGPU:
-
-- **Fixed memory footprint** - Uses constant and minimal VRAM regardless of dataset size
-- **Stream on demand** - Fetches only the bricks visible in the current view
-- **Multi-resolution** - Coarse LODs far away, fine LODs up close via screen-space error
-- **Network-native** - Streams from S3, CDN, or any HTTP server with Range request support
-
 ## Features
 
-- **Out-of-core streaming** - SSE-based LOD selection, LRU eviction, 512-slot brick cache
-- **Input formats** - Kiln sharded binary (with preprocessing script) and OME-Zarr (experimental)
-- **8-bit and 16-bit volumes** - Native `r16unorm` with windowing/leveling controls
-- **Compute shader raycasting** - Brick-aware raymarching with early ray termination
-- **Gzip compression** - Parallel Web Worker decompression pipeline
-- **Empty brick skipping** - Pre-indexed per-brick statistics for culling
-- **Render modes** - DVR, MIP, Isosurface, LOD debug visualization
-- **HTTP Range requests** - Byte-range fetches from S3, CDN, or any static file server
+- **Out-of-core streaming** - Fixed VRAM footprint, SSE-based LOD selection, LRU brick cache
+- **OME-Zarr & Kiln binary** - Stream from S3, CDN, or load local files (OME-Zarr v0.5, single-channel, uint8/uint16)
+- **16-bit support** - Native r16unorm textures with window/level controls
+- **Compute shader raymarching** - Brick-aware DVR, MIP, and isosurface rendering
+- **Transfer functions** - Interactive curve editor with color/opacity presets
+- **Worker-based pipeline** - Parallel decompression and brick assembly off the main thread
 
 ## Quick Start
 
@@ -47,88 +40,35 @@ bun run dev
 
 # Build for production
 bun run build
-
-# Run tests
-bun run test
 ```
 
-The demo loads a sample dataset from S3.
+The demo loads a sample dataset from S3. To load custom datasets, see the [Usage Guide](docs/usage-guide.md).
 
-**→ Using the deployed version?** See the [Usage Guide](docs/usage-guide.md) to load custom datasets via URL parameters.
+## Browser Requirements
 
-## Documentation
+Kiln requires **WebGPU** support:
+- Chrome/Edge 113+
+- Safari 26+
+- Firefox 141+
 
-- **[Usage Guide](docs/usage-guide.md)** - Loading custom datasets, URL parameters, share button, and troubleshooting
-- **[Architecture](docs/architecture.md)** - Virtual texturing, streaming manager, and design decisions
-- **[Rendering Pipeline](docs/rendering.md)** - Raymarching, compositing modes, resolution scaling, and temporal accumulation
-- **[Data Guide](docs/data-guide.md)** - Supported formats (OME-Zarr, Kiln sharded binary) and data preparation
-- **[WebGPU Notes](docs/webgpu.md)** - WebGPU vs WebGL comparison and future GPU optimizations
+Make sure hardware acceleration is enabled in your browser settings.
 
-## UI Controls
+## Sample Datasets
 
-| Control | Description |
-|---------|-------------|
-| **Mode** | DVR, MIP, ISO, or LOD visualization |
-| **Up Axis** | Camera orientation (X, Y, Z, -X, -Y, -Z) |
-| **Indirection** | Toggle virtual texturing on/off |
-| **Wireframe** | Show volume bounding box |
-| **Transfer Function** | Color/opacity presets and interactive curve editing |
-| **Window/Level** | Contrast adjustment for 16-bit data (center and width) |
-
-## Why WebGPU?
-
-Kiln requires WebGPU (not WebGL) for native `r16unorm` textures, compute shader raymarching, and asynchronous texture uploads during streaming. See the [WebGPU Notes](docs/webgpu.md) for a detailed comparison.
-
-## FAQ
-
-**Which browsers are supported?**
-Kiln requires WebGPU. Chrome/Edge 113+ and Safari 26+ support it out of the box. Firefox ships WebGPU by default in recent versions (141+), though support may be partial on some platforms — check `dom.webgpu.enabled` if needed. Make sure hardware acceleration is enabled in your browser settings.
-
-**How much VRAM does Kiln use?**
-The atlas is a fixed-size 3D texture. With the default 1,000 brick slots it uses ~274 MiB for 8-bit data and ~548 MiB for 16-bit data. You can adjust the atlas size in `config.ts` for different quality/memory tradeoffs, but usage always stays constant regardless of dataset size.
-
-**Can I load my own data?**
-Yes! The easiest way is to use OME-Zarr datasets directly via URL parameters. See the [Usage Guide](docs/usage-guide.md) for instructions on loading custom datasets and troubleshooting visibility issues. For advanced preprocessing, see the [Data Guide](docs/data-guide.md).
-
-**What are the known rendering issues?**
-Brick boundary seams are still visible in some cases, especially in isosurface (ISO) mode where normal estimation samples across brick edges. LOD transitions can also produce brief visual discontinuities while bricks stream in. These are known issues and will be addressed in the future.
-
-**Can I use Kiln in my own application?**
-Kiln is MIT licensed, so you are free to use, modify, and integrate it. We plan to provide an installable npm package in the future, but for now Kiln is a standalone viewer. There is no stable public API yet and the internals may change, so if you build on top of it, pinning to a specific commit is recommended.
-
-## Datasets
-
-Sample datasets from the [Open SciVis Datasets](https://github.com/sci-visus/open-scivis-datasets) collection:
-
+From the [Open SciVis Datasets](https://github.com/sci-visus/open-scivis-datasets) collection:
 - **Chameleon** - CT scan of *Chamaeleo calyptratus*. Digital Morphology, 2003.
-- **Beechnut** - MicroCT scan of a dried beechnut. Computer-Assisted Paleoanthropology group and Visualization and MultiMedia Lab, University of Zurich.
+- **Beechnut** - MicroCT scan of a dried beechnut. Computer-Assisted Paleoanthropology, University of Zurich.
 - **Stag Beetle** - Industrial CT scan. Meister Eduard Gröller, Georg Glaeser, Johannes Kastner, 2005.
-
-## Background & References
-
-Kiln is an implementation-focused project that builds on well-established ideas in volume rendering, sparse streaming, and real-time graphics. It does not introduce new rendering algorithms, but adapts proven techniques to a modern WebGPU context. The following works were particularly influential during development:
-
-- **Barrett, S. (2008).** *Sparse Virtual Textures*. Game Developers Conference (GDC) 2008. [http://silverspaceship.com/src/svt/](http://silverspaceship.com/src/svt/)
-- **CesiumGS. (2019).** *3D Tiles: Specification for Streaming Massive Heterogeneous 3D Geospatial Datasets*. Open Geospatial Consortium (OGC) Community Standard. [https://github.com/CesiumGS/3d-tiles](https://github.com/CesiumGS/3d-tiles)
-- **Engel, K., Hadwiger, M., Kniss, J., Rezk-Salama, C., & Weiskopf, D. (2006).** *Real-Time Volume Graphics*. A K Peters/CRC Press. [https://doi.org/10.1201/b10629](https://doi.org/10.1201/b10629)
-- **Karis, B. (2014).** *High Quality Temporal Supersampling*. ACM SIGGRAPH 2014, Advances in Real-Time Rendering in Games. [https://de45xmedrsdbp.cloudfront.net/Resources/files/TemporalAA_small-59732822.pdf](https://de45xmedrsdbp.cloudfront.net/Resources/files/TemporalAA_small-59732822.pdf)
-- **Levoy, M. (1990).** *Efficient ray tracing of volume data*. ACM Transactions on Graphics, 9(3), 245–261. [https://doi.org/10.1145/78964.78965](https://doi.org/10.1145/78964.78965)
-- **Lux, C., & Fröhlich, B. (2009).** *GPU-Based Ray Casting of Multiple Multi-resolution Volume Datasets. In: Bebis, G., et al. Advances in Visual Computing. ISVC 2009. [https://link.springer.com/chapter/10.1007/978-3-642-10520-3_10](https://link.springer.com/chapter/10.1007/978-3-642-10520-3_10)
-- **Maitin-Shepard, J., et al. (2021).** *Neuroglancer: Web-based volumetric data visualization*. [https://github.com/google/neuroglancer](https://github.com/google/neuroglancer)
-- **Moore, J., et al. (2023).** *OME-Zarr: a cloud-optimized bioimaging file format with international community support*. Histochemistry and Cell Biology, 160(3), 223–251. [https://doi.org/10.1007/s00418-023-02209-1](https://doi.org/10.1007/s00418-023-02209-1)
-- **Schütz, M. (2016).** *Potree: Rendering Large Point Clouds in Web Browsers* [Master's thesis, Technische Universität Wien]. [https://www.cg.tuwien.ac.at/research/publications/2016/SCHUETZ-2016-POT/](https://www.cg.tuwien.ac.at/research/publications/2016/SCHUETZ-2016-POT/)
-- **W3C GPU for the Web Working Group. (2026).** *WebGPU*. W3C Candidate Recommendation Draft. [https://gpuweb.github.io/gpuweb/](https://gpuweb.github.io/gpuweb/)
 
 ## License
 
-MIT
+Apache 2.0
 
-## Misc
+---
 
-> [!NOTE]
-> Kiln is a research-grade prototype. Some rendering artifacts and incomplete features are expected.
-> 
+## Note
+
+>
 > [Read the full write-up on dev.to](https://dev.to/mpanknin/kiln-webgpu-native-out-of-core-volume-rendering-for-multi-gb-datasets-2alb)
-> 
-> Some of the concepts in Kiln build upon my earlier work on volume rendering: [volume-occlusion-editor](https://github.com/MPanknin/volume-occlusion-editor).
-
+>
+> [Partly Kiln builds upon my earlier work on volume rendering](https://github.com/MPanknin/volume-occlusion-editor)

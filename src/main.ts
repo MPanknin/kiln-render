@@ -21,7 +21,6 @@ import { StreamingManager } from './streaming/streaming-manager.js';
 import { detectBest16BitFormat } from './core/volume.js';
 import { getDecompressionPool } from './data/decompression-pool.js';
 import {
-  isFileSystemAccessSupported,
   promptForZarrDirectory,
   getStoredHandle,
   requestPermission
@@ -139,13 +138,15 @@ async function main() {
   let dataProvider: DataProvider;
   let isLocalZarr = false;
 
+  const params = new URLSearchParams(window.location.search);
+  const useLocal = params.get('local') === 'true';
   const storedHandle = await getStoredHandle();
-  if (storedHandle && sessionStorage.getItem('useLocalZarr') === 'true') {
+
+  if (useLocal && storedHandle) {
     const hasPermission = await requestPermission(storedHandle);
     if (hasPermission) {
       dataProvider = new LocalZarrDataProvider(storedHandle);
       isLocalZarr = true;
-      sessionStorage.removeItem('useLocalZarr');
     } else {
       // No permission, fall back to HTTP
       const isZarr = volumeSource.includes('.zarr');
@@ -374,31 +375,83 @@ async function main() {
   }
   requestAnimationFrame(frame);
 
-  // Setup local zarr button
-  setupLocalLoadButton();
+  // Setup dataset dialog
+  setupDatasetDialog();
 }
 
-function setupLocalLoadButton() {
-  const btn = document.getElementById('local-zarr-btn');
-  if (!btn) return;
+function setupDatasetDialog() {
+  const dialog = document.getElementById('dataset-dialog') as HTMLDialogElement;
+  const loadDatasetBtn = document.getElementById('load-dataset-btn');
+  const localBtn = document.getElementById('local-zarr-btn');
+  const remoteInput = document.getElementById('remote-url-input') as HTMLInputElement;
+  const remoteLoadBtn = document.getElementById('remote-load-btn');
+  const cancelBtn = document.getElementById('dialog-cancel-btn');
 
-  if (!isFileSystemAccessSupported()) {
-    btn.style.display = 'none';
-    return;
-  }
+  if (!dialog || !loadDatasetBtn) return;
 
-  btn.addEventListener('click', async () => {
-    try {
-      await promptForZarrDirectory();
-      sessionStorage.setItem('useLocalZarr', 'true');
-      window.location.href = window.location.pathname;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : 'Failed to load local dataset';
-      if (!message.includes('cancelled') && !message.includes('aborted')) {
-        showError(message);
-      }
+  // Open dialog when clicking load dataset button
+  loadDatasetBtn.addEventListener('click', () => {
+    dialog.showModal();
+  });
+
+  // Close dialog on cancel
+  cancelBtn?.addEventListener('click', () => {
+    dialog.close();
+  });
+
+  // Close dialog when clicking backdrop
+  dialog.addEventListener('click', (e) => {
+    const rect = dialog.getBoundingClientRect();
+    if (
+      e.clientX < rect.left ||
+      e.clientX > rect.right ||
+      e.clientY < rect.top ||
+      e.clientY > rect.bottom
+    ) {
+      dialog.close();
     }
   });
+
+  // Local directory picker
+  if (localBtn) {
+    // Check if File System Access API is supported
+    const isSupported = 'showDirectoryPicker' in window;
+    if (!isSupported) {
+      (localBtn as HTMLButtonElement).disabled = true;
+      localBtn.textContent = 'Not supported in this browser';
+    } else {
+      localBtn.addEventListener('click', async () => {
+        try {
+          await promptForZarrDirectory();
+          // Reload with local=true param to trigger local zarr loading
+          window.location.href = window.location.pathname + '?local=true';
+        } catch (e) {
+          const message = e instanceof Error ? e.message : 'Failed to load local dataset';
+          if (!message.includes('cancelled') && !message.includes('aborted')) {
+            showError(message);
+          }
+        }
+      });
+    }
+  }
+
+  // Remote URL loading
+  if (remoteInput && remoteLoadBtn) {
+    const loadRemote = () => {
+      const url = remoteInput.value.trim();
+      if (!url) return;
+
+      // Navigate to the new dataset URL
+      window.location.href = window.location.pathname + '?dataset=' + encodeURIComponent(url);
+    };
+
+    remoteLoadBtn.addEventListener('click', loadRemote);
+    remoteInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        loadRemote();
+      }
+    });
+  }
 }
 
 function showError(message: string) {

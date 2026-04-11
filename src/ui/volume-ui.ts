@@ -116,7 +116,7 @@ export class VolumeUI {
 
     // Create controls pane in top-left corner
     const controlsContainer = document.createElement('div');
-    controlsContainer.style.cssText = 'position: fixed; left: 8px; top: 8px; z-index: 1000;';
+    controlsContainer.style.cssText = 'position: fixed; left: 8px; top: 50px; z-index: 1000;';
     document.body.appendChild(controlsContainer);
 
     this.pane = new Pane({

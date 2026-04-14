@@ -13,11 +13,14 @@ export interface VolumeCanvas {
 }
 
 /**
- * Detect best supported texture format for 16-bit data
- * Tries formats in order of preference: r16unorm → r16float → r8unorm (fallback)
+ * Detect best supported texture format for 16-bit data.
+ * Tries r16float first (filterable, works on Chrome/Firefox/Safari),
+ * falls back to r8unorm. r16unorm is skipped for now — Chrome 147+ enforces
+ * its UnfilterableFloat sample type which breaks the current shader setup.
+ * TODO: proper r16unorm support via runtime filterability probe.
  */
 export function detectBest16BitFormat(device: GPUDevice): GPUTextureFormat {
-  const formats: GPUTextureFormat[] = ['r16unorm', 'r16float'];
+  const formats: GPUTextureFormat[] = ['r16float'];
 
   for (const format of formats) {
     try {
@@ -30,12 +33,11 @@ export function detectBest16BitFormat(device: GPUDevice): GPUTextureFormat {
       testTexture.destroy();
       console.log(`[Kiln] Using ${format} for 16-bit atlas texture`);
       return format;
-    } catch (e) {
+    } catch (_) {
       console.warn(`[Kiln] Format ${format} not supported, trying next...`);
     }
   }
 
-  // Eventually downgrade to 8-bit
   console.warn('[Kiln] No 16-bit formats supported, falling back to r8unorm (quality loss)');
   return 'r8unorm';
 }

@@ -105,11 +105,6 @@ async function main() {
 
   // Request higher limits for large atlas textures and features for 16-bit textures
   const adapterLimits = adapter.limits;
-  const requiredFeatures: GPUFeatureName[] = [];
-
-  if (adapter.features.has('texture-formats-tier1' as GPUFeatureName)) {
-    requiredFeatures.push('texture-formats-tier1' as GPUFeatureName);
-  }
 
   const device = await adapter.requestDevice({
     requiredLimits: {
@@ -117,7 +112,6 @@ async function main() {
       maxStorageBufferBindingSize: adapterLimits.maxStorageBufferBindingSize,
       maxTextureDimension3D: adapterLimits.maxTextureDimension3D,
     },
-    requiredFeatures,
   });
   if (!device) {
     showError('WebGPU device creation failed');

@@ -271,6 +271,28 @@
       background: rgba(0, 0, 0, 0.3);
     }
 
+    .dialog-error {
+      display: none;
+      margin: 0 24px 16px;
+      padding: 12px 16px;
+      background: rgba(200, 80, 60, 0.12);
+      border: 1px solid rgba(200, 80, 60, 0.35);
+      border-radius: 8px;
+      color: #ff8a7a;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .dialog-error strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .dialog-error ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+
     .dialog-footer {
       padding: 16px 24px;
       border-top: 1px solid rgba(187, 188, 196, 0.1);
@@ -344,6 +366,7 @@
         </div>
       </div>
     </div>
+    <div id="dialog-error" class="dialog-error"></div>
     <div class="dialog-footer">
       <button id="dialog-cancel-btn" class="cancel-btn">Cancel</button>
     </div>

@@ -25,6 +25,8 @@ import type {
   BitDepth,
   NetworkStats,
 } from './data-provider.js';
+import { UnsupportedDatasetError } from './data-provider.js';
+import { extractMultiscales, validateZarrSupport } from './zarr-validator.js';
 
 /** OME-NGFF multiscales metadata (from group attributes) */
 export interface OmeMultiscales {
@@ -156,16 +158,11 @@ export abstract class BaseZarrProvider implements DataProvider {
       omero?: { channels?: { window?: { start: number; end: number; min: number; max: number } }[] };
     } | undefined;
 
-    const multiscales: OmeMultiscales[] =
-      omeAttr?.multiscales ??
-      (attrs['multiscales'] as OmeMultiscales[] | undefined) ??
-      [];
-
-    if (multiscales.length === 0) {
-      throw new Error('No OME multiscales metadata found in Zarr group attributes');
+    const ms = extractMultiscales(attrs) as OmeMultiscales | null;
+    if (!ms) {
+      throw new UnsupportedDatasetError(['No OME-NGFF multiscales metadata found']);
     }
 
-    const ms = multiscales[0]!;
     const numScales = ms.datasets.length;
 
     // Determine bit depth from dtype
@@ -179,6 +176,10 @@ export abstract class BaseZarrProvider implements DataProvider {
       console.warn(`Unsupported dtype "${dtype}", falling back to 8-bit`);
       bitDepth = 8;
     }
+
+    // Safety-net validation (catches direct ?dataset= URL loads that bypassed dialog pre-check)
+    const validationReasons = validateZarrSupport(ms, arrays[0]!.shape, String(dtype));
+    if (validationReasons.length > 0) throw new UnsupportedDatasetError(validationReasons);
 
     // Compute voxel spacing from coordinateTransformations if available
     let voxelSpacing: [number, number, number] | undefined;

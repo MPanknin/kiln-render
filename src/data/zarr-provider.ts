@@ -17,6 +17,8 @@ import { TolerantFetchStore } from './tolerant-fetch-store.js';
 import { ZarrWorkerPool } from './zarr-worker-pool.js';
 import { BaseZarrProvider } from './base-zarr-provider.js';
 import type { VolumeMetadata, BrickData } from './data-provider.js';
+import { UnsupportedDatasetError } from './data-provider.js';
+import { extractMultiscales } from './zarr-validator.js';
 
 /**
  * DataProvider implementation for OME-Zarr (NGFF v0.5) volumes over HTTP
@@ -53,10 +55,9 @@ export class ZarrDataProvider extends BaseZarrProvider {
 
     // Parse OME multiscales from group attributes
     const attrs = rootGroup.attrs as Record<string, unknown>;
-    const omeAttr = attrs['ome'] as { multiscales?: any[] } | undefined;
-    const ms = (omeAttr?.multiscales ?? [])[0];
+    const ms = extractMultiscales(attrs);
     if (!ms) {
-      throw new Error('No OME multiscales metadata found in Zarr group attributes');
+      throw new UnsupportedDatasetError(['No OME-NGFF multiscales metadata found']);
     }
 
     const arrayPaths = ms.datasets.map((ds: any) => ds.path);

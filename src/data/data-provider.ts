@@ -82,6 +82,17 @@ export interface NetworkStats {
 }
 
 /**
+ * Thrown when a zarr dataset is valid but uses features not yet supported.
+ * Carries specific reasons so the importer dialog can display them.
+ */
+export class UnsupportedDatasetError extends Error {
+  constructor(public readonly reasons: string[]) {
+    super(reasons.join('; '));
+    this.name = 'UnsupportedDatasetError';
+  }
+}
+
+/**
  * Abstract interface for volume data providers
  *
  * Implementations must handle:

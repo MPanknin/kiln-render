@@ -11,6 +11,8 @@ import type { DataType } from 'zarrita';
 import { FileSystemStore } from './filesystem-store.js';
 import { BaseZarrProvider, type LodParams } from './base-zarr-provider.js';
 import type { VolumeMetadata, BrickData, BrickStats } from './data-provider.js';
+import { UnsupportedDatasetError } from './data-provider.js';
+import { extractMultiscales } from './zarr-validator.js';
 
 export class LocalZarrDataProvider extends BaseZarrProvider {
   private dirHandle: FileSystemDirectoryHandle;
@@ -29,10 +31,9 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     const rootGroup = await open(root(store), { kind: 'group' });
 
     const attrs = rootGroup.attrs as Record<string, unknown>;
-    const omeAttr = attrs['ome'] as { multiscales?: any[] } | undefined;
-    const ms = (omeAttr?.multiscales ?? [])[0];
+    const ms = extractMultiscales(attrs);
     if (!ms) {
-      throw new Error('No OME multiscales metadata found');
+      throw new UnsupportedDatasetError(['No OME-NGFF multiscales metadata found']);
     }
 
     // Open arrays to read metadata

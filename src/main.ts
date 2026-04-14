@@ -15,6 +15,9 @@ import { ShardedDataProvider } from './data/sharded-provider.js';
 import { ZarrDataProvider } from './data/zarr-provider.js';
 import { LocalZarrDataProvider } from './data/local-zarr-provider.js';
 import type { DataProvider } from './data/data-provider.js';
+import { UnsupportedDatasetError } from './data/data-provider.js';
+import { preValidateRemoteZarr, preValidateLocalZarr } from './data/zarr-validator.js';
+import { clearHandle } from './data/handle-storage.js';
 import { TransferFunction, TFPreset } from './core/transfer-function.js';
 import { VolumeUI } from './ui/volume-ui.js';
 import { StreamingManager } from './streaming/streaming-manager.js';
@@ -369,82 +372,137 @@ async function main() {
   }
   requestAnimationFrame(frame);
 
-  // Setup dataset dialog
-  setupDatasetDialog();
+}
+
+function showDialogError(reasons: string[], cleanUrl = false): void {
+  // For URL-param failures: clear the URL and any stored local handle so a
+  // refresh doesn't loop back into the same error.
+  if (cleanUrl) {
+    const wasLocal = new URLSearchParams(window.location.search).get('local') === 'true';
+    history.replaceState({}, '', window.location.pathname);
+    if (wasLocal) clearHandle().catch(() => {});
+  }
+
+  const dialog = document.getElementById('dataset-dialog') as HTMLDialogElement | null;
+  const errorEl = document.getElementById('dialog-error');
+  if (!dialog || !errorEl) return;
+
+  errorEl.innerHTML =
+    `<strong>Dataset not supported</strong>` +
+    `<ul>${reasons.map(r => `<li>${r}</li>`).join('')}</ul>`;
+  errorEl.style.display = 'block';
+
+  if (!dialog.open) dialog.showModal();
 }
 
 function setupDatasetDialog() {
   const dialog = document.getElementById('dataset-dialog') as HTMLDialogElement;
   const loadDatasetBtn = document.getElementById('load-dataset-btn');
-  const localBtn = document.getElementById('local-zarr-btn');
+  const localBtn = document.getElementById('local-zarr-btn') as HTMLButtonElement | null;
   const remoteInput = document.getElementById('remote-url-input') as HTMLInputElement;
-  const remoteLoadBtn = document.getElementById('remote-load-btn');
+  const remoteLoadBtn = document.getElementById('remote-load-btn') as HTMLButtonElement | null;
   const cancelBtn = document.getElementById('dialog-cancel-btn');
+  const errorEl = document.getElementById('dialog-error');
 
   if (!dialog || !loadDatasetBtn) return;
 
-  // Open dialog when clicking load dataset button
+  const clearError = () => {
+    if (errorEl) errorEl.style.display = 'none';
+  };
+
+  // Open dialog (clear any previous error)
   loadDatasetBtn.addEventListener('click', () => {
+    clearError();
     dialog.showModal();
   });
 
-  // Close dialog on cancel
-  cancelBtn?.addEventListener('click', () => {
-    dialog.close();
-  });
+  // Close on cancel
+  cancelBtn?.addEventListener('click', () => dialog.close());
 
-  // Close dialog when clicking backdrop
+  // Close on backdrop click
   dialog.addEventListener('click', (e) => {
     const rect = dialog.getBoundingClientRect();
-    if (
-      e.clientX < rect.left ||
-      e.clientX > rect.right ||
-      e.clientY < rect.top ||
-      e.clientY > rect.bottom
-    ) {
+    if (e.clientX < rect.left || e.clientX > rect.right ||
+        e.clientY < rect.top  || e.clientY > rect.bottom) {
       dialog.close();
     }
   });
 
-  // Local directory picker
+  // --- Local directory picker ---
   if (localBtn) {
-    // Check if File System Access API is supported
-    const isSupported = 'showDirectoryPicker' in window;
-    if (!isSupported) {
-      (localBtn as HTMLButtonElement).disabled = true;
+    if (!('showDirectoryPicker' in window)) {
+      localBtn.disabled = true;
       localBtn.textContent = 'Not supported in this browser';
     } else {
       localBtn.addEventListener('click', async () => {
+        clearError();
+        let handle: FileSystemDirectoryHandle;
         try {
-          await promptForZarrDirectory();
-          // Reload with local=true param to trigger local zarr loading
-          window.location.href = window.location.pathname + '?local=true';
+          handle = await promptForZarrDirectory();
         } catch (e) {
-          const message = e instanceof Error ? e.message : 'Failed to load local dataset';
-          if (!message.includes('cancelled') && !message.includes('aborted')) {
-            showError(message);
+          const msg = e instanceof Error ? e.message : '';
+          if (!msg.includes('cancelled') && !msg.includes('aborted')) {
+            showDialogError([msg || 'Failed to open directory']);
           }
+          return;
         }
+
+        const orig = localBtn.textContent ?? '';
+        localBtn.disabled = true;
+        localBtn.textContent = 'Checking…';
+        try {
+          const reasons = await preValidateLocalZarr(handle);
+          if (reasons.length > 0) {
+            await clearHandle();
+            showDialogError(reasons);
+            return;
+          }
+        } catch (_) {
+          showDialogError(['Could not read dataset metadata — is this a valid .zarr directory?']);
+          await clearHandle();
+          return;
+        } finally {
+          localBtn.disabled = false;
+          localBtn.textContent = orig;
+        }
+
+        window.location.href = window.location.pathname + '?local=true';
       });
     }
   }
 
-  // Remote URL loading
+  // --- Remote URL ---
   if (remoteInput && remoteLoadBtn) {
-    const loadRemote = () => {
+    const loadRemote = async () => {
       const url = remoteInput.value.trim();
       if (!url) return;
+      clearError();
 
-      // Navigate to the new dataset URL
+      const isZarr = url.includes('.zarr');
+      if (isZarr) {
+        const origText = remoteLoadBtn.textContent ?? 'Load';
+        remoteLoadBtn.disabled = true;
+        remoteLoadBtn.textContent = 'Checking…';
+        try {
+          const reasons = await preValidateRemoteZarr(url);
+          if (reasons.length > 0) {
+            showDialogError(reasons);
+            return;
+          }
+        } catch (_) {
+          showDialogError(['Could not reach dataset — check the URL is correct and publicly accessible']);
+          return;
+        } finally {
+          remoteLoadBtn.disabled = false;
+          remoteLoadBtn.textContent = origText;
+        }
+      }
+
       window.location.href = window.location.pathname + '?dataset=' + encodeURIComponent(url);
     };
 
     remoteLoadBtn.addEventListener('click', loadRemote);
-    remoteInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        loadRemote();
-      }
-    });
+    remoteInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadRemote(); });
   }
 }
 
@@ -466,4 +524,13 @@ window.addEventListener('beforeunload', () => {
   getDecompressionPool().terminate();
 });
 
-main().catch((e) => showError(e.message));
+// Always wire up the dialog
+setupDatasetDialog();
+
+main().catch((e) => {
+  if (e instanceof UnsupportedDatasetError) {
+    showDialogError(e.reasons, true);
+  } else {
+    showError(e instanceof Error ? e.message : String(e));
+  }
+});

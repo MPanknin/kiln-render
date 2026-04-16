@@ -1,5 +1,9 @@
 /**
- * Kiln - Brick-based WebGPU Volume Renderer
+ * Kiln — application entry point
+ *
+ * Responsible for: URL parameter parsing, data provider selection for local
+ * Zarr (File System API), error display, the dataset dialog, share button,
+ * and analytics.  All rendering and streaming concerns live in KilnViewer.
  */
 
 declare global {
@@ -8,21 +12,17 @@ declare global {
   }
 }
 
-import { Renderer, VolumeRenderMode } from './core/renderer.js';
-import { Camera, UpAxis } from './core/camera.js';
-import { setDatasetSize } from './core/config.js';
-import { ShardedDataProvider } from './data/sharded-provider.js';
-import { ZarrDataProvider } from './data/zarr-provider.js';
+import { KilnViewer } from './viewer.js';
+import type { ViewerOptions } from './viewer.js';
+import { VolumeRenderMode } from './core/renderer.js';
+import type { TFPreset } from './core/transfer-function.js';
+import type { UpAxis } from './core/camera.js';
 import { LocalZarrDataProvider } from './data/local-zarr-provider.js';
 import type { DataProvider } from './data/data-provider.js';
 import { UnsupportedDatasetError } from './data/data-provider.js';
 import { preValidateRemoteZarr, preValidateLocalZarr } from './data/zarr-validator.js';
 import { clearHandle } from './data/handle-storage.js';
-import { TransferFunction, TFPreset } from './core/transfer-function.js';
 import { VolumeUI } from './ui/volume-ui.js';
-import { StreamingManager } from './streaming/streaming-manager.js';
-import { detectBest16BitFormat } from './core/volume.js';
-import { getDecompressionPool } from './data/decompression-pool.js';
 import {
   promptForZarrDirectory,
   getStoredHandle,
@@ -31,7 +31,6 @@ import {
 
 // Default volume source (can be overridden via ?dataset= URL parameter)
 const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/chameleon-16bit';
-// const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/beechnut.ome.zarr';
 
 /** Parse URL parameters for per-dataset configuration */
 function parseURLParams(): {
@@ -98,41 +97,12 @@ async function main() {
   const canvas = document.querySelector('canvas') as HTMLCanvasElement | null;
   if (!canvas) throw new Error('Canvas not found');
 
-  // Initialize WebGPU
-  const adapter = await navigator.gpu?.requestAdapter();
-  if (!adapter) {
-    showError('WebGPU not supported');
-    window.goatcounter?.count({ path: '/event/webgpu-failed', title: 'WebGPU not supported', event: true });
-    return;
-  }
-
-  // Request higher limits for large atlas textures and features for 16-bit textures
-  const adapterLimits = adapter.limits;
-
-  const device = await adapter.requestDevice({
-    requiredLimits: {
-      maxBufferSize: adapterLimits.maxBufferSize,
-      maxStorageBufferBindingSize: adapterLimits.maxStorageBufferBindingSize,
-      maxTextureDimension3D: adapterLimits.maxTextureDimension3D,
-    },
-  });
-  if (!device) {
-    showError('WebGPU device creation failed');
-    window.goatcounter?.count({ path: '/event/webgpu-failed', title: 'WebGPU device creation failed', event: true });
-    return;
-  }
-  window.goatcounter?.count({ path: '/event/webgpu-ok', title: 'WebGPU initialized', event: true });
-
-  const context = canvas.getContext('webgpu')!
-  const format = navigator.gpu.getPreferredCanvasFormat();
-  context.configure({ device, format });
-
-  // Parse URL parameters
   const urlParams = parseURLParams();
   const volumeSource = urlParams.dataset;
 
-  // Check for local zarr handle (with permission check)
-  let dataProvider: DataProvider;
+  // ── Local Zarr handling (File System API) ──────────────────────────────────
+
+  let dataset: string | DataProvider;
   let isLocalZarr = false;
 
   const params = new URLSearchParams(window.location.search);
@@ -142,199 +112,81 @@ async function main() {
   if (useLocal && storedHandle) {
     const hasPermission = await requestPermission(storedHandle);
     if (hasPermission) {
-      dataProvider = new LocalZarrDataProvider(storedHandle);
+      dataset = new LocalZarrDataProvider(storedHandle);
       isLocalZarr = true;
     } else {
-      // No permission, fall back to HTTP
-      const isZarr = volumeSource.includes('.zarr');
-      dataProvider = isZarr ? new ZarrDataProvider(volumeSource) : new ShardedDataProvider(volumeSource);
+      dataset = volumeSource;
     }
   } else {
-    // Create HTTP data provider
-    const isZarr = volumeSource.includes('.zarr');
-    dataProvider = isZarr ? new ZarrDataProvider(volumeSource) : new ShardedDataProvider(volumeSource);
+    dataset = volumeSource;
   }
 
-  // Store for cleanup on page unload
-  globalDataProvider = dataProvider;
+  // ── Build viewer options from URL params ───────────────────────────────────
 
-  // Initialize metadata
-  const metadata = await dataProvider.initialize();
-  const sourceBitDepth = metadata.bitDepth;
-
-  // Detect best texture format
-  let textureFormat: GPUTextureFormat;
-  let effectiveBitDepth = sourceBitDepth;
-
-  if (sourceBitDepth === 16) {
-    textureFormat = detectBest16BitFormat(device);
-    if (textureFormat === 'r8unorm') {
-      effectiveBitDepth = 8;
-      console.warn(
-        '[Kiln] ⚠️  GPU does not support 16-bit textures (r16unorm/r16float).\n' +
-        'Downsampling to 8-bit (quality loss).'
-      );
-    }
-  } else {
-    textureFormat = 'r8unorm';
-  }
-
-  // Configure workers to output the correct format (only for HTTP providers)
-  if (!isLocalZarr && (textureFormat !== 'r16unorm' || sourceBitDepth !== 16)) {
-    const isHttpZarr = volumeSource.includes('.zarr');
-    if (isHttpZarr) {
-      await (dataProvider as ZarrDataProvider).setTargetFormat(textureFormat as 'r8unorm' | 'r16float');
-    } else {
-      const decompressionPool = getDecompressionPool();
-      decompressionPool.setTargetFormat(textureFormat as 'r8unorm' | 'r16float');
-    }
-  }
-
-  // Configure dataset size from metadata
-  const spacing = metadata.voxelSpacing;
-  setDatasetSize(metadata.dimensions, spacing);
-
-  // Create renderer with effective bit depth and texture format
-  const renderer = new Renderer(device, format, effectiveBitDepth, textureFormat);
-
-  if (effectiveBitDepth === 16) {
-    if (metadata.window) {
-      const { start, end, min, max } = metadata.window;
-      const range = max - min;
-      if (range > 0) {
-        const windowCenter = ((start + end) / 2 - min) / range;
-        const windowWidth = (end - start) / range;
-        renderer.windowCenter = Math.max(0, Math.min(1, windowCenter));
-        renderer.windowWidth = Math.max(0.01, Math.min(1, windowWidth));
-      }
-    } else {
-      renderer.windowCenter = 0.5;
-      renderer.windowWidth = 1.0;
-    }
-  }
-
-  // Create transfer function and connect to renderer
-  const transferFunction = new TransferFunction(device);
-  renderer.setTransferFunction(transferFunction);
-
-  // Create camera
-  const camera = new Camera(canvas);
-
-  // Create streaming manager
-  const streamingManager = new StreamingManager(renderer, dataProvider, metadata, device, PAGE_LOAD_START);
-
-  let streamingEnabled = true;
-
-  // Handle resize
-  const resize = () => {
-    const width = Math.max(1, Math.min(canvas.clientWidth, device.limits.maxTextureDimension2D));
-    const height = Math.max(1, Math.min(canvas.clientHeight, device.limits.maxTextureDimension2D));
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
-      canvas.height = height;
-      renderer.resize(width, height);
-    }
+  const options: ViewerOptions = {
+    mode: urlParams.mode,
+    windowCenter: urlParams.wc,
+    windowWidth: urlParams.ww,
+    isoValue: urlParams.iso,
+    tfPreset: urlParams.tf as TFPreset | undefined,
+    upAxis: urlParams.up as UpAxis | undefined,
+    cam: urlParams.cam,
+    renderScale: urlParams.scale,
+    maxPixelError: urlParams.sse,
+    clipMin: urlParams.clipMin,
+    clipMax: urlParams.clipMax,
+    pageLoadStart: PAGE_LOAD_START,
   };
-  new ResizeObserver(resize).observe(canvas);
-  resize();
 
-  // Store desired render scale
-  let userRenderScale = renderer.renderScale;
+  // ── Create viewer ──────────────────────────────────────────────────────────
 
-  // Create UI
-  const ui = new VolumeUI(renderer, camera, transferFunction);
-  ui.setStreamingManager(streamingManager, metadata);
+  const viewer = await KilnViewer.create(canvas, dataset, options);
 
-  ui.setRenderScaleCallback((scale) => {
-    userRenderScale = scale;
-  });
+  window.goatcounter?.count({ path: '/event/webgpu-ok', title: 'WebGPU initialized', event: true });
 
-  // Apply URL parameters (after UI so we can sync both)
-  if (urlParams.mode) {
-    renderer.volumeRenderMode = urlParams.mode;
-    renderer.resetAccumulation();
-  }
-  const hasWindowParams = urlParams.wc !== undefined || urlParams.ww !== undefined;
-  // Don't auto-level if url requests a specific window
-  if (hasWindowParams) {
-    if (urlParams.wc !== undefined) {
-      renderer.windowCenter = urlParams.wc;
-    }
-    if (urlParams.ww !== undefined) {
-      renderer.windowWidth = urlParams.ww;
-    }
-    renderer.resetAccumulation();
-  }
-  if (urlParams.iso !== undefined) {
-    renderer.isoValue = urlParams.iso;
-    renderer.resetAccumulation();
-  }
-  if (urlParams.tf) {
-    transferFunction.setPreset(urlParams.tf as TFPreset);
-    renderer.resetAccumulation();
-  }
-  if (urlParams.up) {
-    camera.setUpAxis(urlParams.up as UpAxis);
-  }
-  if (urlParams.cam) {
-    camera.setOrbitState(urlParams.cam);
-  }
-  if (urlParams.sse !== undefined) {
-    streamingManager.maxPixelError = urlParams.sse;
-  }
-  if (urlParams.scale !== undefined) {
-    userRenderScale = urlParams.scale;
-    renderer.renderScale = userRenderScale;
-    renderer.resizeComputeTexture();
-  }
-  if (urlParams.clipMin) {
-    renderer.clipMin.set(urlParams.clipMin);
-    renderer.resetAccumulation();
-  }
-  if (urlParams.clipMax) {
-    renderer.clipMax.set(urlParams.clipMax);
-    renderer.resetAccumulation();
-  }
+  // ── UI ─────────────────────────────────────────────────────────────────────
+
+  const ui = new VolumeUI(viewer);
+  viewer.onBeforeFrame = () => ui.recordFrame();
   ui.syncFromState();
 
-  // Share button: build URL from current state and copy to clipboard
+  // ── Share button ───────────────────────────────────────────────────────────
+
   const shareBtn = document.getElementById('share-btn');
   if (shareBtn) {
     shareBtn.addEventListener('click', () => {
       const toast = document.getElementById('toast');
 
-      // Check if this is a local dataset - can't be shared via URL
       if (isLocalZarr) {
         if (toast) {
           toast.textContent = 'Local datasets cannot be shared via link';
           toast.classList.add('visible');
           setTimeout(() => {
             toast.classList.remove('visible');
-            toast.textContent = 'Current view copied to clipboard'; 
+            toast.textContent = 'Current view copied to clipboard';
           }, 2500);
         }
         return;
       }
 
+      const state = viewer.getState();
       const p = new URLSearchParams();
       if (volumeSource !== DEFAULT_VOLUME_SOURCE) p.set('dataset', volumeSource);
-      p.set('mode', renderer.volumeRenderMode);
-      p.set('wc', renderer.windowCenter.toFixed(2));
-      p.set('ww', renderer.windowWidth.toFixed(2));
-      p.set('iso', renderer.isoValue.toFixed(2));
-      p.set('tf', transferFunction.preset);
-      p.set('up', camera.getUpAxis());
-      p.set('scale', renderer.renderScale.toFixed(2));
-      const [rx, ry, dist, tx, ty, tz] = camera.getOrbitState();
+      p.set('mode', state.mode);
+      p.set('wc', state.windowCenter.toFixed(2));
+      p.set('ww', state.windowWidth.toFixed(2));
+      p.set('iso', state.isoValue.toFixed(2));
+      p.set('tf', state.tfPreset);
+      p.set('up', state.upAxis);
+      p.set('scale', state.renderScale.toFixed(2));
+      const [rx, ry, dist, tx, ty, tz] = state.cam;
       p.set('cam', `${rx.toFixed(3)},${ry.toFixed(3)},${dist.toFixed(3)},${tx.toFixed(3)},${ty.toFixed(3)},${tz.toFixed(3)}`);
 
-      const clipMin = renderer.clipMin;
-      const clipMax = renderer.clipMax;
-      if (clipMin[0]! !== 0 || clipMin[1]! !== 0 || clipMin[2]! !== 0) {
-        p.set('clipMin', `${clipMin[0]!.toFixed(2)},${clipMin[1]!.toFixed(2)},${clipMin[2]!.toFixed(2)}`);
+      if (state.clipMin[0] !== 0 || state.clipMin[1] !== 0 || state.clipMin[2] !== 0) {
+        p.set('clipMin', state.clipMin.map(v => v.toFixed(2)).join(','));
       }
-      if (clipMax[0]! !== 1 || clipMax[1]! !== 1 || clipMax[2]! !== 1) {
-        p.set('clipMax', `${clipMax[0]!.toFixed(2)},${clipMax[1]!.toFixed(2)},${clipMax[2]!.toFixed(2)}`);
+      if (state.clipMax[0] !== 1 || state.clipMax[1] !== 1 || state.clipMax[2] !== 1) {
+        p.set('clipMax', state.clipMax.map(v => v.toFixed(2)).join(','));
       }
 
       const url = `${window.location.origin}${window.location.pathname}?${p.toString()}`;
@@ -349,34 +201,14 @@ async function main() {
     });
   }
 
-  // Render loop
-  function frame() {
-    ui.recordFrame();
+  // ── Cleanup ────────────────────────────────────────────────────────────────
 
-    // Drop to 0.25 during camera interaction
-    const isInteracting = camera.isInteracting();
-    const targetScale = isInteracting ? 0.25 : userRenderScale;
-
-    if (renderer.renderScale !== targetScale) {
-      renderer.renderScale = targetScale;
-      renderer.resizeComputeTexture();
-    }
-
-    if (streamingEnabled) {
-      streamingManager.update(camera, canvas!);
-    }
-
-    const view = context.getCurrentTexture().createView();
-    renderer.render(view, camera);
-    requestAnimationFrame(frame);
-  }
-  requestAnimationFrame(frame);
-
+  window.addEventListener('beforeunload', () => {
+    viewer.dispose();
+  });
 }
 
 function showDialogError(reasons: string[], cleanUrl = false): void {
-  // For URL-param failures: clear the URL and any stored local handle so a
-  // refresh doesn't loop back into the same error.
   if (cleanUrl) {
     const wasLocal = new URLSearchParams(window.location.search).get('local') === 'true';
     history.replaceState({}, '', window.location.pathname);
@@ -410,16 +242,13 @@ function setupDatasetDialog() {
     if (errorEl) errorEl.style.display = 'none';
   };
 
-  // Open dialog (clear any previous error)
   loadDatasetBtn.addEventListener('click', () => {
     clearError();
     dialog.showModal();
   });
 
-  // Close on cancel
   cancelBtn?.addEventListener('click', () => dialog.close());
 
-  // Close on backdrop click
   dialog.addEventListener('click', (e) => {
     const rect = dialog.getBoundingClientRect();
     if (e.clientX < rect.left || e.clientX > rect.right ||
@@ -428,7 +257,6 @@ function setupDatasetDialog() {
     }
   });
 
-  // --- Local directory picker ---
   if (localBtn) {
     if (!('showDirectoryPicker' in window)) {
       localBtn.disabled = true;
@@ -471,7 +299,6 @@ function setupDatasetDialog() {
     }
   }
 
-  // --- Remote URL ---
   if (remoteInput && remoteLoadBtn) {
     const loadRemote = async () => {
       const url = remoteInput.value.trim();
@@ -515,15 +342,6 @@ function showError(message: string) {
   console.error(message);
 }
 
-// Store provider for cleanup
-let globalDataProvider: DataProvider | null = null;
-
-// Cleanup workers on page unload
-window.addEventListener('beforeunload', () => {
-  globalDataProvider?.dispose();
-  getDecompressionPool().terminate();
-});
-
 // Always wire up the dialog
 setupDatasetDialog();
 
@@ -531,6 +349,10 @@ main().catch((e) => {
   if (e instanceof UnsupportedDatasetError) {
     showDialogError(e.reasons, true);
   } else {
-    showError(e instanceof Error ? e.message : String(e));
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === 'WebGPU not supported' || msg === 'WebGPU device creation failed') {
+      window.goatcounter?.count({ path: '/event/webgpu-failed', title: msg, event: true });
+    }
+    showError(msg);
   }
 });

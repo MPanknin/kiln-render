@@ -12,7 +12,6 @@
  * - Supports 8-bit and 16-bit volumes
  */
 
-import { getEmptyBrickThreshold } from '../core/config.js';
 import { getDecompressionPool } from './decompression-pool.js';
 import type {
   DataProvider,
@@ -196,7 +195,7 @@ export class ShardedDataProvider implements DataProvider {
   async isBrickEmpty(lod: number, bx: number, by: number, bz: number, maxThreshold?: number): Promise<boolean> {
     const stats = await this.getBrickStats(lod, bx, by, bz);
     if (!stats) return false; // Unknown = assume non-empty
-    const threshold = maxThreshold ?? getEmptyBrickThreshold();
+    const threshold = maxThreshold ?? 100;
     return stats.max < threshold;
   }
 

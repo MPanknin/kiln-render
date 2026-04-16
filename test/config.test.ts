@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   BRICK_SIZE,
   LOGICAL_BRICK_SIZE,
@@ -6,13 +6,7 @@ import {
   ATLAS_SIZE,
   GRID_SIZE,
   TOTAL_BRICK_SLOTS,
-  getDatasetSize,
-  getVoxelSpacing,
-  getDatasetGrid,
-  getNormalizedSize,
-  setDatasetSize,
-  getEmptyBrickThreshold,
-  setEmptyBrickThreshold,
+  DatasetConfig,
 } from '../src/core/config.js';
 
 describe('Config Constants', () => {
@@ -49,143 +43,104 @@ describe('Config Constants', () => {
   });
 });
 
-describe('Dynamic Dataset Configuration', () => {
-  // Save original values to restore after tests
-  let originalSize: [number, number, number];
-  let originalSpacing: [number, number, number];
-
-  beforeEach(() => {
-    originalSize = getDatasetSize();
-    originalSpacing = getVoxelSpacing();
-  });
-
-  afterEach(() => {
-    // Restore original values
-    setDatasetSize(originalSize, originalSpacing);
-  });
-
-  describe('setDatasetSize', () => {
-    it('should update dataset size', () => {
-      setDatasetSize([256, 256, 256]);
-      const size = getDatasetSize();
-      expect(size).toEqual([256, 256, 256]);
-    });
-
-    it('should update voxel spacing when provided', () => {
-      setDatasetSize([512, 512, 512], [0.5, 0.5, 1.0]);
-      const spacing = getVoxelSpacing();
-      expect(spacing).toEqual([0.5, 0.5, 1.0]);
-    });
-
-    it('should return a copy of the array (not reference)', () => {
-      setDatasetSize([100, 200, 300]);
-      const size1 = getDatasetSize();
-      const size2 = getDatasetSize();
-      expect(size1).not.toBe(size2); // Different array instances
-      expect(size1).toEqual(size2);  // Same values
-    });
-  });
-
-  describe('getDatasetGrid', () => {
+describe('DatasetConfig', () => {
+  describe('datasetGrid', () => {
     it('should compute brick grid correctly for exact multiples', () => {
-      setDatasetSize([128, 128, 128]); // 2 bricks per dimension
-      const grid = getDatasetGrid();
-      expect(grid).toEqual([2, 2, 2]);
+      const cfg = new DatasetConfig([128, 128, 128]);
+      expect(cfg.datasetGrid).toEqual([2, 2, 2]);
     });
 
     it('should round up for non-exact multiples', () => {
-      setDatasetSize([65, 65, 65]); // Just over 1 brick
-      const grid = getDatasetGrid();
-      expect(grid).toEqual([2, 2, 2]); // Rounds up to 2
+      const cfg = new DatasetConfig([65, 65, 65]); // Just over 1 brick
+      expect(cfg.datasetGrid).toEqual([2, 2, 2]); // Rounds up to 2
     });
 
     it('should handle asymmetric dimensions', () => {
-      setDatasetSize([128, 256, 512]); // 2, 4, 8 bricks
-      const grid = getDatasetGrid();
-      expect(grid).toEqual([2, 4, 8]);
+      const cfg = new DatasetConfig([128, 256, 512]); // 2, 4, 8 bricks
+      expect(cfg.datasetGrid).toEqual([2, 4, 8]);
     });
 
     it('should handle single brick', () => {
-      setDatasetSize([64, 64, 64]);
-      const grid = getDatasetGrid();
-      expect(grid).toEqual([1, 1, 1]);
+      const cfg = new DatasetConfig([64, 64, 64]);
+      expect(cfg.datasetGrid).toEqual([1, 1, 1]);
     });
   });
 
-  describe('getNormalizedSize', () => {
+  describe('normalizedSize', () => {
     it('should normalize cubic volumes to 1x1x1', () => {
-      setDatasetSize([512, 512, 512], [1, 1, 1]);
-      const normalized = getNormalizedSize();
-      expect(normalized[0]).toBeCloseTo(1.0);
-      expect(normalized[1]).toBeCloseTo(1.0);
-      expect(normalized[2]).toBeCloseTo(1.0);
+      const cfg = new DatasetConfig([512, 512, 512], [1, 1, 1]);
+      expect(cfg.normalizedSize[0]).toBeCloseTo(1.0);
+      expect(cfg.normalizedSize[1]).toBeCloseTo(1.0);
+      expect(cfg.normalizedSize[2]).toBeCloseTo(1.0);
     });
 
     it('should preserve aspect ratio for non-cubic volumes', () => {
-      setDatasetSize([512, 256, 512], [1, 1, 1]);
-      const normalized = getNormalizedSize();
-      expect(normalized[0]).toBeCloseTo(1.0);  // Max dimension = 1
-      expect(normalized[1]).toBeCloseTo(0.5);  // Half of max
-      expect(normalized[2]).toBeCloseTo(1.0);  // Max dimension = 1
+      const cfg = new DatasetConfig([512, 256, 512], [1, 1, 1]);
+      expect(cfg.normalizedSize[0]).toBeCloseTo(1.0);  // Max dimension = 1
+      expect(cfg.normalizedSize[1]).toBeCloseTo(0.5);  // Half of max
+      expect(cfg.normalizedSize[2]).toBeCloseTo(1.0);  // Max dimension = 1
     });
 
     it('should account for voxel spacing', () => {
       // 256 voxels at 2.0 spacing = 512 physical
       // 512 voxels at 1.0 spacing = 512 physical
-      setDatasetSize([256, 512, 256], [2, 1, 2]);
-      const normalized = getNormalizedSize();
+      const cfg = new DatasetConfig([256, 512, 256], [2, 1, 2]);
       // All dimensions have same physical size (512)
-      expect(normalized[0]).toBeCloseTo(1.0);
-      expect(normalized[1]).toBeCloseTo(1.0);
-      expect(normalized[2]).toBeCloseTo(1.0);
+      expect(cfg.normalizedSize[0]).toBeCloseTo(1.0);
+      expect(cfg.normalizedSize[1]).toBeCloseTo(1.0);
+      expect(cfg.normalizedSize[2]).toBeCloseTo(1.0);
     });
 
     it('should handle anisotropic voxels', () => {
       // Common CT scan: high in-plane resolution, lower z resolution
-      setDatasetSize([512, 512, 256], [0.5, 0.5, 1.0]);
       // Physical: 256 x 256 x 256
-      const normalized = getNormalizedSize();
-      expect(normalized[0]).toBeCloseTo(1.0);
-      expect(normalized[1]).toBeCloseTo(1.0);
-      expect(normalized[2]).toBeCloseTo(1.0);
+      const cfg = new DatasetConfig([512, 512, 256], [0.5, 0.5, 1.0]);
+      expect(cfg.normalizedSize[0]).toBeCloseTo(1.0);
+      expect(cfg.normalizedSize[1]).toBeCloseTo(1.0);
+      expect(cfg.normalizedSize[2]).toBeCloseTo(1.0);
     });
 
     it('should normalize to largest physical dimension', () => {
-      setDatasetSize([100, 200, 400], [1, 1, 1]);
-      const normalized = getNormalizedSize();
-      expect(normalized[0]).toBeCloseTo(0.25); // 100/400
-      expect(normalized[1]).toBeCloseTo(0.5);  // 200/400
-      expect(normalized[2]).toBeCloseTo(1.0);  // 400/400 (max)
+      const cfg = new DatasetConfig([100, 200, 400], [1, 1, 1]);
+      expect(cfg.normalizedSize[0]).toBeCloseTo(0.25); // 100/400
+      expect(cfg.normalizedSize[1]).toBeCloseTo(0.5);  // 200/400
+      expect(cfg.normalizedSize[2]).toBeCloseTo(1.0);  // 400/400 (max)
     });
   });
-});
 
-describe('Empty Brick Threshold', () => {
-  let originalThreshold: number;
+  describe('emptyBrickThreshold', () => {
+    it('should default to 100', () => {
+      const cfg = new DatasetConfig([256, 256, 256]);
+      expect(cfg.emptyBrickThreshold).toBe(100);
+    });
 
-  beforeEach(() => {
-    originalThreshold = getEmptyBrickThreshold();
+    it('should accept a custom threshold', () => {
+      const cfg = new DatasetConfig([256, 256, 256], [1, 1, 1], 50);
+      expect(cfg.emptyBrickThreshold).toBe(50);
+    });
+
+    it('should accept zero threshold', () => {
+      const cfg = new DatasetConfig([256, 256, 256], [1, 1, 1], 0);
+      expect(cfg.emptyBrickThreshold).toBe(0);
+    });
+
+    it('should accept max 8-bit threshold', () => {
+      const cfg = new DatasetConfig([256, 256, 256], [1, 1, 1], 255);
+      expect(cfg.emptyBrickThreshold).toBe(255);
+    });
   });
 
-  afterEach(() => {
-    setEmptyBrickThreshold(originalThreshold);
-  });
+  describe('immutability', () => {
+    it('should not be affected by mutating the source arrays', () => {
+      const dims: [number, number, number] = [512, 256, 128];
+      const spacing: [number, number, number] = [1, 2, 3];
+      const cfg = new DatasetConfig(dims, spacing);
 
-  it('should get and set threshold', () => {
-    setEmptyBrickThreshold(50);
-    expect(getEmptyBrickThreshold()).toBe(50);
+      dims[0] = 999;
+      spacing[0] = 999;
 
-    setEmptyBrickThreshold(200);
-    expect(getEmptyBrickThreshold()).toBe(200);
-  });
-
-  it('should accept zero threshold', () => {
-    setEmptyBrickThreshold(0);
-    expect(getEmptyBrickThreshold()).toBe(0);
-  });
-
-  it('should accept max 8-bit threshold', () => {
-    setEmptyBrickThreshold(255);
-    expect(getEmptyBrickThreshold()).toBe(255);
+      expect(cfg.dimensions[0]).toBe(512);
+      expect(cfg.voxelSpacing[0]).toBe(1);
+    });
   });
 });

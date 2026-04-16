@@ -11,7 +11,7 @@ import { Renderer, VolumeRenderMode } from './core/renderer.js';
 import { Camera, UpAxis } from './core/camera.js';
 import { TransferFunction, TFPreset } from './core/transfer-function.js';
 import { StreamingManager } from './streaming/streaming-manager.js';
-import { setDatasetSize } from './core/config.js';
+import { DatasetConfig } from './core/config.js';
 import { detectBest16BitFormat } from './core/volume.js';
 import type { DataProvider, VolumeMetadata } from './data/data-provider.js';
 import { ShardedDataProvider } from './data/sharded-provider.js';
@@ -209,13 +209,13 @@ export class KilnViewer {
       }
     }
 
-    // ── 5. Global config (MUST precede Renderer construction) ─────────────
+    // ── 5. Build DatasetConfig (MUST precede Renderer construction) ───────
 
-    setDatasetSize(metadata.dimensions, metadata.voxelSpacing);
+    const config = new DatasetConfig(metadata.dimensions, metadata.voxelSpacing);
 
     // ── 6. Construct subsystems ───────────────────────────────────────────
 
-    const renderer = new Renderer(device, format, effectiveBitDepth, textureFormat);
+    const renderer = new Renderer(device, format, effectiveBitDepth, textureFormat, config);
 
     // Apply 16-bit window/level defaults from metadata
     if (effectiveBitDepth === 16) {
@@ -285,6 +285,7 @@ export class KilnViewer {
       dataProvider,
       metadata,
       device,
+      config,
       options.pageLoadStart,
     );
 

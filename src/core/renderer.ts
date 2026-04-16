@@ -9,7 +9,7 @@ import { TransferFunction } from './transfer-function.js';
 import { IndirectionTable } from './indirection.js';
 import { AtlasAllocator, AtlasSlot } from '../streaming/atlas-allocator.js';
 import { volumeShader, wireframeShader, axisShader, computeShader, blitShader, accumulateShader } from '../shaders/index.js';
-import { getDatasetSize, getNormalizedSize } from './config.js';
+import type { DatasetConfig } from './config.js';
 import type { BitDepth } from '../data/data-provider.js';
 
 export type RenderMode = 'fragment' | 'compute';
@@ -124,6 +124,8 @@ export class Renderer {
   // Frame counter for temporal jitter
   private frameIndex = 0;
 
+  private readonly config: DatasetConfig;
+
   // Pre-allocated scratch buffers (avoid per-frame GC pressure)
   private readonly vpScratch = new Float32Array(16);
   private readonly invVPScratch = new Float32Array(16);
@@ -136,20 +138,21 @@ export class Renderer {
     1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1,
   ]);
 
-  constructor(device: GPUDevice, format: GPUTextureFormat, bitDepth: BitDepth, textureFormat: GPUTextureFormat) {
+  constructor(device: GPUDevice, format: GPUTextureFormat, bitDepth: BitDepth, textureFormat: GPUTextureFormat, config: DatasetConfig) {
     this.device = device;
+    this.config = config;
 
     // Create volume canvas (empty) with specified bit depth and format
     this.canvas = createVolumeCanvas(device, bitDepth, textureFormat);
 
     // Create indirection table for virtual texturing
-    this.indirection = new IndirectionTable(device);
+    this.indirection = new IndirectionTable(device, config);
 
     // Create atlas allocator
     this.allocator = new AtlasAllocator();
 
     // Create geometry (normalized proxy based on dataset aspect ratio)
-    const box = createBox();
+    const box = createBox(config.normalizedSize);
 
     this.vertexBuffer = device.createBuffer({
       size: box.vertices.byteLength,
@@ -615,9 +618,9 @@ export class Renderer {
     d.set(Renderer.IDENTITY_MAT4, 16);         // 16-31: inverseModel
     d.set(camera.position, 32);                // 32-34: cameraPos
     d[35] = this.useIndirection ? 1.0 : 0.0;  // 35: useIndirection
-    d.set(getDatasetSize(), 36);               // 36-38: datasetSize
+    d.set(this.config.dimensions, 36);         // 36-38: datasetSize
     dv.setInt32(39 * 4, this.getRenderModeInt(), true);  // 39: renderMode (i32)
-    d.set(getNormalizedSize(), 40);            // 40-42: normalizedSize
+    d.set(this.config.normalizedSize, 40);    // 40-42: normalizedSize
     d[43] = this.isoValue;                     // 43: isoValue
     dv.setUint32(44 * 4, this.frameIndex, true);  // 44: frameIndex (u32)
     // 45: _pad1
@@ -720,9 +723,9 @@ export class Renderer {
     d.set(this.invVPScratch, 0);               // 0-15: inverseViewProj
     d.set(camera.position, 16);                // 16-18: cameraPos
     d[19] = this.useIndirection ? 1.0 : 0.0;  // 19: useIndirection
-    d.set(getDatasetSize(), 20);               // 20-22: datasetSize
+    d.set(this.config.dimensions, 20);         // 20-22: datasetSize
     dv.setInt32(23 * 4, this.getRenderModeInt(), true);  // 23: renderMode (i32)
-    d.set(getNormalizedSize(), 24);            // 24-26: normalizedSize
+    d.set(this.config.normalizedSize, 24);    // 24-26: normalizedSize
     d[27] = this.isoValue;                     // 27: isoValue
     d[28] = this.computeWidth;                 // 28: screenSize.x
     d[29] = this.computeHeight;                // 29: screenSize.y

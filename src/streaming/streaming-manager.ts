@@ -16,7 +16,8 @@ import { Renderer } from '../core/renderer.js';
 import type { DataProvider, VolumeMetadata } from '../data/data-provider.js';
 import { AtlasSlot } from './atlas-allocator.js';
 import { BrickCache } from './brick-cache.js';
-import { PHYSICAL_BRICK_SIZE, getNormalizedSize } from '../core/config.js';
+import { PHYSICAL_BRICK_SIZE } from '../core/config.js';
+import type { DatasetConfig } from '../core/config.js';
 import { writeToCanvas } from '../core/volume.js';
 
 export interface BrickRequest {
@@ -56,6 +57,7 @@ export class StreamingManager {
   private dataProvider: DataProvider;
   private metadata: VolumeMetadata;
   private device: GPUDevice;
+  private config: DatasetConfig;
 
   // Track loaded bricks: key -> { slot, slotIndex }
   private loadedBricks = new Map<string, LoadedBrickInfo>();
@@ -154,12 +156,14 @@ export class StreamingManager {
     dataProvider: DataProvider,
     metadata: VolumeMetadata,
     device: GPUDevice,
+    config: DatasetConfig,
     pageLoadStartTime?: number
   ) {
     this.renderer = renderer;
     this.dataProvider = dataProvider;
     this.metadata = metadata;
     this.device = device;
+    this.config = config;
 
     // Use page load start time if provided for true time-to-first-render
     this.loadStartTime = pageLoadStartTime ?? performance.now();
@@ -192,7 +196,7 @@ export class StreamingManager {
           const key = `lod${maxLod}:${bz}/${by}/${bx}`;
 
           // Check if empty
-          const isEmpty = await this.dataProvider.isBrickEmpty(maxLod, bx, by, bz);
+          const isEmpty = await this.dataProvider.isBrickEmpty(maxLod, bx, by, bz, this.config.emptyBrickThreshold);
           if (isEmpty) {
             this.emptyBricks.add(key);
             this.renderer.indirection.setEmpty(bx, by, bz, maxLod);
@@ -581,7 +585,7 @@ export class StreamingManager {
     if (signal.aborted) return;
 
     // Check if empty
-    const isEmpty = await this.dataProvider.isBrickEmpty(lod, bx, by, bz);
+    const isEmpty = await this.dataProvider.isBrickEmpty(lod, bx, by, bz, this.config.emptyBrickThreshold);
     if (signal.aborted) return;
 
     if (isEmpty) {
@@ -688,7 +692,7 @@ export class StreamingManager {
     const level = this.metadata.levels.find(l => l.lod === lod);
     if (!level) return { min: [0, 0, 0], max: [0, 0, 0] };
 
-    const normalizedSize = getNormalizedSize();
+    const normalizedSize = this.config.normalizedSize;
     const [gridX, gridY, gridZ] = level.brickGrid;
     const brickSize: [number, number, number] = [
       normalizedSize[0] / gridX,
@@ -733,7 +737,7 @@ export class StreamingManager {
    * At LOD N, each voxel represents 2^N original voxels
    */
   private getVoxelWorldSize(lod: number): number {
-    const normalizedSize = getNormalizedSize();
+    const normalizedSize = this.config.normalizedSize;
     const dims = this.metadata.dimensions;
 
     // Base voxel size in normalized space (LOD 0)

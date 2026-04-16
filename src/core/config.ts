@@ -20,77 +20,7 @@ export const TOTAL_BRICK_SLOTS = GRID_SIZE * GRID_SIZE * GRID_SIZE;
 // For backward compatibility with existing code
 export const BRICK_SIZE = LOGICAL_BRICK_SIZE;
 
-// Dataset dimensions (can be reconfigured dynamically)
-// Default: small test volume
-let datasetSize: [number, number, number] = [512, 256, 512];
-let voxelSpacing: [number, number, number] = [1, 1, 1];
-
-// Empty brick threshold: bricks with max intensity below this are skipped
-// Lower values = more conservative (fewer skipped bricks)
-// Higher values = more aggressive culling (may miss low-intensity data)
-let emptyBrickThreshold = 100;
-
-// Computed dataset properties
-function computeDatasetGrid(): [number, number, number] {
-  return [
-    Math.ceil(datasetSize[0] / BRICK_SIZE),
-    Math.ceil(datasetSize[1] / BRICK_SIZE),
-    Math.ceil(datasetSize[2] / BRICK_SIZE),
-  ];
-}
-
-function computeNormalizedSize(): [number, number, number] {
-  // Physical size = voxel count * voxel spacing
-  const physicalSize: [number, number, number] = [
-    datasetSize[0] * voxelSpacing[0],
-    datasetSize[1] * voxelSpacing[1],
-    datasetSize[2] * voxelSpacing[2],
-  ];
-  const maxDim = Math.max(...physicalSize);
-  return [
-    physicalSize[0] / maxDim,
-    physicalSize[1] / maxDim,
-    physicalSize[2] / maxDim,
-  ];
-}
-
-// Exported getters (use these instead of direct constants for dynamic values)
-export function getDatasetSize(): [number, number, number] {
-  return [...datasetSize];
-}
-
-export function getVoxelSpacing(): [number, number, number] {
-  return [...voxelSpacing];
-}
-
-export function getDatasetGrid(): [number, number, number] {
-  return computeDatasetGrid();
-}
-
-export function getNormalizedSize(): [number, number, number] {
-  return computeNormalizedSize();
-}
-
-export function getEmptyBrickThreshold(): number {
-  return emptyBrickThreshold;
-}
-
-export function setEmptyBrickThreshold(threshold: number): void {
-  emptyBrickThreshold = threshold;
-}
-
-/**
- * Reconfigure dataset dimensions
- * Call this before initializing renderer/octree when loading a new volume
- */
-export function setDatasetSize(size: [number, number, number], spacing?: [number, number, number]): void {
-  datasetSize = [...size];
-  if (spacing) {
-    voxelSpacing = [...spacing];
-  }
-}
-
-// Grouped config object (static constants only — use getter functions for dynamic values)
+// Grouped config object (static constants only)
 export const CONFIG = {
   LOGICAL_BRICK_SIZE,
   PHYSICAL_BRICK_SIZE,
@@ -100,3 +30,57 @@ export const CONFIG = {
   TOTAL_BRICK_SLOTS,
   MAX_BRICK_TRAVERSALS,
 } as const;
+
+// ─── DatasetConfig ────────────────────────────────────────────────────────────
+
+function computeDatasetGrid(dimensions: [number, number, number]): [number, number, number] {
+  return [
+    Math.ceil(dimensions[0] / BRICK_SIZE),
+    Math.ceil(dimensions[1] / BRICK_SIZE),
+    Math.ceil(dimensions[2] / BRICK_SIZE),
+  ];
+}
+
+function computeNormalizedSize(
+  dimensions: [number, number, number],
+  voxelSpacing: [number, number, number],
+): [number, number, number] {
+  const physicalSize: [number, number, number] = [
+    dimensions[0] * voxelSpacing[0],
+    dimensions[1] * voxelSpacing[1],
+    dimensions[2] * voxelSpacing[2],
+  ];
+  const maxDim = Math.max(...physicalSize);
+  return [
+    physicalSize[0] / maxDim,
+    physicalSize[1] / maxDim,
+    physicalSize[2] / maxDim,
+  ];
+}
+
+/**
+ * Immutable value object describing dataset geometry.
+ * Computed from VolumeMetadata and injected into subsystems at construction.
+ */
+export class DatasetConfig {
+  readonly dimensions: [number, number, number];
+  readonly voxelSpacing: [number, number, number];
+  /** Bricks per axis at LOD 0 */
+  readonly datasetGrid: [number, number, number];
+  /** Normalized extent [0–1] per axis, accounting for anisotropic voxel spacing */
+  readonly normalizedSize: [number, number, number];
+  /** Bricks with max intensity below this value are considered empty */
+  readonly emptyBrickThreshold: number;
+
+  constructor(
+    dimensions: [number, number, number],
+    voxelSpacing: [number, number, number] = [1, 1, 1],
+    emptyBrickThreshold = 100,
+  ) {
+    this.dimensions = [...dimensions] as [number, number, number];
+    this.voxelSpacing = [...voxelSpacing] as [number, number, number];
+    this.emptyBrickThreshold = emptyBrickThreshold;
+    this.datasetGrid = computeDatasetGrid(dimensions);
+    this.normalizedSize = computeNormalizedSize(dimensions, voxelSpacing);
+  }
+}

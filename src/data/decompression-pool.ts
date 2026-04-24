@@ -18,17 +18,8 @@ export class DecompressionPool {
   private nextWorkerIndex = 0;
   private requestId = 0;
   private pendingRequests = new Map<number, PendingRequest>();
-  private _enabled = true;
+  enabled = true;
   private targetFormat: 'r8unorm' | 'r16unorm' | 'r16float' = 'r16unorm';
-
-  /** Whether compression is enabled (can be toggled for backwards compatibility) */
-  get enabled(): boolean {
-    return this._enabled;
-  }
-
-  set enabled(value: boolean) {
-    this._enabled = value;
-  }
 
   /**
    * Set target texture format for decompressed data

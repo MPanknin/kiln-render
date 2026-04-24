@@ -13,6 +13,7 @@
  */
 
 import { getDecompressionPool } from './decompression-pool.js';
+import { NetworkTracker } from './network-tracker.js';
 import type {
   DataProvider,
   VolumeMetadata,
@@ -74,11 +75,7 @@ export class ShardedDataProvider implements DataProvider {
   private metadata: VolumeMetadata | null = null;
   private cache = new Map<string, BrickData>();
   private lodIndices = new Map<number, ShardedLodIndex>();
-
-  // Network tracking
-  private totalBytesDownloaded = 0;
-  private requestCount = 0;
-  private recentDownloads: { timestamp: number; bytes: number }[] = [];
+  private networkTracker = new NetworkTracker();
 
   constructor(basePath: string) {
     this.basePath = basePath;
@@ -248,7 +245,7 @@ export class ShardedDataProvider implements DataProvider {
       }
 
       const buffer = await response.arrayBuffer();
-      this.recordDownload(buffer.byteLength);
+      this.networkTracker.record(buffer.byteLength);
 
       // Check if data is compressed
       const isCompressed = index.compressed ?? this.rawMetadata.compressed ?? false;
@@ -277,36 +274,8 @@ export class ShardedDataProvider implements DataProvider {
     }
   }
 
-  /**
-   * Record a download for network stats
-   */
-  private recordDownload(bytes: number): void {
-    this.totalBytesDownloaded += bytes;
-    this.requestCount++;
-    this.recentDownloads.push({
-      timestamp: performance.now(),
-      bytes,
-    });
-  }
-
-  /**
-   * Get network statistics
-   */
   getNetworkStats(): NetworkStats {
-    const now = performance.now();
-    const windowMs = 2000;
-    const cutoff = now - windowMs;
-
-    // Clean old entries and sum recent bytes
-    this.recentDownloads = this.recentDownloads.filter(d => d.timestamp > cutoff);
-    const recentBytes = this.recentDownloads.reduce((sum, d) => sum + d.bytes, 0);
-    const recentBytesPerSecond = (recentBytes / windowMs) * 1000;
-
-    return {
-      totalBytesDownloaded: this.totalBytesDownloaded,
-      recentBytesPerSecond,
-      requestCount: this.requestCount,
-    };
+    return this.networkTracker.getStats();
   }
 
   /**
@@ -340,11 +309,3 @@ export class ShardedDataProvider implements DataProvider {
   }
 }
 
-/**
- * Factory function to create a ShardedDataProvider
- */
-export async function createShardedProvider(basePath: string): Promise<ShardedDataProvider> {
-  const provider = new ShardedDataProvider(basePath);
-  await provider.initialize();
-  return provider;
-}

@@ -26,6 +26,7 @@ import type {
   NetworkStats,
 } from './data-provider.js';
 import { UnsupportedDatasetError } from './data-provider.js';
+import { NetworkTracker } from './network-tracker.js';
 import { extractMultiscales, validateZarrSupport } from './zarr-validator.js';
 
 /** OME-NGFF multiscales metadata (from group attributes) */
@@ -55,9 +56,7 @@ export interface LodParams {
 export abstract class BaseZarrProvider implements DataProvider {
   protected metadata: VolumeMetadata | null = null;
   protected brickStatsCache = new Map<string, BrickStats>();
-  protected totalBytesDownloaded = 0;
-  protected requestCount = 0;
-  protected recentDownloads: { timestamp: number; bytes: number }[] = [];
+  private networkTracker = new NetworkTracker();
 
   // Abstract methods that subclasses must implement
   abstract initialize(): Promise<VolumeMetadata>;
@@ -108,25 +107,14 @@ export abstract class BaseZarrProvider implements DataProvider {
    * Get network/IO statistics
    */
   getNetworkStats(): NetworkStats {
-    const now = performance.now();
-    const windowMs = 2000;
-    const cutoff = now - windowMs;
-    this.recentDownloads = this.recentDownloads.filter(d => d.timestamp > cutoff);
-    const recentBytes = this.recentDownloads.reduce((sum, d) => sum + d.bytes, 0);
-    return {
-      totalBytesDownloaded: this.totalBytesDownloaded,
-      recentBytesPerSecond: (recentBytes / windowMs) * 1000,
-      requestCount: this.requestCount,
-    };
+    return this.networkTracker.getStats();
   }
 
   /**
    * Record download/read for statistics tracking
    */
   protected recordDownload(bytes: number): void {
-    this.totalBytesDownloaded += bytes;
-    this.requestCount++;
-    this.recentDownloads.push({ timestamp: performance.now(), bytes });
+    this.networkTracker.record(bytes);
   }
 
   /**

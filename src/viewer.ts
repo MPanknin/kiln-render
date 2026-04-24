@@ -84,15 +84,15 @@ export class KilnViewer {
 
   // ── Private state ──────────────────────────────────────────────────────────
 
-  private readonly _dataProvider: DataProvider;
-  private readonly _context: GPUCanvasContext;
-  private readonly _canvas: HTMLCanvasElement;
-  private readonly _resizeObserver: ResizeObserver;
-  private _rafHandle = 0;
+  private readonly dataProvider: DataProvider;
+  private readonly context: GPUCanvasContext;
+  private readonly canvas: HTMLCanvasElement;
+  private readonly resizeObserver: ResizeObserver;
+  private rafHandle = 0;
   /** User-intended render scale; the frame loop may temporarily override it to
    *  0.25 during camera interaction. */
-  private _userRenderScale: number;
-  private _disposed = false;
+  private userRenderScale: number;
+  private disposed = false;
 
   // ── Private constructor — use KilnViewer.create() ─────────────────────────
 
@@ -109,21 +109,21 @@ export class KilnViewer {
     userRenderScale: number,
   ) {
     this.device = device;
-    this._canvas = canvas;
-    this._context = context;
+    this.canvas = canvas;
+    this.context = context;
     this.renderer = renderer;
     this.camera = camera;
     this.transferFunction = transferFunction;
     this.streamingManager = streamingManager;
-    this._dataProvider = dataProvider;
+    this.dataProvider = dataProvider;
     this.metadata = metadata;
-    this._userRenderScale = userRenderScale;
+    this.userRenderScale = userRenderScale;
 
-    this._resizeObserver = new ResizeObserver(() => this._resize());
-    this._resizeObserver.observe(canvas);
-    this._resize(); // Ensure correct dimensions before first frame
+    this.resizeObserver = new ResizeObserver(() => this.resize());
+    this.resizeObserver.observe(canvas);
+    this.resize(); // Ensure correct dimensions before first frame
 
-    this._rafHandle = requestAnimationFrame(() => this._frame());
+    this.rafHandle = requestAnimationFrame(() => this.frame());
   }
 
   // ── Static factory ────────────────────────────────────────────────────────
@@ -344,11 +344,11 @@ export class KilnViewer {
    * to 0.25 during camera interaction; this property always reflects the
    * user's intended value and is what gets serialised into the share URL.
    */
-  get renderScale(): number { return this._userRenderScale; }
+  get renderScale(): number { return this.userRenderScale; }
   set renderScale(value: number) {
-    this._userRenderScale = value;
+    this.userRenderScale = value;
     // renderer.renderScale and resizeComputeTexture() are applied each frame
-    // by _frame(), which handles the interaction-override logic in one place.
+    // by frame(), which handles the interaction-override logic in one place.
   }
 
   // ── State serialisation ───────────────────────────────────────────────────
@@ -361,7 +361,7 @@ export class KilnViewer {
       windowCenter: this.renderer.windowCenter,
       windowWidth: this.renderer.windowWidth,
       isoValue: this.renderer.isoValue,
-      renderScale: this._userRenderScale,
+      renderScale: this.userRenderScale,
       tfPreset: this.transferFunction.preset,
       upAxis: this.camera.getUpAxis(),
       cam: [rx, ry, dist, tx, ty, tz],
@@ -381,44 +381,44 @@ export class KilnViewer {
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   dispose(): void {
-    if (this._disposed) return;
-    this._disposed = true;
-    cancelAnimationFrame(this._rafHandle);
-    this._resizeObserver.disconnect();
-    this._dataProvider.dispose();
+    if (this.disposed) return;
+    this.disposed = true;
+    cancelAnimationFrame(this.rafHandle);
+    this.resizeObserver.disconnect();
+    this.dataProvider.dispose();
     terminateDecompressionPool();
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
-  private _resize(): void {
+  private resize(): void {
     const maxDim = this.device.limits.maxTextureDimension2D;
-    const width = Math.max(1, Math.min(this._canvas.clientWidth, maxDim));
-    const height = Math.max(1, Math.min(this._canvas.clientHeight, maxDim));
-    if (this._canvas.width !== width || this._canvas.height !== height) {
-      this._canvas.width = width;
-      this._canvas.height = height;
+    const width = Math.max(1, Math.min(this.canvas.clientWidth, maxDim));
+    const height = Math.max(1, Math.min(this.canvas.clientHeight, maxDim));
+    if (this.canvas.width !== width || this.canvas.height !== height) {
+      this.canvas.width = width;
+      this.canvas.height = height;
       this.renderer.resize(width, height);
     }
   }
 
-  private _frame(): void {
-    if (this._disposed) return;
+  private frame(): void {
+    if (this.disposed) return;
 
     this.onBeforeFrame?.();
 
     // Drop to 0.25 during camera interaction; restore to user scale afterward
-    const targetScale = this.camera.isInteracting() ? 0.25 : this._userRenderScale;
+    const targetScale = this.camera.isInteracting() ? 0.25 : this.userRenderScale;
     if (this.renderer.renderScale !== targetScale) {
       this.renderer.renderScale = targetScale;
       this.renderer.resizeComputeTexture();
     }
 
-    this.streamingManager.update(this.camera, this._canvas);
+    this.streamingManager.update(this.camera, this.canvas);
 
-    const view = this._context.getCurrentTexture().createView();
+    const view = this.context.getCurrentTexture().createView();
     this.renderer.render(view, this.camera);
 
-    this._rafHandle = requestAnimationFrame(() => this._frame());
+    this.rafHandle = requestAnimationFrame(() => this.frame());
   }
 }

@@ -147,7 +147,7 @@ export class VolumeUI {
     this.setupTFCanvasEvents();
     this.updateTFPreview();
     this.updateVisibility();
-    this._initStreaming(viewer.streamingManager, viewer.metadata);
+    this.initStreaming(viewer.streamingManager, viewer.metadata);
   }
 
   private setupControls(): void {
@@ -471,7 +471,7 @@ export class VolumeUI {
     });
   }
 
-  private _initStreaming(manager: StreamingManager, metadata: VolumeMetadata): void {
+  private initStreaming(manager: StreamingManager, metadata: VolumeMetadata): void {
     this.streamingManager = manager;
     this.metadata = metadata;
 

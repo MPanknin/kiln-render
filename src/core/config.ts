@@ -31,8 +31,6 @@ export const CONFIG = {
   MAX_BRICK_TRAVERSALS,
 } as const;
 
-// ─── DatasetConfig ────────────────────────────────────────────────────────────
-
 function computeDatasetGrid(dimensions: [number, number, number]): [number, number, number] {
   return [
     Math.ceil(dimensions[0] / BRICK_SIZE),

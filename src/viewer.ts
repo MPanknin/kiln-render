@@ -18,8 +18,6 @@ import { ShardedDataProvider } from './data/sharded-provider.js';
 import { ZarrDataProvider } from './data/zarr-provider.js';
 import { getDecompressionPool, terminateDecompressionPool } from './data/decompression-pool.js';
 
-// ─── Public types ────────────────────────────────────────────────────────────
-
 export interface ViewerOptions {
   /** Initial render mode */
   mode?: VolumeRenderMode;
@@ -62,10 +60,7 @@ export interface ViewerState {
   clipMax: [number, number, number];
 }
 
-// ─── KilnViewer ──────────────────────────────────────────────────────────────
-
 export class KilnViewer {
-  // Public subsystems — read-only access for advanced use (e.g. VolumeUI)
   readonly renderer: Renderer;
   readonly camera: Camera;
   readonly transferFunction: TransferFunction;
@@ -82,8 +77,6 @@ export class KilnViewer {
    */
   onBeforeFrame?: () => void;
 
-  // ── Private state ──────────────────────────────────────────────────────────
-
   private readonly dataProvider: DataProvider;
   private readonly context: GPUCanvasContext;
   private readonly canvas: HTMLCanvasElement;
@@ -93,8 +86,6 @@ export class KilnViewer {
    *  0.25 during camera interaction. */
   private userRenderScale: number;
   private disposed = false;
-
-  // ── Private constructor — use KilnViewer.create() ─────────────────────────
 
   private constructor(
     device: GPUDevice,
@@ -126,8 +117,6 @@ export class KilnViewer {
     this.rafHandle = requestAnimationFrame(() => this.frame());
   }
 
-  // ── Static factory ────────────────────────────────────────────────────────
-
   /**
    * Create a fully initialised KilnViewer.
    *
@@ -142,8 +131,7 @@ export class KilnViewer {
     options: ViewerOptions = {},
   ): Promise<KilnViewer> {
 
-    // ── 1. WebGPU init ────────────────────────────────────────────────────
-
+    // WebGPU init 
     const adapter = await navigator.gpu?.requestAdapter();
     if (!adapter) throw new Error('WebGPU not supported');
 
@@ -161,8 +149,7 @@ export class KilnViewer {
     const context = canvas.getContext('webgpu')!;
     context.configure({ device, format });
 
-    // ── 2. Data provider ─────────────────────────────────────────────────
-
+    // Data provider
     let dataProvider: DataProvider;
     const isExternalProvider = typeof dataset !== 'string';
 
@@ -175,8 +162,7 @@ export class KilnViewer {
         : new ShardedDataProvider(dataset as string);
     }
 
-    // ── 3. Metadata + texture format detection ────────────────────────────
-
+    // Metadata and texture format detection 
     const metadata = await dataProvider.initialize();
     const sourceBitDepth = metadata.bitDepth;
 
@@ -196,8 +182,7 @@ export class KilnViewer {
       textureFormat = 'r8unorm';
     }
 
-    // ── 4. Configure worker target format (string-URL providers only) ─────
-
+    // Configure worker target format (string-URL providers only)
     if (!isExternalProvider) {
       const isHttpZarr = (dataset as string).includes('.zarr');
       if (isHttpZarr) {
@@ -209,12 +194,10 @@ export class KilnViewer {
       }
     }
 
-    // ── 5. Build DatasetConfig (MUST precede Renderer construction) ───────
-
+    // Build DatasetConfig 
     const config = new DatasetConfig(metadata.dimensions, metadata.voxelSpacing);
 
-    // ── 6. Construct subsystems ───────────────────────────────────────────
-
+    // Construct subsystems
     const renderer = new Renderer(device, format, effectiveBitDepth, textureFormat, config);
 
     // Apply 16-bit window/level defaults from metadata
@@ -237,9 +220,7 @@ export class KilnViewer {
 
     const camera = new Camera(canvas);
 
-    // ── 7. Apply ViewerOptions overrides ──────────────────────────────────
-    //    Applied after metadata defaults so URL params take precedence.
-
+    // Apply ViewerOptions overrides 
     if (options.mode !== undefined) {
       renderer.volumeRenderMode = options.mode;
       renderer.resetAccumulation();
@@ -278,8 +259,7 @@ export class KilnViewer {
       camera.setOrbitState(options.cam);
     }
 
-    // ── 8. Streaming manager ──────────────────────────────────────────────
-
+    // Streaming manager
     const streamingManager = new StreamingManager(
       renderer,
       dataProvider,
@@ -293,8 +273,7 @@ export class KilnViewer {
       streamingManager.maxPixelError = options.maxPixelError;
     }
 
-    // ── 9. Construct and return viewer ────────────────────────────────────
-
+    // Construct and return viewer
     const userRenderScale = renderer.renderScale;
 
     return new KilnViewer(
@@ -311,8 +290,7 @@ export class KilnViewer {
     );
   }
 
-  // ── Render state convenience API ──────────────────────────────────────────
-
+  // Render state convenience API
   get mode(): VolumeRenderMode { return this.renderer.volumeRenderMode; }
   set mode(value: VolumeRenderMode) {
     this.renderer.volumeRenderMode = value;
@@ -337,23 +315,12 @@ export class KilnViewer {
     this.renderer.resetAccumulation();
   }
 
-  /**
-   * User-intended render scale (0.25–1).
-   *
-   * The frame loop may temporarily override the actual `renderer.renderScale`
-   * to 0.25 during camera interaction; this property always reflects the
-   * user's intended value and is what gets serialised into the share URL.
-   */
   get renderScale(): number { return this.userRenderScale; }
   set renderScale(value: number) {
     this.userRenderScale = value;
-    // renderer.renderScale and resizeComputeTexture() are applied each frame
-    // by frame(), which handles the interaction-override logic in one place.
   }
 
-  // ── State serialisation ───────────────────────────────────────────────────
-
-  /** Returns a snapshot of the current viewer state for share-URL serialisation. */
+  // State serialisation
   getState(): ViewerState {
     const [rx, ry, dist, tx, ty, tz] = this.camera.getOrbitState();
     return {
@@ -378,8 +345,6 @@ export class KilnViewer {
     };
   }
 
-  // ── Lifecycle ─────────────────────────────────────────────────────────────
-
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -388,8 +353,6 @@ export class KilnViewer {
     this.dataProvider.dispose();
     terminateDecompressionPool();
   }
-
-  // ── Private helpers ───────────────────────────────────────────────────────
 
   private resize(): void {
     const maxDim = this.device.limits.maxTextureDimension2D;

@@ -7,6 +7,7 @@
  */
 
 import type { DecompressRequest, DecompressResponse } from './decompression-worker.js';
+import DecompressionWorker from './decompression-worker.ts?worker&inline';
 
 interface PendingRequest {
   resolve: (data: Uint8Array) => void;
@@ -31,10 +32,7 @@ export class DecompressionPool {
 
   constructor(poolSize: number = navigator.hardwareConcurrency ? Math.min(navigator.hardwareConcurrency, 8) : 4) {
     for (let i = 0; i < poolSize; i++) {
-      const worker = new Worker(
-        new URL('./decompression-worker.ts', import.meta.url),
-        { type: 'module' }
-      );
+      const worker = new DecompressionWorker();
 
       worker.onmessage = (event: MessageEvent<DecompressResponse>) => {
         const { id, data, error } = event.data;

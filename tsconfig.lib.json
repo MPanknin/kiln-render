@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "declarationDir": "lib",
+    "emitDeclarationOnly": true,
+    "baseUrl": ".",
+    "paths": {
+      "@kiln/*": ["./src/*"]
+    }
+  },
+  "include": ["src"]
+}

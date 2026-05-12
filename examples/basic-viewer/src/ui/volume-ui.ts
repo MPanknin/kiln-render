@@ -3,6 +3,9 @@
  */
 
 import { Pane } from 'tweakpane';
+// @kiln/* is a dev-only path alias (src/ → @kiln/) defined in vite.config.ts and
+// tsconfig.json. It gives the example direct access to internal library types that
+// are not part of the public API.
 import type { TransferFunction, TFPreset } from '@kiln/core/transfer-function.js';
 import type { Renderer, VolumeRenderMode } from '@kiln/core/renderer.js';
 import type { Camera, UpAxis } from '@kiln/core/camera.js';

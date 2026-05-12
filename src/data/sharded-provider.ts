@@ -12,7 +12,7 @@
  * - Supports 8-bit and 16-bit volumes
  */
 
-import { getDecompressionPool } from './decompression-pool.js';
+import { DecompressionPool } from './decompression-pool.js';
 import { NetworkTracker } from './network-tracker.js';
 import type {
   DataProvider,
@@ -76,9 +76,24 @@ export class ShardedDataProvider implements DataProvider {
   private cache = new Map<string, BrickData>();
   private lodIndices = new Map<number, ShardedLodIndex>();
   private networkTracker = new NetworkTracker();
+  private pool: DecompressionPool | null = null;
 
   constructor(basePath: string) {
     this.basePath = basePath;
+  }
+
+  /**
+   * Set the target texture format for decompressed brick data.
+   * Must be called before the first brick load.
+   */
+  setTargetFormat(format: 'r8unorm' | 'r16unorm' | 'r16float'): void {
+    if (this.pool) {
+      this.pool.setTargetFormat(format);
+    } else {
+      // Pool not yet created — store the format so we can apply it on first use
+      this.pool = new DecompressionPool();
+      this.pool.setTargetFormat(format);
+    }
   }
 
   /**
@@ -252,8 +267,8 @@ export class ShardedDataProvider implements DataProvider {
 
       let rawData: Uint8Array;
       if (isCompressed) {
-        const pool = getDecompressionPool();
-        rawData = await pool.decompress(buffer);
+        if (!this.pool) this.pool = new DecompressionPool();
+        rawData = await this.pool.decompress(buffer);
       } else {
         rawData = new Uint8Array(buffer);
       }
@@ -305,7 +320,8 @@ export class ShardedDataProvider implements DataProvider {
   dispose(): void {
     this.cache.clear();
     this.lodIndices.clear();
-    // Note: We don't terminate the decompression pool here since it's shared
+    this.pool?.terminate();
+    this.pool = null;
   }
 }
 

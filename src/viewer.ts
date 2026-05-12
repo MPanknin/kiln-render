@@ -16,7 +16,6 @@ import { detectBest16BitFormat } from './core/volume.js';
 import type { DataProvider, VolumeMetadata } from './data/data-provider.js';
 import { ShardedDataProvider } from './data/sharded-provider.js';
 import { ZarrDataProvider } from './data/zarr-provider.js';
-import { getDecompressionPool, terminateDecompressionPool } from './data/decompression-pool.js';
 
 export interface ViewerOptions {
   /** Initial render mode */
@@ -189,7 +188,7 @@ export class KilnViewer {
           textureFormat as 'r8unorm' | 'r16float',
         );
       } else if (textureFormat !== 'r16unorm' || sourceBitDepth !== 16) {
-        getDecompressionPool().setTargetFormat(textureFormat as 'r8unorm' | 'r16float');
+        (dataProvider as ShardedDataProvider).setTargetFormat(textureFormat as 'r8unorm' | 'r16float');
       }
     }
 
@@ -275,7 +274,7 @@ export class KilnViewer {
     // Construct and return viewer
     const userRenderScale = renderer.renderScale;
 
-    return new KilnViewer(
+    const viewer = new KilnViewer(
       device,
       canvas,
       context,
@@ -287,6 +286,10 @@ export class KilnViewer {
       metadata,
       userRenderScale,
     );
+
+    device.lost.then(() => viewer.dispose());
+
+    return viewer;
   }
 
   // Render state convenience API
@@ -350,7 +353,6 @@ export class KilnViewer {
     cancelAnimationFrame(this.rafHandle);
     this.resizeObserver.disconnect();
     this.dataProvider.dispose();
-    terminateDecompressionPool();
   }
 
   private resize(): void {

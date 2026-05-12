@@ -17,6 +17,13 @@ export default defineConfig({
   },
   worker: {
     format: 'es',
+    rollupOptions: {
+      output: {
+        // Inline all dynamic imports (zarrita codec chunks) into the worker
+        // bundle so it is self-contained when run from a blob: URL
+        inlineDynamicImports: true,
+      },
+    },
   },
   resolve: {
     alias: {

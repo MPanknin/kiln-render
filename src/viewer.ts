@@ -54,7 +54,7 @@ export interface ViewerState {
   /** User-intended render scale (not the 0.25 interaction override) */
   renderScale: number;
   tfPreset: TFPreset;
-  upAxis: string;
+  upAxis: UpAxis;
   cam: [number, number, number, number, number, number];
   clipMin: [number, number, number];
   clipMax: [number, number, number];
@@ -143,7 +143,6 @@ export class KilnViewer {
         maxTextureDimension3D: adapterLimits.maxTextureDimension3D,
       },
     });
-    if (!device) throw new Error('WebGPU device creation failed');
 
     const format = navigator.gpu.getPreferredCanvasFormat();
     const context = canvas.getContext('webgpu')!;

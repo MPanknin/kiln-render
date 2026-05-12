@@ -17,7 +17,14 @@ export default defineConfig({
     minify: false,
     // No externals: wgpu-matrix, zarrita, fflate are implementation details
     // that consumers should not need to install separately
-    rollupOptions: {},
+    rollupOptions: {
+      output: {
+        // Keep all chunks in lib/ root — avoids Vite emitting duplicate
+        // copies in lib/assets/ alongside the canonical lib/ versions
+        chunkFileNames: '[name]-[hash].js',
+        assetFileNames: '[name]-[hash][extname]',
+      },
+    },
   },
   worker: {
     format: 'es',

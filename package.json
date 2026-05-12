@@ -1,5 +1,5 @@
 {
-  "name": "kiln",
+  "name": "kiln-render",
   "version": "0.2.0",
   "description": "A WebGPU-native out-of-core renderer for large virtualized volumetric data",
   "author": {
@@ -12,23 +12,32 @@
     "url": "https://github.com/mpanknin/kiln-render"
   },
   "type": "module",
+  "exports": {
+    ".": {
+      "import": "./lib/kiln-render.js",
+      "types": "./lib/index.d.ts"
+    }
+  },
+  "module": "./lib/kiln-render.js",
+  "types": "./lib/index.d.ts",
+  "files": [
+    "lib"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "build:lib": "vite build --config vite.lib.config.ts && tsc -p tsconfig.lib.json",
+    "build:lib": "vite build --config vite.lib.config.ts && tsc -p tsconfig.lib.json && rm -rf lib/assets",
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run"
   },
   "devDependencies": {
     "@webgpu/types": "^0.1.69",
-    "typescript": "^5.7.2",
-    "vite": "^6.0.5",
-    "vitest": "^4.0.18"
-  },
-  "dependencies": {
     "fflate": "^0.8.2",
     "tweakpane": "^4.0.5",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^4.0.18",
     "wgpu-matrix": "^3.4.0",
     "zarrita": "^0.6.1"
   }

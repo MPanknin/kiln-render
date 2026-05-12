@@ -20,6 +20,19 @@
   },
   "module": "./lib/kiln-render.js",
   "types": "./lib/index.d.ts",
+  "sideEffects": false,
+  "keywords": [
+    "webgpu",
+    "volume-rendering",
+    "raymarching",
+    "ome-zarr",
+    "zarr",
+    "3d",
+    "medical-imaging",
+    "scientific-visualization",
+    "out-of-core",
+    "streaming"
+  ],
   "files": [
     "lib"
   ],

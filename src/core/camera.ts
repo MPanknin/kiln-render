@@ -61,21 +61,9 @@ export class Camera {
       this.lastY = e.clientY;
 
       if (this.isDragging) {
-        // Orbit: rotate around target
-        const baseAxis = this.upAxis.replace('-', '');
-        const isNegative = this.upAxis.startsWith('-');
-        let hSign = baseAxis === 'z' ? 1 : -1;
-        if (baseAxis === 'y' && isNegative) hSign = 1;
-        this.rotationY += hSign * dx * 0.01;
-        this.rotationX += dy * 0.01;
-        this.rotationX = Math.max(-Math.PI / 2 + this.poleEpsilon, Math.min(Math.PI / 2 - this.poleEpsilon, this.rotationX));
+        this.applyOrbit(dx, dy);
       } else if (this.isPanning) {
-        // Pan: move target in screen space
-        const panSpeed = this.distance * 0.002;
-        const { right, up } = this.getScreenSpaceVectors();
-        this.target[0] -= (dx * right[0]! - dy * up[0]!) * panSpeed;
-        this.target[1] -= (dx * right[1]! - dy * up[1]!) * panSpeed;
-        this.target[2] -= (dx * right[2]! - dy * up[2]!) * panSpeed;
+        this.applyPan(dx, dy);
       }
 
       this.updatePosition();
@@ -150,14 +138,7 @@ export class Camera {
         this.lastX = touch.clientX;
         this.lastY = touch.clientY;
 
-        // Orbit logic (same as mouse)
-        const baseAxis = this.upAxis.replace('-', '');
-        const isNegative = this.upAxis.startsWith('-');
-        let hSign = baseAxis === 'z' ? 1 : -1;
-        if (baseAxis === 'y' && isNegative) hSign = 1;
-        this.rotationY += hSign * dx * 0.01;
-        this.rotationX += dy * 0.01;
-        this.rotationX = Math.max(-Math.PI / 2 + this.poleEpsilon, Math.min(Math.PI / 2 - this.poleEpsilon, this.rotationX));
+        this.applyOrbit(dx, dy);
 
         this.updatePosition();
 
@@ -180,11 +161,7 @@ export class Camera {
         const dy = currentCenter.y - this.lastTouchCenter.y;
 
         if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
-          const panSpeed = this.distance * 0.002;
-          const { right, up } = this.getScreenSpaceVectors();
-          this.target[0] -= (dx * right[0]! - dy * up[0]!) * panSpeed;
-          this.target[1] -= (dx * right[1]! - dy * up[1]!) * panSpeed;
-          this.target[2] -= (dx * right[2]! - dy * up[2]!) * panSpeed;
+          this.applyPan(dx, dy);
         }
         this.lastTouchCenter = currentCenter;
 
@@ -220,6 +197,24 @@ export class Camera {
 
     canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
     canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+  }
+
+  private applyOrbit(dx: number, dy: number): void {
+    const baseAxis = this.upAxis.replace('-', '');
+    const isNegative = this.upAxis.startsWith('-');
+    let hSign = baseAxis === 'z' ? 1 : -1;
+    if (baseAxis === 'y' && isNegative) hSign = 1;
+    this.rotationY += hSign * dx * 0.01;
+    this.rotationX += dy * 0.01;
+    this.rotationX = Math.max(-Math.PI / 2 + this.poleEpsilon, Math.min(Math.PI / 2 - this.poleEpsilon, this.rotationX));
+  }
+
+  private applyPan(dx: number, dy: number): void {
+    const panSpeed = this.distance * 0.002;
+    const { right, up } = this.getScreenSpaceVectors();
+    this.target[0] -= (dx * right[0]! - dy * up[0]!) * panSpeed;
+    this.target[1] -= (dx * right[1]! - dy * up[1]!) * panSpeed;
+    this.target[2] -= (dx * right[2]! - dy * up[2]!) * panSpeed;
   }
 
   /** Calculate distance between two touch points */
@@ -465,9 +460,3 @@ export function isAABBInFrustum(
   return true;
 }
 
-/**
- * Multiply two 4x4 matrices (column-major)
- */
-export function multiplyMatrices(a: Float32Array, b: Float32Array): Float32Array {
-  return mat4.multiply(a, b) as Float32Array;
-}

@@ -338,9 +338,3 @@ export class TransferFunction {
     ctx.restore();
   }
 }
-
-// Legacy function for backwards compatibility
-export function createTransferFunction(device: GPUDevice): GPUTexture {
-  const tf = new TransferFunction(device);
-  return tf.texture;
-}

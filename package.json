@@ -1,5 +1,5 @@
 {
-  "name": "kiln",
+  "name": "kiln-render",
   "version": "0.2.0",
   "description": "A WebGPU-native out-of-core renderer for large virtualized volumetric data",
   "author": {
@@ -9,25 +9,47 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mpanknin/kiln-render"
+    "url": "git+https://github.com/mpanknin/kiln-render.git"
   },
   "type": "module",
+  "exports": {
+    ".": {
+      "import": "./lib/kiln-render.js",
+      "types": "./lib/index.d.ts"
+    }
+  },
+  "module": "./lib/kiln-render.js",
+  "types": "./lib/index.d.ts",
+  "keywords": [
+    "webgpu",
+    "volume-rendering",
+    "raymarching",
+    "ome-zarr",
+    "zarr",
+    "3d",
+    "medical-imaging",
+    "scientific-visualization",
+    "out-of-core",
+    "streaming"
+  ],
+  "files": [
+    "lib"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:lib": "vite build --config vite.lib.config.ts && tsc -p tsconfig.lib.json && rm -rf lib/assets",
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run"
   },
   "devDependencies": {
     "@webgpu/types": "^0.1.69",
-    "typescript": "^5.7.2",
-    "vite": "^6.0.5",
-    "vitest": "^4.0.18"
-  },
-  "dependencies": {
     "fflate": "^0.8.2",
     "tweakpane": "^4.0.5",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^4.0.18",
     "wgpu-matrix": "^3.4.0",
     "zarrita": "^0.6.1"
   }

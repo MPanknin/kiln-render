@@ -5,7 +5,7 @@
  * Each LOD level gets a different color.
  */
 
-import { getNormalizedSize } from '../core/config.js';
+import type { DatasetConfig } from '../core/config.js';
 
 // LOD colors (from finest to coarsest)
 const LOD_COLORS: [number, number, number, number][] = [
@@ -90,10 +90,13 @@ export class DebugWireframe {
   private vertexCount: number = 0;
   private maxVertices: number = 100000;  // Max vertices we can store
 
+  private config: DatasetConfig;
+
   enabled: boolean = true;
 
-  constructor(device: GPUDevice, format: GPUTextureFormat) {
+  constructor(device: GPUDevice, format: GPUTextureFormat, config: DatasetConfig) {
     this.device = device;
+    this.config = config;
 
     // Create shader module
     const shaderModule = device.createShaderModule({
@@ -163,7 +166,7 @@ export class DebugWireframe {
     maxLod: number
   ): void {
     const boxes: WireframeBox[] = [];
-    const normalizedSize = getNormalizedSize();
+    const normalizedSize = this.config.normalizedSize;
 
     for (const rb of streamingManager.getActiveLeaves()) {
       const node = rb.node;

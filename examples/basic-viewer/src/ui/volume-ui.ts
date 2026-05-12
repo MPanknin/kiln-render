@@ -3,12 +3,16 @@
  */
 
 import { Pane } from 'tweakpane';
-import { TransferFunction, TFPreset } from '../core/transfer-function.js';
-import { Renderer, VolumeRenderMode } from '../core/renderer.js';
-import { Camera, UpAxis } from '../core/camera.js';
-import { StreamingManager } from '../streaming/streaming-manager.js';
-import type { VolumeMetadata } from '../data/data-provider.js';
-import { computeHistogram } from '../core/histogram.js';
+// @kiln/* is a dev-only path alias (src/ → @kiln/) defined in vite.config.ts and
+// tsconfig.json. It gives the example direct access to internal library types that
+// are not part of the public API.
+import type { TransferFunction, TFPreset } from '@kiln/core/transfer-function.js';
+import type { Renderer, VolumeRenderMode } from '@kiln/core/renderer.js';
+import type { Camera, UpAxis } from '@kiln/core/camera.js';
+import type { StreamingManager } from '@kiln/streaming/streaming-manager.js';
+import type { VolumeMetadata } from '@kiln/data/data-provider.js';
+import { computeHistogram } from '@kiln/core/histogram.js';
+import type { KilnViewer } from 'kiln-render';
 
 // Tweakpane's types don't fully export FolderApi, so use a minimal interface
 interface TweakpaneFolder {
@@ -25,6 +29,7 @@ interface ExtendedPane extends Pane {
 }
 
 export class VolumeUI {
+  private viewer: KilnViewer;
   private pane: Pane;
   private statsPane: Pane;
   private renderer: Renderer;
@@ -36,9 +41,6 @@ export class VolumeUI {
   private tfCanvas: HTMLCanvasElement;
   private isDraggingPoint = false;
   private dragPointIndex = -1;
-
-  // Callback for when user changes render scale
-  private onRenderScaleChange: ((scale: number) => void) | null = null;
 
   // Tweakpane params object
   private params = {
@@ -96,23 +98,20 @@ export class VolumeUI {
   private tfFolder: TweakpaneFolder | null = null;
   private windowFolder: TweakpaneFolder | null = null;
 
-  constructor(
-    renderer: Renderer,
-    camera: Camera,
-    transferFunction: TransferFunction
-  ) {
-    this.renderer = renderer;
-    this.camera = camera;
-    this.transferFunction = transferFunction;
+  constructor(viewer: KilnViewer) {
+    this.viewer = viewer;
+    this.renderer = viewer.renderer;
+    this.camera = viewer.camera;
+    this.transferFunction = viewer.transferFunction;
 
     // Sync initial values from camera/renderer
-    this.params.upAxis = camera.getUpAxis();
-    this.params.useIndirection = renderer.useIndirection;
-    this.params.showWireframe = renderer.showWireframe;
-    this.params.showAxis = renderer.showAxis;
-    this.params.windowCenter = renderer.windowCenter;
-    this.params.windowWidth = renderer.windowWidth;
-    this.params.renderScale = renderer.renderScale;
+    this.params.upAxis = this.camera.getUpAxis();
+    this.params.useIndirection = this.renderer.useIndirection;
+    this.params.showWireframe = this.renderer.showWireframe;
+    this.params.showAxis = this.renderer.showAxis;
+    this.params.windowCenter = this.renderer.windowCenter;
+    this.params.windowWidth = this.renderer.windowWidth;
+    this.params.renderScale = this.renderer.renderScale;
 
     // Create controls pane in top-left corner
     const controlsContainer = document.createElement('div');
@@ -151,6 +150,7 @@ export class VolumeUI {
     this.setupTFCanvasEvents();
     this.updateTFPreview();
     this.updateVisibility();
+    this.initStreaming(viewer.streamingManager, viewer.metadata);
   }
 
   private setupControls(): void {
@@ -193,11 +193,7 @@ export class VolumeUI {
       max: 1.0,
       step: 0.25,
     }).on('change', (ev: { value: unknown }) => {
-      const scale = ev.value as number;
-      this.renderer.renderScale = scale;
-      this.renderer.resizeComputeTexture();
-      // Notify callback if set (for dynamic scaling during interaction)
-      this.onRenderScaleChange?.(scale);
+      this.viewer.renderScale = ev.value as number;
     });
 
     // Isosurface folder
@@ -478,15 +474,7 @@ export class VolumeUI {
     });
   }
 
-  /**
-   * Set the streaming manager and metadata for stats display
-   */
-  /** Set callback for when user changes render scale via UI */
-  setRenderScaleCallback(callback: (scale: number) => void): void {
-    this.onRenderScaleChange = callback;
-  }
-
-  setStreamingManager(manager: StreamingManager, metadata: VolumeMetadata): void {
+  private initStreaming(manager: StreamingManager, metadata: VolumeMetadata): void {
     this.streamingManager = manager;
     this.metadata = metadata;
 
@@ -709,7 +697,7 @@ export class VolumeUI {
     this.params.isoValue = this.renderer.isoValue;
     this.params.windowCenter = this.renderer.windowCenter;
     this.params.windowWidth = this.renderer.windowWidth;
-    this.params.renderScale = this.renderer.renderScale;
+    this.params.renderScale = this.viewer.renderScale;
     this.params.upAxis = this.camera.getUpAxis();
     this.params.tfPreset = this.transferFunction.preset;
     this.params.clipMinX = this.renderer.clipMin[0]!;

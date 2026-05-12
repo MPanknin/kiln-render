@@ -7,6 +7,7 @@
  */
 
 import type { ZarrWorkerRequest, ZarrWorkerResponse } from './zarr-chunk-worker.js';
+import ZarrChunkWorker from './zarr-chunk-worker.ts?worker&inline';
 
 export interface BrickResult {
   data: Uint8Array | Uint16Array;
@@ -49,10 +50,7 @@ export class ZarrWorkerPool {
     const initPromises: Promise<void>[] = [];
 
     for (let i = 0; i < this.poolSize; i++) {
-      const worker = new Worker(
-        new URL('./zarr-chunk-worker.ts', import.meta.url),
-        { type: 'module' }
-      );
+      const worker = new ZarrChunkWorker();
 
       worker.onmessage = (event: MessageEvent<ZarrWorkerResponse>) => {
         const { type: msgType, id, error, data, min, max, avg } = event.data;

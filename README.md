@@ -20,6 +20,23 @@ Kiln streams multi-gigabyte volumes over HTTP, rendering them at interactive fra
 
 <img width="1722" height="905" alt="553008573-17268259-5977-4a9b-b4c0-a1756a024857" src="https://github.com/user-attachments/assets/02cffc17-bf44-422b-8752-9bf4edc96d89" />
 
+## Install
+
+```bash
+npm install kiln-render
+```
+
+```typescript
+import { KilnViewer } from 'kiln-render';
+
+const canvas = document.querySelector('canvas');
+const viewer = await KilnViewer.create(canvas, 'https://your-dataset.ome.zarr');
+```
+
+Requires a browser with [WebGPU support](#browser-requirements). See the [Usage Guide](docs/usage-guide.md) for the full API.
+
+---
+
 ## Features
 
 - **Out-of-core streaming** - Fixed VRAM footprint, SSE-based LOD selection, LRU brick cache
@@ -29,17 +46,17 @@ Kiln streams multi-gigabyte volumes over HTTP, rendering them at interactive fra
 - **Transfer functions** - Interactive curve editor with color/opacity presets
 - **Worker-based pipeline** - Parallel decompression and brick assembly off the main thread
 
-## Quick Start
+## Quick Start (development)
 
 ```bash
 # Install dependencies
-bun install
+npm install
 
 # Start development server
-bun run dev
+npm run dev
 
 # Build for production
-bun run build
+npm run build
 ```
 
 The demo loads a sample dataset from S3. To load custom datasets, see the [Usage Guide](docs/usage-guide.md).

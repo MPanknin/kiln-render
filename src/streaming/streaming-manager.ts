@@ -11,12 +11,14 @@
  * - Request cancellation for stale bricks
  */
 
-import { Camera, extractFrustumPlanes, isAABBInFrustum, multiplyMatrices } from '../core/camera.js';
+import { mat4 } from 'wgpu-matrix';
+import { Camera, extractFrustumPlanes, isAABBInFrustum } from '../core/camera.js';
 import { Renderer } from '../core/renderer.js';
 import type { DataProvider, VolumeMetadata } from '../data/data-provider.js';
 import { AtlasSlot } from './atlas-allocator.js';
 import { BrickCache } from './brick-cache.js';
-import { PHYSICAL_BRICK_SIZE, getNormalizedSize } from '../core/config.js';
+import { PHYSICAL_BRICK_SIZE } from '../core/config.js';
+import type { DatasetConfig } from '../core/config.js';
 import { writeToCanvas } from '../core/volume.js';
 
 export interface BrickRequest {
@@ -56,6 +58,7 @@ export class StreamingManager {
   private dataProvider: DataProvider;
   private metadata: VolumeMetadata;
   private device: GPUDevice;
+  private config: DatasetConfig;
 
   // Track loaded bricks: key -> { slot, slotIndex }
   private loadedBricks = new Map<string, LoadedBrickInfo>();
@@ -69,22 +72,11 @@ export class StreamingManager {
   // CPU-side cache of decompressed brick data (avoids re-download after GPU eviction)
   private brickCache = new BrickCache();
 
-  // Whether base LOD has been loaded
-  private _baseLodLoaded = false;
+  baseLodLoaded = false;
 
   // Timing for first render
   private loadStartTime: number = 0;
-  private _timeToFirstRender: number | null = null;
-
-  /** Check if base LOD is loaded */
-  get baseLodLoaded(): boolean {
-    return this._baseLodLoaded;
-  }
-
-  /** Get time to first render in ms (null if not yet loaded) */
-  get timeToFirstRender(): number | null {
-    return this._timeToFirstRender;
-  }
+  timeToFirstRender: number | null = null;
 
   // Current desired set (keys) - updated each computeDesiredSet
   private desiredKeys = new Set<string>();
@@ -154,12 +146,14 @@ export class StreamingManager {
     dataProvider: DataProvider,
     metadata: VolumeMetadata,
     device: GPUDevice,
+    config: DatasetConfig,
     pageLoadStartTime?: number
   ) {
     this.renderer = renderer;
     this.dataProvider = dataProvider;
     this.metadata = metadata;
     this.device = device;
+    this.config = config;
 
     // Use page load start time if provided for true time-to-first-render
     this.loadStartTime = pageLoadStartTime ?? performance.now();
@@ -192,7 +186,7 @@ export class StreamingManager {
           const key = `lod${maxLod}:${bz}/${by}/${bx}`;
 
           // Check if empty
-          const isEmpty = await this.dataProvider.isBrickEmpty(maxLod, bx, by, bz);
+          const isEmpty = await this.dataProvider.isBrickEmpty(maxLod, bx, by, bz, this.config.emptyBrickThreshold);
           if (isEmpty) {
             this.emptyBricks.add(key);
             this.renderer.indirection.setEmpty(bx, by, bz, maxLod);
@@ -241,8 +235,8 @@ export class StreamingManager {
       }
     }
 
-    this._baseLodLoaded = true;
-    this._timeToFirstRender = performance.now() - this.loadStartTime;
+    this.baseLodLoaded = true;
+    this.timeToFirstRender = performance.now() - this.loadStartTime;
 
     // Notify callback with base LOD brick data
     if (allBrickData.length > 0 && this.onBaseLodLoaded) {
@@ -329,7 +323,7 @@ export class StreamingManager {
     this.brickCache.clear();
     this.desiredKeys.clear();
     this.loadQueue = [];
-    this._baseLodLoaded = false;
+    this.baseLodLoaded = false;
     this.renderer.indirection.clearAll();
 
     // Reload base LOD
@@ -347,7 +341,7 @@ export class StreamingManager {
       totalBytesDownloaded: networkStats.totalBytesDownloaded,
       bytesPerSecond: networkStats.recentBytesPerSecond,
       requestCount: networkStats.requestCount,
-      timeToFirstRender: this._timeToFirstRender,
+      timeToFirstRender: this.timeToFirstRender,
     };
   }
 
@@ -366,7 +360,7 @@ export class StreamingManager {
     const aspect = canvas.width / canvas.height;
     const viewMatrix = camera.getViewMatrix();
     const projMatrix = camera.getProjectionMatrix(aspect);
-    const viewProj = multiplyMatrices(projMatrix, viewMatrix);
+    const viewProj = mat4.multiply(projMatrix, viewMatrix);
     const frustum = extractFrustumPlanes(viewProj);
 
     // Compute projection factor for SSE calculation
@@ -581,7 +575,7 @@ export class StreamingManager {
     if (signal.aborted) return;
 
     // Check if empty
-    const isEmpty = await this.dataProvider.isBrickEmpty(lod, bx, by, bz);
+    const isEmpty = await this.dataProvider.isBrickEmpty(lod, bx, by, bz, this.config.emptyBrickThreshold);
     if (signal.aborted) return;
 
     if (isEmpty) {
@@ -688,7 +682,7 @@ export class StreamingManager {
     const level = this.metadata.levels.find(l => l.lod === lod);
     if (!level) return { min: [0, 0, 0], max: [0, 0, 0] };
 
-    const normalizedSize = getNormalizedSize();
+    const normalizedSize = this.config.normalizedSize;
     const [gridX, gridY, gridZ] = level.brickGrid;
     const brickSize: [number, number, number] = [
       normalizedSize[0] / gridX,
@@ -733,7 +727,7 @@ export class StreamingManager {
    * At LOD N, each voxel represents 2^N original voxels
    */
   private getVoxelWorldSize(lod: number): number {
-    const normalizedSize = getNormalizedSize();
+    const normalizedSize = this.config.normalizedSize;
     const dims = this.metadata.dimensions;
 
     // Base voxel size in normalized space (LOD 0)

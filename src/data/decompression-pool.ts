@@ -7,6 +7,7 @@
  */
 
 import type { DecompressRequest, DecompressResponse } from './decompression-worker.js';
+import DecompressionWorker from './decompression-worker.ts?worker&inline';
 
 interface PendingRequest {
   resolve: (data: Uint8Array) => void;
@@ -18,17 +19,8 @@ export class DecompressionPool {
   private nextWorkerIndex = 0;
   private requestId = 0;
   private pendingRequests = new Map<number, PendingRequest>();
-  private _enabled = true;
+  enabled = true;
   private targetFormat: 'r8unorm' | 'r16unorm' | 'r16float' = 'r16unorm';
-
-  /** Whether compression is enabled (can be toggled for backwards compatibility) */
-  get enabled(): boolean {
-    return this._enabled;
-  }
-
-  set enabled(value: boolean) {
-    this._enabled = value;
-  }
 
   /**
    * Set target texture format for decompressed data
@@ -40,10 +32,7 @@ export class DecompressionPool {
 
   constructor(poolSize: number = navigator.hardwareConcurrency ? Math.min(navigator.hardwareConcurrency, 8) : 4) {
     for (let i = 0; i < poolSize; i++) {
-      const worker = new Worker(
-        new URL('./decompression-worker.ts', import.meta.url),
-        { type: 'module' }
-      );
+      const worker = new DecompressionWorker();
 
       worker.onmessage = (event: MessageEvent<DecompressResponse>) => {
         const { id, data, error } = event.data;

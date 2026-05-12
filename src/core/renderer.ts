@@ -2,6 +2,7 @@
  * Volume Renderer using proxy box geometry
  */
 
+import { mat4 } from 'wgpu-matrix';
 import { Camera } from './camera.js';
 import { VolumeCanvas, createVolumeCanvas, writeToCanvas } from './volume.js';
 import { createBox, createAxis } from '../utils/geometry.js';
@@ -9,7 +10,7 @@ import { TransferFunction } from './transfer-function.js';
 import { IndirectionTable } from './indirection.js';
 import { AtlasAllocator, AtlasSlot } from '../streaming/atlas-allocator.js';
 import { volumeShader, wireframeShader, axisShader, computeShader, blitShader, accumulateShader } from '../shaders/index.js';
-import { getDatasetSize, getNormalizedSize } from './config.js';
+import type { DatasetConfig } from './config.js';
 import type { BitDepth } from '../data/data-provider.js';
 
 export type RenderMode = 'fragment' | 'compute';
@@ -124,6 +125,8 @@ export class Renderer {
   // Frame counter for temporal jitter
   private frameIndex = 0;
 
+  private readonly config: DatasetConfig;
+
   // Pre-allocated scratch buffers (avoid per-frame GC pressure)
   private readonly vpScratch = new Float32Array(16);
   private readonly invVPScratch = new Float32Array(16);
@@ -136,20 +139,21 @@ export class Renderer {
     1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1,
   ]);
 
-  constructor(device: GPUDevice, format: GPUTextureFormat, bitDepth: BitDepth, textureFormat: GPUTextureFormat) {
+  constructor(device: GPUDevice, format: GPUTextureFormat, bitDepth: BitDepth, textureFormat: GPUTextureFormat, config: DatasetConfig) {
     this.device = device;
+    this.config = config;
 
     // Create volume canvas (empty) with specified bit depth and format
     this.canvas = createVolumeCanvas(device, bitDepth, textureFormat);
 
     // Create indirection table for virtual texturing
-    this.indirection = new IndirectionTable(device);
+    this.indirection = new IndirectionTable(device, config);
 
     // Create atlas allocator
     this.allocator = new AtlasAllocator();
 
     // Create geometry (normalized proxy based on dataset aspect ratio)
-    const box = createBox();
+    const box = createBox(config.normalizedSize);
 
     this.vertexBuffer = device.createBuffer({
       size: box.vertices.byteLength,
@@ -584,7 +588,7 @@ export class Renderer {
     const aspect = this.depthTexture.width / this.depthTexture.height;
     const view = camera.getViewMatrix();
     const proj = camera.getProjectionMatrix(aspect);
-    multiplyMatrices(proj, view, this.vpScratch);
+    mat4.multiply(proj, view, this.vpScratch);
 
     if (this.renderMode === 'compute') {
       this.renderCompute(colorView, camera, this.vpScratch);
@@ -615,9 +619,9 @@ export class Renderer {
     d.set(Renderer.IDENTITY_MAT4, 16);         // 16-31: inverseModel
     d.set(camera.position, 32);                // 32-34: cameraPos
     d[35] = this.useIndirection ? 1.0 : 0.0;  // 35: useIndirection
-    d.set(getDatasetSize(), 36);               // 36-38: datasetSize
+    d.set(this.config.dimensions, 36);         // 36-38: datasetSize
     dv.setInt32(39 * 4, this.getRenderModeInt(), true);  // 39: renderMode (i32)
-    d.set(getNormalizedSize(), 40);            // 40-42: normalizedSize
+    d.set(this.config.normalizedSize, 40);    // 40-42: normalizedSize
     d[43] = this.isoValue;                     // 43: isoValue
     dv.setUint32(44 * 4, this.frameIndex, true);  // 44: frameIndex (u32)
     // 45: _pad1
@@ -689,7 +693,7 @@ export class Renderer {
     const view = camera.getViewMatrix();
     const proj = camera.getProjectionMatrix(aspect);
     const out = new Float32Array(16);
-    multiplyMatrices(proj, view, out);
+    mat4.multiply(proj, view, out);
     return out;
   }
 
@@ -709,7 +713,7 @@ export class Renderer {
     }
 
     // Compute inverse view-projection for ray generation (writes into scratch buffer)
-    invertMatrix(vp, this.invVPScratch);
+    mat4.inverse(vp, this.invVPScratch);
 
     // Update compute uniforms (reuse pre-allocated scratch buffer)
     // Layout: mat4 inverseViewProj (64) + vec3 cameraPos (12) + useIndirection (4)
@@ -720,9 +724,9 @@ export class Renderer {
     d.set(this.invVPScratch, 0);               // 0-15: inverseViewProj
     d.set(camera.position, 16);                // 16-18: cameraPos
     d[19] = this.useIndirection ? 1.0 : 0.0;  // 19: useIndirection
-    d.set(getDatasetSize(), 20);               // 20-22: datasetSize
+    d.set(this.config.dimensions, 20);         // 20-22: datasetSize
     dv.setInt32(23 * 4, this.getRenderModeInt(), true);  // 23: renderMode (i32)
-    d.set(getNormalizedSize(), 24);            // 24-26: normalizedSize
+    d.set(this.config.normalizedSize, 24);    // 24-26: normalizedSize
     d[27] = this.isoValue;                     // 27: isoValue
     d[28] = this.computeWidth;                 // 28: screenSize.x
     d[29] = this.computeHeight;                // 29: screenSize.y
@@ -824,72 +828,4 @@ export class Renderer {
 
     this.device.queue.submit([encoder.finish()]);
   }
-}
-
-function multiplyMatrices(a: Float32Array, b: Float32Array, out: Float32Array): void {
-  for (let i = 0; i < 4; i++) {
-    for (let j = 0; j < 4; j++) {
-      out[j * 4 + i] =
-        a[i]! * b[j * 4]! +
-        a[i + 4]! * b[j * 4 + 1]! +
-        a[i + 8]! * b[j * 4 + 2]! +
-        a[i + 12]! * b[j * 4 + 3]!;
-    }
-  }
-}
-
-function invertMatrix(m: Float32Array, out: Float32Array): void {
-  // Use explicit indexing to avoid TS strict mode issues
-  const m0 = m[0]!, m1 = m[1]!, m2 = m[2]!, m3 = m[3]!;
-  const m4 = m[4]!, m5 = m[5]!, m6 = m[6]!, m7 = m[7]!;
-  const m8 = m[8]!, m9 = m[9]!, m10 = m[10]!, m11 = m[11]!;
-  const m12 = m[12]!, m13 = m[13]!, m14 = m[14]!, m15 = m[15]!;
-
-  const inv0 = m5 * m10 * m15 - m5 * m11 * m14 - m9 * m6 * m15 +
-               m9 * m7 * m14 + m13 * m6 * m11 - m13 * m7 * m10;
-  const inv4 = -m4 * m10 * m15 + m4 * m11 * m14 + m8 * m6 * m15 -
-               m8 * m7 * m14 - m12 * m6 * m11 + m12 * m7 * m10;
-  const inv8 = m4 * m9 * m15 - m4 * m11 * m13 - m8 * m5 * m15 +
-               m8 * m7 * m13 + m12 * m5 * m11 - m12 * m7 * m9;
-  const inv12 = -m4 * m9 * m14 + m4 * m10 * m13 + m8 * m5 * m14 -
-                m8 * m6 * m13 - m12 * m5 * m10 + m12 * m6 * m9;
-
-  const inv1 = -m1 * m10 * m15 + m1 * m11 * m14 + m9 * m2 * m15 -
-               m9 * m3 * m14 - m13 * m2 * m11 + m13 * m3 * m10;
-  const inv5 = m0 * m10 * m15 - m0 * m11 * m14 - m8 * m2 * m15 +
-               m8 * m3 * m14 + m12 * m2 * m11 - m12 * m3 * m10;
-  const inv9 = -m0 * m9 * m15 + m0 * m11 * m13 + m8 * m1 * m15 -
-               m8 * m3 * m13 - m12 * m1 * m11 + m12 * m3 * m9;
-  const inv13 = m0 * m9 * m14 - m0 * m10 * m13 - m8 * m1 * m14 +
-                m8 * m2 * m13 + m12 * m1 * m10 - m12 * m2 * m9;
-
-  const inv2 = m1 * m6 * m15 - m1 * m7 * m14 - m5 * m2 * m15 +
-               m5 * m3 * m14 + m13 * m2 * m7 - m13 * m3 * m6;
-  const inv6 = -m0 * m6 * m15 + m0 * m7 * m14 + m4 * m2 * m15 -
-               m4 * m3 * m14 - m12 * m2 * m7 + m12 * m3 * m6;
-  const inv10 = m0 * m5 * m15 - m0 * m7 * m13 - m4 * m1 * m15 +
-                m4 * m3 * m13 + m12 * m1 * m7 - m12 * m3 * m5;
-  const inv14 = -m0 * m5 * m14 + m0 * m6 * m13 + m4 * m1 * m14 -
-                m4 * m2 * m13 - m12 * m1 * m6 + m12 * m2 * m5;
-
-  const inv3 = -m1 * m6 * m11 + m1 * m7 * m10 + m5 * m2 * m11 -
-               m5 * m3 * m10 - m9 * m2 * m7 + m9 * m3 * m6;
-  const inv7 = m0 * m6 * m11 - m0 * m7 * m10 - m4 * m2 * m11 +
-               m4 * m3 * m10 + m8 * m2 * m7 - m8 * m3 * m6;
-  const inv11 = -m0 * m5 * m11 + m0 * m7 * m9 + m4 * m1 * m11 -
-                m4 * m3 * m9 - m8 * m1 * m7 + m8 * m3 * m5;
-  const inv15 = m0 * m5 * m10 - m0 * m6 * m9 - m4 * m1 * m10 +
-                m4 * m2 * m9 + m8 * m1 * m6 - m8 * m2 * m5;
-
-  let det = m0 * inv0 + m1 * inv4 + m2 * inv8 + m3 * inv12;
-  if (det === 0) {
-    out.fill(0);
-    return;
-  }
-
-  det = 1.0 / det;
-  out[0] = inv0 * det;  out[1] = inv1 * det;  out[2] = inv2 * det;  out[3] = inv3 * det;
-  out[4] = inv4 * det;  out[5] = inv5 * det;  out[6] = inv6 * det;  out[7] = inv7 * det;
-  out[8] = inv8 * det;  out[9] = inv9 * det;  out[10] = inv10 * det; out[11] = inv11 * det;
-  out[12] = inv12 * det; out[13] = inv13 * det; out[14] = inv14 * det; out[15] = inv15 * det;
 }

@@ -1,0 +1,388 @@
+/**
+ * KilnViewer — self-contained WebGPU volume renderer
+ *
+ * Encapsulates WebGPU initialisation, data provider selection, subsystem
+ * construction, the render loop, and resize handling.  The application layer
+ * (main.ts) is responsible for URL parsing, the dataset dialog, the share
+ * button, analytics, and the optional VolumeUI panel.
+ */
+
+import { Renderer, VolumeRenderMode } from './core/renderer.js';
+import { Camera, UpAxis } from './core/camera.js';
+import { TransferFunction, TFPreset } from './core/transfer-function.js';
+import { StreamingManager } from './streaming/streaming-manager.js';
+import { DatasetConfig } from './core/config.js';
+import { detectBest16BitFormat } from './core/volume.js';
+import type { DataProvider, VolumeMetadata } from './data/data-provider.js';
+import { ShardedDataProvider } from './data/sharded-provider.js';
+import { ZarrDataProvider } from './data/zarr-provider.js';
+
+export interface ViewerOptions {
+  /** Initial render mode */
+  mode?: VolumeRenderMode;
+  /** 16-bit window centre (0–1) */
+  windowCenter?: number;
+  /** 16-bit window width (0–1) */
+  windowWidth?: number;
+  /** Isosurface threshold (0–1) */
+  isoValue?: number;
+  /** Render resolution scale (0.25–1) */
+  renderScale?: number;
+  /** LOD screen-space error threshold in pixels */
+  maxPixelError?: number;
+  /** Axis-aligned clip minimum, normalised 0–1 */
+  clipMin?: [number, number, number];
+  /** Axis-aligned clip maximum, normalised 0–1 */
+  clipMax?: [number, number, number];
+  /** Transfer function colour preset */
+  tfPreset?: TFPreset;
+  /** Camera up axis */
+  upAxis?: UpAxis;
+  /** Camera orbit state [rx, ry, dist] or [rx, ry, dist, tx, ty, tz] */
+  cam?: [number, number, number] | [number, number, number, number, number, number];
+  /** performance.now() at page load, used for time-to-first-render metric */
+  pageLoadStart?: number;
+}
+
+/** Serialisable snapshot of viewer state — used by the share-URL feature */
+export interface ViewerState {
+  mode: VolumeRenderMode;
+  windowCenter: number;
+  windowWidth: number;
+  isoValue: number;
+  /** User-intended render scale (not the 0.25 interaction override) */
+  renderScale: number;
+  tfPreset: TFPreset;
+  upAxis: UpAxis;
+  cam: [number, number, number, number, number, number];
+  clipMin: [number, number, number];
+  clipMax: [number, number, number];
+}
+
+export class KilnViewer {
+  readonly renderer: Renderer;
+  readonly camera: Camera;
+  readonly transferFunction: TransferFunction;
+  readonly streamingManager: StreamingManager;
+  readonly device: GPUDevice;
+  readonly metadata: VolumeMetadata;
+
+  /**
+   * Optional callback invoked at the start of every render frame.
+   * Use this to drive frame-rate tracking in the UI layer.
+   *
+   * @example
+   * viewer.onBeforeFrame = () => ui.recordFrame();
+   */
+  onBeforeFrame?: () => void;
+
+  private readonly dataProvider: DataProvider;
+  private readonly context: GPUCanvasContext;
+  private readonly canvas: HTMLCanvasElement;
+  private readonly resizeObserver: ResizeObserver;
+  private rafHandle = 0;
+  /** User-intended render scale; the frame loop may temporarily override it to
+   *  0.25 during camera interaction. */
+  private userRenderScale: number;
+  private disposed = false;
+
+  private constructor(
+    device: GPUDevice,
+    canvas: HTMLCanvasElement,
+    context: GPUCanvasContext,
+    renderer: Renderer,
+    camera: Camera,
+    transferFunction: TransferFunction,
+    streamingManager: StreamingManager,
+    dataProvider: DataProvider,
+    metadata: VolumeMetadata,
+    userRenderScale: number,
+  ) {
+    this.device = device;
+    this.canvas = canvas;
+    this.context = context;
+    this.renderer = renderer;
+    this.camera = camera;
+    this.transferFunction = transferFunction;
+    this.streamingManager = streamingManager;
+    this.dataProvider = dataProvider;
+    this.metadata = metadata;
+    this.userRenderScale = userRenderScale;
+
+    this.resizeObserver = new ResizeObserver(() => this.resize());
+    this.resizeObserver.observe(canvas);
+    this.resize(); // Ensure correct dimensions before first frame
+
+    this.rafHandle = requestAnimationFrame(() => this.frame());
+  }
+
+  /**
+   * Create a fully initialised KilnViewer.
+   *
+   * @param canvas  The canvas element to render into.
+   * @param dataset URL string (HTTP sharded or OME-Zarr) **or** a pre-constructed
+   *                DataProvider (e.g. LocalZarrDataProvider for File System API).
+   * @param options Optional initial viewer state.
+   */
+  static async create(
+    canvas: HTMLCanvasElement,
+    dataset: string | DataProvider,
+    options: ViewerOptions = {},
+  ): Promise<KilnViewer> {
+
+    // WebGPU init 
+    const adapter = await navigator.gpu?.requestAdapter();
+    if (!adapter) throw new Error('WebGPU not supported');
+
+    const adapterLimits = adapter.limits;
+    const device = await adapter.requestDevice({
+      requiredLimits: {
+        maxBufferSize: adapterLimits.maxBufferSize,
+        maxStorageBufferBindingSize: adapterLimits.maxStorageBufferBindingSize,
+        maxTextureDimension3D: adapterLimits.maxTextureDimension3D,
+      },
+    });
+
+    const format = navigator.gpu.getPreferredCanvasFormat();
+    const context = canvas.getContext('webgpu')!;
+    context.configure({ device, format });
+
+    // Data provider
+    let dataProvider: DataProvider;
+    const isExternalProvider = typeof dataset !== 'string';
+
+    if (isExternalProvider) {
+      dataProvider = dataset as DataProvider;
+    } else {
+      const isZarr = (dataset as string).includes('.zarr');
+      dataProvider = isZarr
+        ? new ZarrDataProvider(dataset as string)
+        : new ShardedDataProvider(dataset as string);
+    }
+
+    // Metadata and texture format detection 
+    const metadata = await dataProvider.initialize();
+    const sourceBitDepth = metadata.bitDepth;
+
+    let textureFormat: GPUTextureFormat;
+    let effectiveBitDepth = sourceBitDepth;
+
+    if (sourceBitDepth === 16) {
+      textureFormat = detectBest16BitFormat(device);
+      if (textureFormat === 'r8unorm') {
+        effectiveBitDepth = 8;
+        console.warn(
+          '[Kiln] ⚠️  GPU does not support 16-bit textures (r16unorm/r16float).\n' +
+          'Downsampling to 8-bit (quality loss).',
+        );
+      }
+    } else {
+      textureFormat = 'r8unorm';
+    }
+
+    // Configure worker target format (string-URL providers only)
+    if (!isExternalProvider) {
+      const isHttpZarr = (dataset as string).includes('.zarr');
+      if (isHttpZarr) {
+        await (dataProvider as ZarrDataProvider).setTargetFormat(
+          textureFormat as 'r8unorm' | 'r16float',
+        );
+      } else if (textureFormat !== 'r16unorm' || sourceBitDepth !== 16) {
+        (dataProvider as ShardedDataProvider).setTargetFormat(textureFormat as 'r8unorm' | 'r16float');
+      }
+    }
+
+    // Build DatasetConfig 
+    const config = new DatasetConfig(metadata.dimensions, metadata.voxelSpacing);
+
+    // Construct subsystems
+    const renderer = new Renderer(device, format, effectiveBitDepth, textureFormat, config);
+
+    // Apply 16-bit window/level defaults from metadata
+    if (effectiveBitDepth === 16) {
+      if (metadata.window) {
+        const { start, end, min, max } = metadata.window;
+        const range = max - min;
+        if (range > 0) {
+          renderer.windowCenter = Math.max(0, Math.min(1, ((start + end) / 2 - min) / range));
+          renderer.windowWidth = Math.max(0.01, Math.min(1, (end - start) / range));
+        }
+      } else {
+        renderer.windowCenter = 0.5;
+        renderer.windowWidth = 1.0;
+      }
+    }
+
+    const transferFunction = new TransferFunction(device);
+    renderer.setTransferFunction(transferFunction);
+
+    const camera = new Camera(canvas);
+
+    // Apply ViewerOptions overrides 
+    if (options.mode !== undefined) {
+      renderer.volumeRenderMode = options.mode;
+      renderer.resetAccumulation();
+    }
+    if (options.windowCenter !== undefined) {
+      renderer.windowCenter = options.windowCenter;
+      renderer.resetAccumulation();
+    }
+    if (options.windowWidth !== undefined) {
+      renderer.windowWidth = options.windowWidth;
+      renderer.resetAccumulation();
+    }
+    if (options.isoValue !== undefined) {
+      renderer.isoValue = options.isoValue;
+      renderer.resetAccumulation();
+    }
+    if (options.renderScale !== undefined) {
+      renderer.renderScale = options.renderScale;
+    }
+    if (options.clipMin !== undefined) {
+      renderer.clipMin.set(options.clipMin);
+      renderer.resetAccumulation();
+    }
+    if (options.clipMax !== undefined) {
+      renderer.clipMax.set(options.clipMax);
+      renderer.resetAccumulation();
+    }
+    if (options.tfPreset !== undefined) {
+      transferFunction.setPreset(options.tfPreset);
+      renderer.resetAccumulation();
+    }
+    if (options.upAxis !== undefined) {
+      camera.setUpAxis(options.upAxis);
+    }
+    if (options.cam !== undefined) {
+      camera.setOrbitState(options.cam);
+    }
+
+    // Streaming manager
+    const streamingManager = new StreamingManager(
+      renderer,
+      dataProvider,
+      metadata,
+      device,
+      config,
+      options.pageLoadStart,
+    );
+
+    if (options.maxPixelError !== undefined) {
+      streamingManager.maxPixelError = options.maxPixelError;
+    }
+
+    // Construct and return viewer
+    const userRenderScale = renderer.renderScale;
+
+    const viewer = new KilnViewer(
+      device,
+      canvas,
+      context,
+      renderer,
+      camera,
+      transferFunction,
+      streamingManager,
+      dataProvider,
+      metadata,
+      userRenderScale,
+    );
+
+    device.lost.then(() => viewer.dispose());
+
+    return viewer;
+  }
+
+  // Render state convenience API
+  get mode(): VolumeRenderMode { return this.renderer.volumeRenderMode; }
+  set mode(value: VolumeRenderMode) {
+    this.renderer.volumeRenderMode = value;
+    this.renderer.resetAccumulation();
+  }
+
+  get isoValue(): number { return this.renderer.isoValue; }
+  set isoValue(value: number) {
+    this.renderer.isoValue = value;
+    this.renderer.resetAccumulation();
+  }
+
+  get windowCenter(): number { return this.renderer.windowCenter; }
+  set windowCenter(value: number) {
+    this.renderer.windowCenter = value;
+    this.renderer.resetAccumulation();
+  }
+
+  get windowWidth(): number { return this.renderer.windowWidth; }
+  set windowWidth(value: number) {
+    this.renderer.windowWidth = value;
+    this.renderer.resetAccumulation();
+  }
+
+  get renderScale(): number { return this.userRenderScale; }
+  set renderScale(value: number) {
+    this.userRenderScale = value;
+  }
+
+  // State serialisation
+  getState(): ViewerState {
+    const [rx, ry, dist, tx, ty, tz] = this.camera.getOrbitState();
+    return {
+      mode: this.renderer.volumeRenderMode,
+      windowCenter: this.renderer.windowCenter,
+      windowWidth: this.renderer.windowWidth,
+      isoValue: this.renderer.isoValue,
+      renderScale: this.userRenderScale,
+      tfPreset: this.transferFunction.preset,
+      upAxis: this.camera.getUpAxis(),
+      cam: [rx, ry, dist, tx, ty, tz],
+      clipMin: [
+        this.renderer.clipMin[0]!,
+        this.renderer.clipMin[1]!,
+        this.renderer.clipMin[2]!,
+      ],
+      clipMax: [
+        this.renderer.clipMax[0]!,
+        this.renderer.clipMax[1]!,
+        this.renderer.clipMax[2]!,
+      ],
+    };
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    cancelAnimationFrame(this.rafHandle);
+    this.resizeObserver.disconnect();
+    this.dataProvider.dispose();
+  }
+
+  private resize(): void {
+    const maxDim = this.device.limits.maxTextureDimension2D;
+    const width = Math.max(1, Math.min(this.canvas.clientWidth, maxDim));
+    const height = Math.max(1, Math.min(this.canvas.clientHeight, maxDim));
+    if (this.canvas.width !== width || this.canvas.height !== height) {
+      this.canvas.width = width;
+      this.canvas.height = height;
+      this.renderer.resize(width, height);
+    }
+  }
+
+  private frame(): void {
+    if (this.disposed) return;
+
+    this.onBeforeFrame?.();
+
+    // Drop to 0.25 during camera interaction; restore to user scale afterward
+    const targetScale = this.camera.isInteracting() ? 0.25 : this.userRenderScale;
+    if (this.renderer.renderScale !== targetScale) {
+      this.renderer.renderScale = targetScale;
+      this.renderer.resizeComputeTexture();
+    }
+
+    this.streamingManager.update(this.camera, this.canvas);
+
+    const view = this.context.getCurrentTexture().createView();
+    this.renderer.render(view, this.camera);
+
+    this.rafHandle = requestAnimationFrame(() => this.frame());
+  }
+}

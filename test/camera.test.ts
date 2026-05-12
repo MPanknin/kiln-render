@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
+import { mat4 } from 'wgpu-matrix';
 import {
   extractFrustumPlanes,
   isAABBInFrustum,
-  multiplyMatrices,
   type FrustumPlanes,
 } from '../src/core/camera.js';
+
+const multiplyMatrices = (a: Float32Array, b: Float32Array) => mat4.multiply(a, b) as Float32Array;
 
 describe('Matrix Operations', () => {
   describe('multiplyMatrices', () => {

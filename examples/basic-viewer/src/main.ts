@@ -12,22 +12,20 @@ declare global {
   }
 }
 
-import { KilnViewer } from './viewer.js';
-import type { ViewerOptions } from './viewer.js';
-import { VolumeRenderMode } from './core/renderer.js';
-import type { TFPreset } from './core/transfer-function.js';
-import type { UpAxis } from './core/camera.js';
-import { LocalZarrDataProvider } from './data/local-zarr-provider.js';
-import type { DataProvider } from './data/data-provider.js';
-import { UnsupportedDatasetError } from './data/data-provider.js';
-import { preValidateRemoteZarr, preValidateLocalZarr } from './data/zarr-validator.js';
-import { clearHandle } from './data/handle-storage.js';
-import { VolumeUI } from './ui/volume-ui.js';
 import {
+  KilnViewer,
+  LocalZarrDataProvider,
+  UnsupportedDatasetError,
+  VolumeRenderMode,
+  preValidateRemoteZarr,
+  preValidateLocalZarr,
   promptForZarrDirectory,
   getStoredHandle,
-  requestPermission
-} from './data/local-loader.js';
+  requestPermission,
+  clearHandle,
+} from 'kiln-render';
+import type { ViewerOptions, DataProvider, TFPreset, UpAxis } from 'kiln-render';
+import { VolumeUI } from './ui/volume-ui.js';
 
 // Default volume source (can be overridden via ?dataset= URL parameter)
 const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/chameleon-16bit';

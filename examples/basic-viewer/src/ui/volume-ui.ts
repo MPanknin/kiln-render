@@ -3,13 +3,13 @@
  */
 
 import { Pane } from 'tweakpane';
-import { TransferFunction, TFPreset } from '../core/transfer-function.js';
-import { Renderer, VolumeRenderMode } from '../core/renderer.js';
-import { Camera, UpAxis } from '../core/camera.js';
-import { StreamingManager } from '../streaming/streaming-manager.js';
-import type { VolumeMetadata } from '../data/data-provider.js';
-import { computeHistogram } from '../core/histogram.js';
-import type { KilnViewer } from '../viewer.js';
+import type { TransferFunction, TFPreset } from '@kiln/core/transfer-function.js';
+import type { Renderer, VolumeRenderMode } from '@kiln/core/renderer.js';
+import type { Camera, UpAxis } from '@kiln/core/camera.js';
+import type { StreamingManager } from '@kiln/streaming/streaming-manager.js';
+import type { VolumeMetadata } from '@kiln/data/data-provider.js';
+import { computeHistogram } from '@kiln/core/histogram.js';
+import type { KilnViewer } from 'kiln-render';
 
 // Tweakpane's types don't fully export FolderApi, so use a minimal interface
 interface TweakpaneFolder {

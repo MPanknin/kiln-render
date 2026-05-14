@@ -157,11 +157,9 @@ https://mpanknin.github.io/kiln-render/?dataset=YOUR_DATASET_URL
 ?dataset=https://ome-zarr-scivis.s3.us-east-1.amazonaws.com/v0.5/96x2/kingsnake.ome.zarr
 ```
 
-### OME-Zarr (Experimental)
+### OME-Zarr
 
-OME-Zarr is easiest for external users - no preprocessing required, just point to a URL.
-
-> ⚠️ **Experimental feature:** Start with small datasets (< 500 MB) first, then scale up. Large datasets (> 4 GB) may feel sluggish depending on network bandwidth.
+OME-Zarr requires no preprocessing — just point to a URL.
 
 **Supported formats:**
 - OME-NGFF v0.5 only (v0.4 not supported)
@@ -209,33 +207,7 @@ Control rendering settings via URL parameters to share or bookmark specific view
 ?dataset=https://example.com/scan.ome.zarr&mode=mip&wc=0.2&ww=0.3&tf=coolwarm
 ```
 
----
-
-## Share Button
-
-Click the **Share** button (top-right) to copy the current view as a URL, including:
-- Dataset, render mode, window/level, camera position, clipping planes, etc.
-
-Use the URL to:
-- Share specific views with colleagues
-- Bookmark configurations
-- Embed in documentation
-
----
-
-## UI Controls
-
-| Control | Description |
-|---------|-------------|
-| **Mode** | DVR, MIP, ISO, or LOD visualization |
-| **Up Axis** | Camera orientation (X, Y, Z, -X, -Y, -Z) |
-| **Indirection** | Toggle virtual texturing on/off |
-| **Wireframe** | Show volume bounding box |
-| **Transfer Function** | Color/opacity presets and interactive curve editing |
-| **Window/Level** | Contrast adjustment for 16-bit data (center and width) |
-| **Gradient Opacity** | Modulate opacity based on gradient magnitude |
-| **Ambient Occlusion** | Local AO approximation (6-sample) |
-| **Clipping Planes** | Min/Max clipping bounds per axis |
+The **Share** button (top-right of the demo) copies the current view as a URL with all parameters filled in.
 
 ---
 
@@ -247,11 +219,7 @@ Kiln requires WebGPU. Chrome/Edge 113+ and Safari 26+ support it out of the box.
 
 ### How much VRAM does Kiln use?
 
-The atlas is a fixed-size 3D texture. With the default 1,000 brick slots it uses ~274 MiB for 8-bit data and ~548 MiB for 16-bit data. Usage stays constant regardless of dataset size.
-
-### Can I load my own data?
-
-Yes — either pass a URL to `KilnViewer.create()`, or use `LocalZarrDataProvider` to load from local disk. See the [Library API](#library-api) section above and the [Data Guide](data-guide.md).
+The atlas is fixed-size — usage is constant regardless of dataset size. See [Architecture](architecture.md) for details.
 
 ### What are the known rendering issues?
 

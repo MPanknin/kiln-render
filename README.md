@@ -90,7 +90,6 @@ Apache 2.0
 
 ## Note
 
->
 > [Read the full write-up on dev.to](https://dev.to/mpanknin/kiln-webgpu-native-out-of-core-volume-rendering-for-multi-gb-datasets-2alb)
 >
 > [Partly Kiln builds upon my earlier work on volume rendering](https://github.com/MPanknin/volume-occlusion-editor)

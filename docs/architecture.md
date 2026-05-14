@@ -91,6 +91,8 @@ The **atlas** is a single 3D texture (`660³`) organized as a 10×10×10 grid of
 - **8-bit volumes**: `r8unorm` (1 byte per voxel)
 - **16-bit volumes**: `r16unorm` (2 bytes per voxel, requires WebGPU `texture-formats-tier1` feature)
 
+> **Note:** Atlas dimensions (660³, 1,000 slots) are fixed at build time in `src/core/config.ts`. They are not configurable via the public `KilnViewer` API.
+
 ```
 Atlas Layout (660³ total)
 ┌──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┐

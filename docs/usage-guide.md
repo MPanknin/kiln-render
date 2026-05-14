@@ -1,12 +1,150 @@
 # Usage Guide
 
-How to load custom datasets and use URL parameters with Kiln.
+How to embed Kiln in your own application, load datasets, and use the demo viewer's URL parameters.
 
 See also: [Architecture](architecture.md) | [Rendering Pipeline](rendering.md) | [Data Guide](data-guide.md) | [WebGPU Notes](webgpu.md)
 
 ---
 
-## Loading Custom Datasets
+## Library API
+
+### Installation
+
+```bash
+npm install kiln-render
+```
+
+### Basic usage
+
+```typescript
+import { KilnViewer } from 'kiln-render';
+
+const canvas = document.querySelector('canvas')!;
+const viewer = await KilnViewer.create(canvas, 'https://example.com/scan.ome.zarr');
+```
+
+`KilnViewer.create()` handles WebGPU initialisation, data provider setup, and starts the render loop. It accepts a URL string (OME-Zarr or Kiln sharded binary) or a pre-constructed `DataProvider` instance.
+
+### ViewerOptions
+
+Pass an optional third argument to set the initial viewer state:
+
+```typescript
+const viewer = await KilnViewer.create(canvas, url, {
+  mode: 'dvr',          // 'dvr' | 'mip' | 'iso' | 'lod'
+  windowCenter: 0.35,   // 0–1 (16-bit window centre)
+  windowWidth: 0.55,    // 0–1 (16-bit window width)
+  isoValue: 0.2,        // 0–1 (isosurface threshold)
+  renderScale: 0.75,    // 0.25–1.0 (render resolution multiplier)
+  maxPixelError: 2.0,   // LOD screen-space error threshold in pixels
+  tfPreset: 'grayscale',// transfer function colour preset
+  upAxis: '-y',         // camera up axis
+  cam: [0.07, 3.63, 3.93, 0.10, 0.00, -0.06], // [rx, ry, dist, tx, ty, tz]
+  clipMin: [0, 0, 0],   // axis-aligned clip minimum (normalised 0–1)
+  clipMax: [1, 1, 1],   // axis-aligned clip maximum (normalised 0–1)
+});
+```
+
+### Controlling the viewer
+
+All render parameters are accessible as properties on the viewer:
+
+```typescript
+viewer.mode = 'mip';
+viewer.windowCenter = 0.4;
+viewer.windowWidth = 0.3;
+viewer.isoValue = 0.25;
+viewer.renderScale = 0.5;
+
+// Direct access to subsystems
+viewer.camera;           // Camera
+viewer.renderer;         // Renderer
+viewer.transferFunction; // TransferFunction
+viewer.streamingManager; // StreamingManager
+viewer.metadata;         // VolumeMetadata (dimensions, spacing, bitDepth, …)
+```
+
+### State serialisation
+
+`getState()` returns a plain object snapshot of the current viewer state, useful for share-URL features:
+
+```typescript
+const state = viewer.getState();
+// {
+//   mode, windowCenter, windowWidth, isoValue, renderScale,
+//   tfPreset, upAxis, cam, clipMin, clipMax
+// }
+```
+
+### Frame hook
+
+```typescript
+viewer.onBeforeFrame = () => ui.recordFrame();
+```
+
+Called at the start of every RAF tick. Use it to drive FPS counters or frame-rate tracking.
+
+### Cleanup
+
+```typescript
+viewer.dispose(); // cancels RAF loop, disconnects ResizeObserver, terminates workers
+```
+
+### Local filesystem loading
+
+Load a local `.zarr` or `.ome.zarr` directory using the File System Access API:
+
+```typescript
+import {
+  KilnViewer,
+  LocalZarrDataProvider,
+  promptForZarrDirectory,
+  preValidateLocalZarr,
+} from 'kiln-render';
+
+// Show the native directory picker
+const handle = await promptForZarrDirectory();
+
+// Optional: validate before loading
+const issues = await preValidateLocalZarr(handle);
+if (issues.length > 0) {
+  console.error('Unsupported dataset:', issues);
+  return;
+}
+
+const provider = new LocalZarrDataProvider(handle);
+const viewer = await KilnViewer.create(canvas, provider);
+```
+
+> **Browser requirement:** The File System Access API is currently only supported in Chrome/Edge. `promptForZarrDirectory()` throws if the API is unavailable.
+
+Previously granted handles can be restored across page loads:
+
+```typescript
+import { getStoredHandle, requestPermission } from 'kiln-render';
+
+const handle = await getStoredHandle();
+if (handle && await requestPermission(handle)) {
+  const viewer = await KilnViewer.create(canvas, new LocalZarrDataProvider(handle));
+}
+```
+
+### Pre-validating remote datasets
+
+Check a remote URL for compatibility before starting a load:
+
+```typescript
+import { preValidateRemoteZarr } from 'kiln-render';
+
+const issues = await preValidateRemoteZarr('https://example.com/scan.ome.zarr');
+if (issues.length > 0) {
+  // e.g. 'Multi-channel datasets are not supported'
+}
+```
+
+---
+
+## Demo Viewer — Loading Custom Datasets
 
 Add the `dataset` URL parameter to load your own data:
 
@@ -109,16 +247,16 @@ Kiln requires WebGPU. Chrome/Edge 113+ and Safari 26+ support it out of the box.
 
 ### How much VRAM does Kiln use?
 
-The atlas is a fixed-size 3D texture. With the default 1,000 brick slots it uses ~274 MiB for 8-bit data and ~548 MiB for 16-bit data. You can adjust the atlas size in `config.ts` for different quality/memory tradeoffs, but usage always stays constant regardless of dataset size.
+The atlas is a fixed-size 3D texture. With the default 1,000 brick slots it uses ~274 MiB for 8-bit data and ~548 MiB for 16-bit data. Usage stays constant regardless of dataset size.
 
 ### Can I load my own data?
 
-Yes! The easiest way is to use OME-Zarr datasets directly via URL parameters. See the "Loading Custom Datasets" section above for instructions. For advanced preprocessing, see the [Data Guide](data-guide.md).
+Yes — either pass a URL to `KilnViewer.create()`, or use `LocalZarrDataProvider` to load from local disk. See the [Library API](#library-api) section above and the [Data Guide](data-guide.md).
 
 ### What are the known rendering issues?
 
-Brick boundary seams are still visible in some cases, especially in isosurface (ISO) mode where normal estimation samples across brick edges. LOD transitions can also produce brief visual discontinuities while bricks stream in. These are known issues and will be addressed in the future.
+Brick boundary seams are still visible in some cases, especially in isosurface (ISO) mode where normal estimation samples across brick edges. LOD transitions can also produce brief visual discontinuities while bricks stream in.
 
 ### Can I use Kiln in my own application?
 
-Kiln is Apache 2.0 licensed, so you are free to use, modify, and integrate it. We plan to provide an installable npm package in the future, but for now Kiln is a standalone viewer. There is no stable public API yet and the internals may change, so if you build on top of it, pinning to a specific commit is recommended.
+Yes. Install `kiln-render` from npm and use `KilnViewer.create()` — see the [Library API](#library-api) section. Kiln is Apache 2.0 licensed.

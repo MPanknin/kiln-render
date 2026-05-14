@@ -14,7 +14,7 @@ Kiln streams multi-gigabyte volumes over HTTP, rendering them at interactive fra
 
 <img width="1725" height="907" alt="553008107-25ae5fa5-7fe6-49d1-b3b1-51784c6220a2" src="https://github.com/user-attachments/assets/f5da8ea1-a924-4ba6-9f29-6f6c18369405" />
 
-## Beechnut micro CT Scan (experimental OME-Zarr)
+## Beechnut micro CT Scan (OME-Zarr)
 #### 3092.0 MB - 1024 × 1024 × 1546 @ 16-bit
 <a href="https://mpanknin.github.io/kiln-render/?dataset=https%3A%2F%2Fd39zu0xtgv0613.cloudfront.net%2Fbeechnut.ome.zarr&mode=dvr&wc=0.22&ww=0.14&iso=0.20&tf=grayscale&up=-y&scale=0.5&cam=-0.090%2C2.130%2C3.171%2C-0.072%2C-0.025%2C-0.013" target="_blank">Live Demo</a>
 
@@ -29,7 +29,7 @@ npm install kiln-render
 ```typescript
 import { KilnViewer } from 'kiln-render';
 
-const canvas = document.querySelector('canvas');
+const canvas = document.querySelector('canvas')!;
 const viewer = await KilnViewer.create(canvas, 'https://your-dataset.ome.zarr');
 ```
 
@@ -39,24 +39,29 @@ Requires a browser with [WebGPU support](#browser-requirements). See the [Usage 
 
 ## Features
 
-- **Out-of-core streaming** - Fixed VRAM footprint, SSE-based LOD selection, LRU brick cache
-- **OME-Zarr & Kiln binary** - Stream from S3, CDN, or load local files (OME-Zarr v0.5, single-channel, uint8/uint16)
-- **16-bit support** - Native r16unorm textures with window/level controls
-- **Compute shader raymarching** - Brick-aware DVR, MIP, and isosurface rendering
-- **Transfer functions** - Interactive curve editor with color/opacity presets
-- **Worker-based pipeline** - Parallel decompression and brick assembly off the main thread
+- **Out-of-core streaming** — Fixed VRAM footprint, SSE-based LOD selection, LRU brick cache
+- **OME-Zarr & Kiln binary** — Stream from S3, CDN, or load local files (OME-Zarr v0.5, single-channel, uint8/uint16)
+- **Local filesystem** — Load local `.zarr` / `.ome.zarr` directories via the File System Access API (Chrome/Edge)
+- **16-bit support** — Native r16unorm textures with window/level controls
+- **Compute shader raymarching** — Brick-aware DVR, MIP, and isosurface rendering
+- **Transfer functions** — Interactive curve editor with colour/opacity presets
+- **Clipping planes** — Per-axis min/max clip in normalised 0–1 space
+- **Worker-based pipeline** — Parallel decompression and brick assembly off the main thread
 
-## Quick Start (development)
+## Development
 
 ```bash
 # Install dependencies
 npm install
 
-# Start development server
+# Start development server (loads the bundled demo)
 npm run dev
 
-# Build for production
+# Build demo for production
 npm run build
+
+# Build the library (outputs to lib/)
+npm run build:lib
 ```
 
 The demo loads a sample dataset from S3. To load custom datasets, see the [Usage Guide](docs/usage-guide.md).

@@ -39,8 +39,8 @@ function parseURLParams(): {
   const channelsStr = params.get('channels');
   if (channelsStr) {
     const parsed = channelsStr.split(';').map(part => {
-      const [r, g, b, a, vis] = part.split(',').map(Number);
-      return { r: r | 0, g: g | 0, b: b | 0, a, visible: vis !== 0 };
+      const nums = part.split(',').map(Number);
+      return { r: (nums[0] ?? NaN) | 0, g: (nums[1] ?? NaN) | 0, b: (nums[2] ?? NaN) | 0, a: nums[3] ?? NaN, visible: (nums[4] ?? 0) !== 0 };
     });
     if (parsed.every(ch => !isNaN(ch.r) && !isNaN(ch.g) && !isNaN(ch.b) && !isNaN(ch.a))) {
       channels = parsed;

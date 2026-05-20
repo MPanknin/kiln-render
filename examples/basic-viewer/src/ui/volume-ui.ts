@@ -79,11 +79,8 @@ export class VolumeUI {
     textureFormat: '',
     // Streaming
     atlasUsage: '',
-    loadedBricks: '',
     pendingBricks: '',
     evictedBricks: '',
-    culledBricks: '',
-    emptyBricks: '',
     // Network
     throughput: '',
     totalDownloaded: '',
@@ -435,11 +432,6 @@ export class VolumeUI {
       readonly: true,
     });
 
-    streamFolder.addBinding(this.statsParams, 'loadedBricks', {
-      label: 'Loaded',
-      readonly: true,
-    });
-
     streamFolder.addBinding(this.statsParams, 'pendingBricks', {
       label: 'Pending',
       readonly: true,
@@ -447,16 +439,6 @@ export class VolumeUI {
 
     streamFolder.addBinding(this.statsParams, 'evictedBricks', {
       label: 'Evicted',
-      readonly: true,
-    });
-
-    streamFolder.addBinding(this.statsParams, 'culledBricks', {
-      label: 'Culled',
-      readonly: true,
-    });
-
-    streamFolder.addBinding(this.statsParams, 'emptyBricks', {
-      label: 'Empty',
       readonly: true,
     });
 
@@ -480,7 +462,8 @@ export class VolumeUI {
 
     // Set static metadata info
     const dims = metadata.dimensions;
-    this.statsParams.dimensions = `${dims[0]} × ${dims[1]} × ${dims[2]}`;
+    const chSuffix = metadata.numChannels > 1 ? ` × ${metadata.numChannels}ch` : '';
+    this.statsParams.dimensions = `${dims[0]} × ${dims[1]} × ${dims[2]}${chSuffix}`;
 
     // Calculate raw file size in MB based on bit depth
     const totalVoxels = dims[0] * dims[1] * dims[2];
@@ -530,11 +513,8 @@ export class VolumeUI {
 
       const atlasPercent = ((stats.atlasUsage / stats.atlasCapacity) * 100).toFixed(0);
       this.statsParams.atlasUsage = `${stats.atlasUsage}/${stats.atlasCapacity} (${atlasPercent}%)`;
-      this.statsParams.loadedBricks = `${stats.loadedCount} / ${stats.desiredCount}`;
       this.statsParams.pendingBricks = `${stats.pendingCount}`;
       this.statsParams.evictedBricks = `${stats.evictedCount}`;
-      this.statsParams.culledBricks = `${stats.culledCount}`;
-      this.statsParams.emptyBricks = `${stats.emptyCount}`;
 
       // Network stats
       const throughputMBps = stats.bytesPerSecond / (1024 * 1024);

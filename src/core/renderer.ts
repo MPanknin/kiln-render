@@ -144,12 +144,16 @@ export class Renderer {
     1, 1, 1, 1,   // ch3: white
   ]);
 
+  // Per-channel windowing (0-1 normalized). Defaults: center=0.5, width=1.0 (full range).
+  readonly channelWindowCenter = new Float32Array([0.5, 0.5, 0.5, 0.5]);
+  readonly channelWindowWidth  = new Float32Array([1.0, 1.0, 1.0, 1.0]);
+
   // Pre-allocated scratch buffers (avoid per-frame GC pressure)
   private readonly vpScratch = new Float32Array(16);
   private readonly invVPScratch = new Float32Array(16);
-  private readonly fragUniformScratch = new Float32Array(76);
+  private readonly fragUniformScratch = new Float32Array(84);   // 336 bytes
   private readonly fragUniformView = new DataView(this.fragUniformScratch.buffer);
-  private readonly computeUniformScratch = new Float32Array(60);
+  private readonly computeUniformScratch = new Float32Array(68); // 272 bytes
   private readonly computeUniformView = new DataView(this.computeUniformScratch.buffer);
   private readonly accumScratch = new Float32Array(4);
   private static readonly IDENTITY_MAT4 = new Float32Array([
@@ -214,11 +218,12 @@ export class Renderer {
     // Create uniform buffers
     // Volume: mat4 mvp (64) + mat4 inverseModel (64) + vec3 cameraPos (12) + useIndirection (4)
     //       + vec3 datasetSize (12) + renderMode (4) + vec3 normalizedSize (12) + isoValue (4)
-    //       + frameIndex (4) + pad (4) + windowCenter (4) + windowWidth (4) + pad2 vec2 (8)
+    //       + frameIndex (4) + numChannels (4) + windowCenter (4) + windowWidth (4) + pad2 vec2 (8)
     //       + clipMin vec3 (12) + pad3 (4) + clipMax vec3 (12) + pad4 (4) + pad5 vec2 (8)
-    //       + channelColors array<vec4f,4> (64) = 304 bytes
+    //       + channelColors array<vec4f,4> (64)
+    //       + channelWindowCenter vec4f (16) + channelWindowWidth vec4f (16) = 336 bytes
     this.uniformBuffer = device.createBuffer({
-      size: 304,
+      size: 336,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -342,9 +347,10 @@ export class Renderer {
     //                       + vec3 datasetSize (12) + renderMode (4) + vec3 normalizedSize (12) + isoValue (4)
     //                       + vec2 screenSize (8) + frameIndex (4) + pad3 (4) + windowCenter (4) + windowWidth (4)
     //                       + pad4 vec2 (8) + clipMin vec3 (12) + pad5 (4) + clipMax vec3 (12) + numChannels (4)
-    //                       + channelColors array<vec4f,4> (64) = 240 bytes
+    //                       + channelColors array<vec4f,4> (64)
+    //                       + channelWindowCenter vec4f (16) + channelWindowWidth vec4f (16) = 272 bytes
     this.computeUniformBuffer = device.createBuffer({
-      size: 240,
+      size: 272,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -478,6 +484,14 @@ export class Renderer {
     this.channelColors[base + 1] = g;
     this.channelColors[base + 2] = b;
     this.channelColors[base + 3] = a;
+    this.resetAccumulation();
+  }
+
+  /** Set the window center and width for a channel (0–3). Resets accumulation. */
+  setChannelWindow(ch: number, center: number, width: number): void {
+    const i = Math.min(Math.max(0, ch), 3);
+    this.channelWindowCenter[i] = center;
+    this.channelWindowWidth[i]  = width;
     this.resetAccumulation();
   }
 
@@ -689,6 +703,8 @@ export class Renderer {
     d.set(this.clipMax, 54);                   // 54-56: clipMax
     // 57: _pad4, 58-59: _pad5 (alignment padding before channelColors)
     d.set(this.channelColors, 60);             // 60-75: channelColors array<vec4f,4>
+    d.set(this.channelWindowCenter, 76);       // 76-79: channelWindowCenter vec4f
+    d.set(this.channelWindowWidth, 80);        // 80-83: channelWindowWidth vec4f
     this.device.queue.writeBuffer(this.uniformBuffer, 0, d as Float32Array<ArrayBuffer>);
 
     // Update wireframe uniforms
@@ -798,6 +814,8 @@ export class Renderer {
     d.set(this.clipMax, 40);                   // 40-42: clipMax
     dv.setUint32(43 * 4, this.numChannels, true); // 43: numChannels (u32)
     d.set(this.channelColors, 44);             // 44-59: channelColors array<vec4f,4>
+    d.set(this.channelWindowCenter, 60);       // 60-63: channelWindowCenter vec4f
+    d.set(this.channelWindowWidth, 64);        // 64-67: channelWindowWidth vec4f
     this.device.queue.writeBuffer(this.computeUniformBuffer, 0, d as Float32Array<ArrayBuffer>);
 
     const encoder = this.device.createCommandEncoder();

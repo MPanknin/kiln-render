@@ -113,6 +113,8 @@ struct Uniforms {
     _pad4: f32,
     _pad5: vec2f,
     channelColors: array<vec4f, 4>,
+    channelWindowCenter: vec4f,
+    channelWindowWidth: vec4f,
 }
 
 ${sharedCode}
@@ -180,6 +182,8 @@ struct Uniforms {
     clipMax: vec3f,
     numChannels: u32,
     channelColors: array<vec4f, 4>,
+    channelWindowCenter: vec4f,
+    channelWindowWidth: vec4f,
 }
 
 ${sharedCode}

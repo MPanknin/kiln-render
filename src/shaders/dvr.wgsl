@@ -34,11 +34,14 @@ fn rayMarchDVR(
             let voxel = normalizedToVoxel(pos, normalizedSize, datasetSize);
 
             if (numCh > 1u) {
-                // Multi-channel: additive composite with per-channel colors from uniforms
+                // Multi-channel: per-channel windowing + additive composite
                 var weightedColor = vec3f(0.0);
                 var maxDensity = 0.0;
                 for (var ch = 0u; ch < numCh; ch++) {
-                    let density = sampleAtlasCh(ch, voxel, brick.indirection, brick.lodScale);
+                    let raw = sampleAtlasCh(ch, voxel, brick.indirection, brick.lodScale);
+                    let wc = uniforms.channelWindowCenter[ch];
+                    let ww = max(uniforms.channelWindowWidth[ch], 0.0001);
+                    let density = clamp((raw - (wc - ww * 0.5)) / ww, 0.0, 1.0);
                     let chColor = uniforms.channelColors[ch];
                     weightedColor += density * chColor.rgb * chColor.a;
                     maxDensity = max(maxDensity, density);

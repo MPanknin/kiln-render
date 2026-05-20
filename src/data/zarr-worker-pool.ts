@@ -7,7 +7,31 @@
  */
 
 import type { ZarrWorkerRequest, ZarrWorkerResponse } from './zarr-chunk-worker.js';
-import ZarrChunkWorker from './zarr-chunk-worker.ts?worker&inline';
+import ZarrChunkWorkerInline from './zarr-chunk-worker.ts?worker&inline';
+
+/**
+ * In dev, use a URL-based worker so zarrita codec chunks (blosc/zstd/lz4) can be
+ * loaded via the Vite dev server. Blob workers have null origin and cannot
+ * dynamically import modules from localhost.
+ *
+ * In production, use the pre-bundled inline worker where all codec deps are
+ * included via inlineDynamicImports — no external fetches needed.
+ */
+function createWorker(): Worker {
+  if (import.meta.env.DEV) {
+    // Use a URL-based worker in dev so zarrita codecs (blosc/zstd/lz4) can be
+    // dynamically imported from the dev server. Blob workers (?worker&inline)
+    // have null origin and cannot fetch back to localhost.
+    //
+    // Alias Worker + store the path in a variable: Vite's static analysers
+    // match `new Worker(new URL("literal", import.meta.url))` specifically —
+    // breaking either pattern prevents a spurious worker chunk in prod builds.
+    const DevWorker = Worker;
+    const devWorkerPath = './zarr-chunk-worker.ts';
+    return new DevWorker(new URL(devWorkerPath, import.meta.url), { type: 'module' });
+  }
+  return new ZarrChunkWorkerInline();
+}
 
 export interface BrickResult {
   data: Uint8Array | Uint16Array;
@@ -50,7 +74,7 @@ export class ZarrWorkerPool {
     const initPromises: Promise<void>[] = [];
 
     for (let i = 0; i < this.poolSize; i++) {
-      const worker = new ZarrChunkWorker();
+      const worker = createWorker();
 
       worker.onmessage = (event: MessageEvent<ZarrWorkerResponse>) => {
         const { type: msgType, id, error, data, min, max, avg } = event.data;
@@ -130,7 +154,7 @@ export class ZarrWorkerPool {
   /**
    * Load a fully assembled 66³ brick in a worker (off main thread)
    */
-  loadBrick(lod: number, bx: number, by: number, bz: number): Promise<BrickResult> {
+  loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0): Promise<BrickResult> {
     return new Promise((resolve, reject) => {
       const id = this.requestId++;
       const worker = this.workers[this.nextWorkerIndex]!;
@@ -138,7 +162,7 @@ export class ZarrWorkerPool {
 
       this.pendingRequests.set(id, { resolve, reject });
 
-      const req: ZarrWorkerRequest = { type: 'loadBrick', id, lod, bx, by, bz };
+      const req: ZarrWorkerRequest = { type: 'loadBrick', id, lod, bx, by, bz, channelIndex };
       worker.postMessage(req);
     });
   }

@@ -25,6 +25,19 @@ fn composeSampleWindowed(density: f32, stepSize: f32, maxDim: f32, windowCenter:
     }
 }
 
+// Compose a multi-channel additive sample (no TF — each channel has its own color/weight)
+// channelColor: pre-weighted sum of per-channel colors * densities
+// maxDensity: max across all channels (drives absorption)
+fn composeSampleAdditive(channelColor: vec3f, maxDensity: f32, stepSize: f32, maxDim: f32, color: ptr<function, vec3f>, alpha: ptr<function, f32>) {
+    if (maxDensity > 0.01) {
+        let extinction = maxDensity * stepSize * maxDim * 0.5;
+        let sampleAlpha = 1.0 - exp(-extinction);
+        let normColor = channelColor / maxDensity; // normalise to avoid over-brightening
+        *color += normColor * sampleAlpha * (1.0 - *alpha);
+        *alpha += sampleAlpha * (1.0 - *alpha);
+    }
+}
+
 // Compose a sample using transfer function lookup (no windowing - uses full range)
 fn composeSample(density: f32, stepSize: f32, maxDim: f32, color: ptr<function, vec3f>, alpha: ptr<function, f32>) {
     if (density > 0.01) {

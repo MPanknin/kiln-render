@@ -23,6 +23,19 @@ fn sampleAtlas(voxelPos: vec3f, indirection: vec4u, lodScale: f32) -> f32 {
     return textureSampleLevel(volumeTexture, volumeSampler, atlasPos, 0.0).r;
 }
 
+// Sample from any channel atlas (ch 0–3) using the shared indirection mapping
+fn sampleAtlasCh(ch: u32, voxelPos: vec3f, indirection: vec4u, lodScale: f32) -> f32 {
+    let posInBrick = (voxelPos % (LOGICAL_BRICK_SIZE * lodScale)) / lodScale;
+    let atlasBase = vec3f(indirection.xyz) * PHYSICAL_BRICK_SIZE / ATLAS_SIZE;
+    let atlasPos = atlasBase + ((posInBrick + BORDER + 0.5) / ATLAS_SIZE);
+    switch (ch) {
+        case 0u: { return textureSampleLevel(volumeTexture,  volumeSampler, atlasPos, 0.0).r; }
+        case 1u: { return textureSampleLevel(volumeTexture1, volumeSampler, atlasPos, 0.0).r; }
+        case 2u: { return textureSampleLevel(volumeTexture2, volumeSampler, atlasPos, 0.0).r; }
+        default: { return textureSampleLevel(volumeTexture3, volumeSampler, atlasPos, 0.0).r; }
+    }
+}
+
 // Direct atlas sampling without indirection (for debugging)
 fn sampleDirect(voxelPos: vec3f, datasetSize: vec3f) -> f32 {
     let atlasPos = voxelPos / ATLAS_SIZE;

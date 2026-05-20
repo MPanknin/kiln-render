@@ -67,6 +67,8 @@ export interface VolumeMetadata {
     min: number;
     max: number;
   };
+  /** Number of channels in the volume (1 for single-channel, N for multi-channel) */
+  numChannels: number;
 }
 
 /**
@@ -128,7 +130,7 @@ export interface DataProvider {
    * @param bz - Brick Z coordinate
    * @returns Brick data as Uint8Array or Uint16Array, or null if not found
    */
-  loadBrick(lod: number, bx: number, by: number, bz: number): Promise<BrickData | null>;
+  loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex?: number): Promise<BrickData | null>;
 
   /**
    * Check if a brick is empty (below threshold)

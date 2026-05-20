@@ -53,19 +53,36 @@ export class ZarrDataProvider extends BaseZarrProvider {
     const store = new TolerantFetchStore(this.url);
     const rootGroup = await open(root(store), { kind: 'group' });
 
-    // Parse OME multiscales from group attributes
-    const attrs = rootGroup.attrs as Record<string, unknown>;
-    const ms = extractMultiscales(attrs);
+    // Parse OME multiscales — try root attrs first, then bioformats2raw sub-group "0"
+    let attrs = rootGroup.attrs as Record<string, unknown>;
+    let ms = extractMultiscales(attrs);
+    let baseGroup: typeof rootGroup = rootGroup;
+    let subGroupPath = '';
+    if (!ms) {
+      try {
+        const subGroup = await open(rootGroup.resolve('0'), { kind: 'group' });
+        const subAttrs = subGroup.attrs as Record<string, unknown>;
+        const subMs = extractMultiscales(subAttrs);
+        if (subMs) {
+          baseGroup = subGroup as typeof rootGroup;
+          attrs = subAttrs;
+          ms = subMs;
+          subGroupPath = '0/';
+        }
+      } catch {
+        // sub-group doesn't exist
+      }
+    }
     if (!ms) {
       throw new UnsupportedDatasetError(['No OME-NGFF multiscales metadata found']);
     }
 
-    const arrayPaths = ms.datasets.map((ds: any) => ds.path);
+    const arrayPaths = ms.datasets.map((ds: any) => `${subGroupPath}${ds.path}`);
 
     // Open arrays on main thread to read metadata (shape, chunks, dtype)
     const arrays: ZarrArray<DataType, Readable>[] = [];
     for (const ds of ms.datasets) {
-      const arr = await open(rootGroup.resolve(ds.path), { kind: 'array' });
+      const arr = await open(baseGroup.resolve(ds.path), { kind: 'array' });
       arrays.push(arr);
     }
 
@@ -96,7 +113,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
    * Load a fully assembled 66³ brick via the worker pool.
    * The entire pipeline (fetch + decompress + re-chunk + stats) runs off main thread.
    */
-  async loadBrick(lod: number, bx: number, by: number, bz: number): Promise<BrickData | null> {
+  async loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0): Promise<BrickData | null> {
     const meta = this.getMetadata();
     const level = meta.levels.find(l => l.lod === lod);
     if (!level) return null;
@@ -108,7 +125,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
     }
 
     try {
-      const result = await this.workerPool!.loadBrick(lod, bx, by, bz);
+      const result = await this.workerPool!.loadBrick(lod, bx, by, bz, channelIndex);
 
       // Cache stats for isBrickEmpty checks
       this.cacheBrickStats(lod, bx, by, bz, {

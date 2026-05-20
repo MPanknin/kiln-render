@@ -12,10 +12,24 @@
  * and uploads the returned buffers to the GPU atlas.
  */
 
-import { open, root, Array as ZarrArray } from 'zarrita';
+import { open, root, Array as ZarrArray, registry } from 'zarrita';
 import type { DataType, Readable } from 'zarrita';
+import blosc from 'numcodecs/blosc';
+import lz4 from 'numcodecs/lz4';
+import zstd from 'numcodecs/zstd';
 import { TolerantFetchStore } from './tolerant-fetch-store.js';
 import { uint16ToFloat16 } from '../utils/float16.js';
+
+// Override zarrita's default codec registry with static imports.
+// By default zarrita lazily loads codecs via dynamic import("numcodecs/blosc") etc.,
+// which Vite pre-bundles to @fs paths that workers cannot fetch in dev mode.
+// Static imports bundle the codecs directly into the worker chunk.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+registry.set('blosc', async () => blosc as any);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+registry.set('lz4', async () => lz4 as any);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+registry.set('zstd', async () => zstd as any);
 
 /** Messages from main thread to worker */
 export interface ZarrWorkerRequest {
@@ -37,7 +51,11 @@ export interface ZarrWorkerRequest {
     scaleX: number; scaleY: number; scaleZ: number;
     actualDimX: number; actualDimY: number; actualDimZ: number;
     csx: number; csy: number; csz: number;
+    shapePrefixLength: number;
+    channelAxisIdx: number;
   }[];
+  /** Channel index to load (for multi-channel datasets) */
+  channelIndex?: number;
   is16bit?: boolean;
   /** Target texture format: r8unorm (8-bit), r16unorm (16-bit uint), r16float (16-bit float) */
   targetFormat?: 'r8unorm' | 'r16unorm' | 'r16float';
@@ -69,8 +87,8 @@ const chunkCache = new Map<string, { data: ArrayLike<number>; shape: number[]; b
 let cacheBytes = 0;
 const MAX_CACHE_BYTES = 128 * 1024 * 1024; // 128 MB per worker
 
-function cacheKey(lod: number, cz: number, cy: number, cx: number): string {
-  return `${lod}:${cz}/${cy}/${cx}`;
+function cacheKey(lod: number, cz: number, cy: number, cx: number, channelIndex: number): string {
+  return `${lod}:ch${channelIndex}:${cz}/${cy}/${cx}`;
 }
 
 function estimateBytes(data: ArrayLike<number>): number {
@@ -136,7 +154,8 @@ self.onmessage = async (event: MessageEvent<ZarrWorkerRequest>) => {
   } else if (type === 'loadBrick') {
     try {
       const { lod, bx, by, bz } = event.data;
-      const result = await assembleBrick(lod!, bx!, by!, bz!);
+      const channelIndex = event.data.channelIndex ?? 0;
+      const result = await assembleBrick(lod!, bx!, by!, bz!, channelIndex);
 
       const resp: ZarrWorkerResponse = {
         type: 'loadBrick', id,
@@ -160,11 +179,11 @@ self.onmessage = async (event: MessageEvent<ZarrWorkerRequest>) => {
  * Full brick assembly: fetch overlapping chunks, decompress, re-chunk into 66³ brick
  */
 async function assembleBrick(
-  lod: number, bx: number, by: number, bz: number
+  lod: number, bx: number, by: number, bz: number, channelIndex: number
 ): Promise<{ buffer: ArrayBuffer; min: number; max: number; avg: number }> {
   const arr = arrays[lod]!;
   const params = lodParams![lod]!;
-  const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz } = params;
+  const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx } = params;
   const physSize = PHYSICAL_SIZE;
 
   // Virtual brick voxel range (in uniformly downsampled space)
@@ -193,10 +212,14 @@ async function assembleBrick(
   for (let cz = minCz; cz <= maxCz; cz++) {
     for (let cy = minCy; cy <= maxCy; cy++) {
       for (let cx = minCx; cx <= maxCx; cx++) {
-        const key = cacheKey(lod, cz, cy, cx);
+        const key = cacheKey(lod, cz, cy, cx, channelIndex);
         if (!chunkCache.has(key)) {
+          const prefix = new Array(shapePrefixLength).fill(0);
+          if (channelAxisIdx >= 0 && channelAxisIdx < shapePrefixLength) {
+            prefix[channelAxisIdx] = channelIndex;
+          }
           fetchPromises.push(
-            arr.getChunk([cz, cy, cx]).then(chunk => {
+            arr.getChunk([...prefix, cz, cy, cx]).then(chunk => {
               cacheSet(key, chunk.data as unknown as ArrayLike<number>, chunk.shape);
             })
           );
@@ -236,7 +259,7 @@ async function assembleBrick(
         const lcy = gy - cy * csy;
         const lcz = gz - cz * csz;
 
-        const key = cacheKey(lod, cz, cy, cx);
+        const key = cacheKey(lod, cz, cy, cx, channelIndex);
         const chunk = chunkCache.get(key);
         if (chunk) {
           const chunkW = chunk.shape[chunk.shape.length - 1]!;

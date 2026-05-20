@@ -30,8 +30,24 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     const store = new FileSystemStore(this.dirHandle);
     const rootGroup = await open(root(store), { kind: 'group' });
 
-    const attrs = rootGroup.attrs as Record<string, unknown>;
-    const ms = extractMultiscales(attrs);
+    // Try root attrs first; fall back to bioformats2raw sub-group "0"
+    let attrs = rootGroup.attrs as Record<string, unknown>;
+    let ms = extractMultiscales(attrs);
+    let baseGroup: typeof rootGroup = rootGroup;
+    if (!ms) {
+      try {
+        const subGroup = await open(rootGroup.resolve('0'), { kind: 'group' });
+        const subAttrs = subGroup.attrs as Record<string, unknown>;
+        const subMs = extractMultiscales(subAttrs);
+        if (subMs) {
+          baseGroup = subGroup as typeof rootGroup;
+          attrs = subAttrs;
+          ms = subMs;
+        }
+      } catch {
+        // sub-group doesn't exist
+      }
+    }
     if (!ms) {
       throw new UnsupportedDatasetError(['No OME-NGFF multiscales metadata found']);
     }
@@ -39,7 +55,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     // Open arrays to read metadata
     this.arrays = [];
     for (const ds of ms.datasets) {
-      const arr = await open(rootGroup.resolve(ds.path), { kind: 'array' });
+      const arr = await open(baseGroup.resolve(ds.path), { kind: 'array' });
       this.arrays.push(arr);
     }
 
@@ -53,7 +69,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     return this.metadata;
   }
 
-  async loadBrick(lod: number, bx: number, by: number, bz: number): Promise<BrickData | null> {
+  async loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0): Promise<BrickData | null> {
     const meta = this.metadata;
     if (!meta) return null;
 
@@ -65,7 +81,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     }
 
     try {
-      const result = await this.assembleBrick(lod, bx, by, bz);
+      const result = await this.assembleBrick(lod, bx, by, bz, channelIndex);
 
       // Cache stats and track bytes
       this.cacheBrickStats(lod, bx, by, bz, result.stats);
@@ -78,10 +94,10 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     }
   }
 
-  private async assembleBrick(lod: number, bx: number, by: number, bz: number): Promise<{ data: BrickData; stats: BrickStats }> {
+  private async assembleBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0): Promise<{ data: BrickData; stats: BrickStats }> {
     const arr = this.arrays[lod]!;
     const params = this.lodParams[lod]!;
-    const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz } = params;
+    const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx } = params;
     const physSize = this.metadata!.physicalBrickSize;
     const logicalSize = this.metadata!.brickSize;
 
@@ -107,7 +123,11 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     for (let cz = minCz; cz <= maxCz; cz++) {
       for (let cy = minCy; cy <= maxCy; cy++) {
         for (let cx = minCx; cx <= maxCx; cx++) {
-          const chunk = await arr.getChunk([cz, cy, cx]);
+          const prefix = new Array(shapePrefixLength).fill(0);
+          if (channelAxisIdx >= 0 && channelAxisIdx < shapePrefixLength) {
+            prefix[channelAxisIdx] = channelIndex;
+          }
+          const chunk = await arr.getChunk([...prefix, cz, cy, cx]);
           const key = `${cz}/${cy}/${cx}`;
           chunkCache.set(key, {
             data: chunk.data as unknown as ArrayLike<number>,

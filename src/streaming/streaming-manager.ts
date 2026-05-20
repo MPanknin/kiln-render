@@ -193,33 +193,41 @@ export class StreamingManager {
             continue;
           }
 
-          // Load brick data
-          const data = await this.dataProvider.loadBrick(maxLod, bx, by, bz);
-          if (!data) continue;
+          // Load all channels in parallel — capped to renderer's supported count
+          const numChannels = this.renderer.numChannels;
+          const channelData = await Promise.all(
+            Array.from({ length: numChannels }, (_, ch) =>
+              this.dataProvider.loadBrick(maxLod, bx, by, bz, ch)
+            )
+          );
+          if (channelData.some(d => !d)) continue;
 
-          // Store for histogram computation
-          allBrickData.push(data);
+          // Store channel 0 for histogram computation
+          allBrickData.push(channelData[0]!);
 
-          // Allocate slot
+          // Allocate one slot (shared across channels — same atlas position)
           const result = this.renderer.allocator.allocate(this.frameCount);
           if (!result) {
             console.warn('Failed to allocate slot for base LOD brick');
             continue;
           }
 
-          // Upload to atlas
           const offset: [number, number, number] = [
             result.slot.x * PHYSICAL_BRICK_SIZE,
             result.slot.y * PHYSICAL_BRICK_SIZE,
             result.slot.z * PHYSICAL_BRICK_SIZE,
           ];
-          writeToCanvas(
-            this.device,
-            this.renderer.canvas,
-            data,
-            [PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE],
-            offset
-          );
+
+          // Upload each channel to its atlas at the same slot
+          for (let ch = 0; ch < numChannels; ch++) {
+            writeToCanvas(
+              this.device,
+              this.renderer.canvases[ch]!,
+              channelData[ch]!,
+              [PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE],
+              offset
+            );
+          }
 
           // Update indirection
           this.renderer.indirection.setBrick(bx, by, bz, result.slot.x, result.slot.y, result.slot.z, maxLod);
@@ -584,31 +592,35 @@ export class StreamingManager {
       return;
     }
 
-    // Try CPU cache first, fall back to network
-    let data = this.brickCache.get(key) ?? null;
-    if (!data) {
-      data = await this.dataProvider.loadBrick(lod, bx, by, bz);
-      if (signal.aborted) return;
-      if (!data) return;
-      this.brickCache.put(key, data);
-    }
+    // Try CPU cache first, fall back to network — load all channels in parallel
+    // Capped to renderer.numChannels (≤ 4) so we never write to a non-existent atlas
+    const numChannels = this.renderer.numChannels;
+    const channelData = await Promise.all(
+      Array.from({ length: numChannels }, async (_, ch) => {
+        const cacheKey = `ch${ch}:${key}`;
+        const cached = this.brickCache.get(cacheKey);
+        if (cached) return cached;
+        const data = await this.dataProvider.loadBrick(lod, bx, by, bz, ch);
+        if (data) this.brickCache.put(cacheKey, data);
+        return data;
+      })
+    );
+    if (signal.aborted || channelData.some(d => !d)) return;
 
     // CRITICAL: Check if still desired before uploading to GPU
     if (!this.desiredKeys.has(key)) {
-      // Brick is no longer needed - camera moved (data stays in CPU cache)
       return;
     }
 
-    // Allocate slot (will evict LRU if full, but never pinned slots)
+    // Allocate one slot (shared atlas position across all channels)
     const result = this.renderer.allocator.allocate(this.frameCount);
     if (!result) {
       console.warn('StreamingManager: allocation failed (all slots pinned?)');
       return;
     }
 
-    // Handle eviction - allocator already skips pinned slots
+    // Handle eviction
     if (result.evicted) {
-      // Find parent brick to fall back to
       const fallback = this.findParentBrick(result.evicted.bx, result.evicted.by, result.evicted.bz, result.evicted.lod);
 
       if (fallback) {
@@ -621,7 +633,6 @@ export class StreamingManager {
           fallback.lod
         );
       } else {
-        // No parent found - clear completely (shouldn't happen if base LOD is loaded)
         this.renderer.indirection.clearBrick(
           result.evicted.bx,
           result.evicted.by,
@@ -634,19 +645,21 @@ export class StreamingManager {
       this.lastStats.evictedCount++;
     }
 
-    // Upload to atlas
+    // Upload each channel to its atlas at the same slot coordinates
     const offset: [number, number, number] = [
       result.slot.x * PHYSICAL_BRICK_SIZE,
       result.slot.y * PHYSICAL_BRICK_SIZE,
       result.slot.z * PHYSICAL_BRICK_SIZE,
     ];
-    writeToCanvas(
-      this.device,
-      this.renderer.canvas,
-      data,
-      [PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE],
-      offset
-    );
+    for (let ch = 0; ch < numChannels; ch++) {
+      writeToCanvas(
+        this.device,
+        this.renderer.canvases[ch]!,
+        channelData[ch]!,
+        [PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE],
+        offset
+      );
+    }
 
     // Update indirection
     this.renderer.indirection.setBrick(bx, by, bz, result.slot.x, result.slot.y, result.slot.z, lod);

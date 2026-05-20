@@ -196,7 +196,7 @@ export class KilnViewer {
     const config = new DatasetConfig(metadata.dimensions, metadata.voxelSpacing);
 
     // Construct subsystems
-    const renderer = new Renderer(device, format, effectiveBitDepth, textureFormat, config);
+    const renderer = new Renderer(device, format, effectiveBitDepth, textureFormat, config, metadata.numChannels);
 
     // Apply 16-bit window/level defaults from metadata
     if (effectiveBitDepth === 16) {

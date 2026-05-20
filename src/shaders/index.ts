@@ -49,6 +49,9 @@ const sharedBindings = /* wgsl */ `
 @group(0) @binding(3) var tfSampler: sampler;
 @group(0) @binding(4) var tfTexture: texture_2d<f32>;
 @group(0) @binding(6) var indirectionTexture: texture_3d<u32>;
+@group(0) @binding(8) var volumeTexture1: texture_3d<f32>;
+@group(0) @binding(9) var volumeTexture2: texture_3d<f32>;
+@group(0) @binding(10) var volumeTexture3: texture_3d<f32>;
 `;
 
 // Assemble the common shader code
@@ -100,7 +103,7 @@ struct Uniforms {
     normalizedSize: vec3f,
     isoValue: f32,
     frameIndex: u32,
-    _pad1: u32,
+    numChannels: u32,
     windowCenter: f32,
     windowWidth: f32,
     _pad2: vec2f,
@@ -108,6 +111,8 @@ struct Uniforms {
     _pad3: f32,
     clipMax: vec3f,
     _pad4: f32,
+    _pad5: vec2f,
+    channelColors: array<vec4f, 4>,
 }
 
 ${sharedCode}
@@ -173,7 +178,8 @@ struct Uniforms {
     clipMin: vec3f,
     _pad5: f32,
     clipMax: vec3f,
-    _pad6: f32,
+    numChannels: u32,
+    channelColors: array<vec4f, 4>,
 }
 
 ${sharedCode}

@@ -27,12 +27,15 @@ import type {
 } from './data-provider.js';
 import { UnsupportedDatasetError } from './data-provider.js';
 import { NetworkTracker } from './network-tracker.js';
-import { extractMultiscales, validateZarrSupport } from './zarr-validator.js';
+import { extractMultiscales, normalizeAxes, validateZarrSupport } from './zarr-validator.js';
 
 /** OME-NGFF multiscales metadata (from group attributes) */
 export interface OmeMultiscales {
-  axes: { name: string; type: string; unit?: string }[];
+  // may be string[] (v0.4) or {name,type}[] (v0.5) or absent — use normalizeAxes()
+  // this needs to be hardened once the spec has settled
+  axes?: unknown; 
   datasets: { path: string; coordinateTransformations?: { type: string; scale?: number[] }[] }[];
+  coordinateTransformations?: { type: string; scale?: number[] }[]; // v0.4 group-level fallback
   name?: string;
   version?: string;
 }
@@ -48,6 +51,10 @@ export interface LodParams {
   csx: number;
   csy: number;
   csz: number;
+  /** Number of non-spatial prefix dims before [z, y, x] (e.g. 1 for [c, z, y, x]). */
+  shapePrefixLength: number;
+  /** Index of the channel axis within the full shape array (-1 if no channel axis). */
+  channelAxisIdx: number;
 }
 
 /**
@@ -60,7 +67,7 @@ export abstract class BaseZarrProvider implements DataProvider {
 
   // Abstract methods that subclasses must implement
   abstract initialize(): Promise<VolumeMetadata>;
-  abstract loadBrick(lod: number, bx: number, by: number, bz: number): Promise<BrickData | null>;
+  abstract loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex?: number): Promise<BrickData | null>;
   abstract dispose(): void;
 
   /**
@@ -153,25 +160,33 @@ export abstract class BaseZarrProvider implements DataProvider {
 
     const numScales = ms.datasets.length;
 
-    // Determine bit depth from dtype
+    // Parse axes to detect channel axis and number of channels
+    const axisNames = normalizeAxes(ms.axes);
+    const channelAxisIdx = axisNames.findIndex(a => a.type === 'channel');
+    const numChannels = channelAxisIdx >= 0
+      ? Math.max(1, arrays[0]!.shape[channelAxisIdx] ?? 1)
+      : 1;
+
+    // Safety-net validation (catches direct ?dataset= URL loads that bypassed dialog pre-check)
     const dtype = arrays[0]!.dtype;
+    const validationReasons = validateZarrSupport(ms, arrays[0]!.shape, String(dtype));
+    if (validationReasons.length > 0) throw new UnsupportedDatasetError(validationReasons);
+
+    // Determine bit depth from dtype (validation above ensures only uint8/uint16 reach here)
     let bitDepth: BitDepth;
     if (dtype === 'uint8' || dtype === 'int8') {
       bitDepth = 8;
     } else if (dtype === 'uint16' || dtype === 'int16') {
       bitDepth = 16;
     } else {
-      console.warn(`Unsupported dtype "${dtype}", falling back to 8-bit`);
-      bitDepth = 8;
+      bitDepth = 8; // unreachable after validation, satisfies type checker
     }
 
-    // Safety-net validation (catches direct ?dataset= URL loads that bypassed dialog pre-check)
-    const validationReasons = validateZarrSupport(ms, arrays[0]!.shape, String(dtype));
-    if (validationReasons.length > 0) throw new UnsupportedDatasetError(validationReasons);
-
-    // Compute voxel spacing from coordinateTransformations if available
+    // Compute voxel spacing from coordinateTransformations if available.
+    // also needs to be hardened once the spec has settled
+    // v0.5: per-dataset transforms; v0.4: may be at group level instead.
     let voxelSpacing: [number, number, number] | undefined;
-    const transforms = ms.datasets[0]?.coordinateTransformations;
+    const transforms = ms.datasets[0]?.coordinateTransformations ?? ms.coordinateTransformations;
     if (transforms) {
       const scaleTransform = transforms.find(t => t.type === 'scale');
       if (scaleTransform?.scale) {
@@ -211,6 +226,8 @@ export abstract class BaseZarrProvider implements DataProvider {
         csx: chunkShape[chunkShape.length - 1]!,
         csy: chunkShape[chunkShape.length - 2]!,
         csz: chunkShape[chunkShape.length - 3]!,
+        shapePrefixLength: shape.length - 3,
+        channelAxisIdx,
       });
 
       const brickGrid: [number, number, number] = [
@@ -244,6 +261,7 @@ export abstract class BaseZarrProvider implements DataProvider {
       levels,
       bitDepth,
       window: windowMeta,
+      numChannels,
     };
 
     return { metadata, lodParams };

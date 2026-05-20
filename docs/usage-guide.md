@@ -162,8 +162,8 @@ https://mpanknin.github.io/kiln-render/?dataset=YOUR_DATASET_URL
 OME-Zarr requires no preprocessing — just point to a URL.
 
 **Supported formats:**
-- OME-NGFF v0.5 only (v0.4 not supported)
-- Single-channel datasets (multi-channel/RGB not supported)
+- OME-NGFF v0.4 and v0.5
+- Single-channel and multi-channel datasets (multi-channel loads channel 0)
 - `uint8` and `uint16` data types only (no signed integers or floats)
 
 See the [Data Guide](data-guide.md) for full format requirements.

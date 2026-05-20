@@ -133,6 +133,7 @@ export class ShardedDataProvider implements DataProvider {
       maxLod: raw.maxLod,
       levels,
       bitDepth: raw.format === 'uint16' ? 16 : 8,
+      numChannels: 1,
     };
   }
 
@@ -214,7 +215,7 @@ export class ShardedDataProvider implements DataProvider {
   /**
    * Load a single brick
    */
-  async loadBrick(lod: number, bx: number, by: number, bz: number): Promise<BrickData | null> {
+  async loadBrick(lod: number, bx: number, by: number, bz: number, _channelIndex?: number): Promise<BrickData | null> {
     const key = `lod${lod}:${bx}-${by}-${bz}`;
 
     // Check cache first

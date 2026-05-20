@@ -21,8 +21,17 @@ export type VolumeRenderMode = 'dvr' | 'mip' | 'iso' | 'lod';
 export class Renderer {
   private device: GPUDevice;
 
-  // Volume canvas (atlas texture)
-  canvas: VolumeCanvas;
+  // Number of channels (1–4)
+  readonly numChannels: number;
+
+  // Atlas textures — one per channel
+  canvases: VolumeCanvas[];
+
+  // Channel 0 alias for single-channel callers
+  get canvas(): VolumeCanvas { return this.canvases[0]!; }
+
+  // Dummy 1×1×1 texture bound to unused channel slots
+  private dummyTexture: GPUTexture;
 
   // Indirection table for virtual texturing
   indirection: IndirectionTable;
@@ -127,24 +136,43 @@ export class Renderer {
 
   private readonly config: DatasetConfig;
 
+  // Per-channel display colors: RGBA (rgb = hue, a = intensity weight). Defaults: blue, yellow, red, white.
+  readonly channelColors = new Float32Array([
+    0, 0, 1, 1,   // ch0: blue
+    1, 1, 0, 1,   // ch1: yellow
+    1, 0, 0, 1,   // ch2: red
+    1, 1, 1, 1,   // ch3: white
+  ]);
+
   // Pre-allocated scratch buffers (avoid per-frame GC pressure)
   private readonly vpScratch = new Float32Array(16);
   private readonly invVPScratch = new Float32Array(16);
-  private readonly fragUniformScratch = new Float32Array(60);
+  private readonly fragUniformScratch = new Float32Array(76);
   private readonly fragUniformView = new DataView(this.fragUniformScratch.buffer);
-  private readonly computeUniformScratch = new Float32Array(48);
+  private readonly computeUniformScratch = new Float32Array(60);
   private readonly computeUniformView = new DataView(this.computeUniformScratch.buffer);
   private readonly accumScratch = new Float32Array(4);
   private static readonly IDENTITY_MAT4 = new Float32Array([
     1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1,
   ]);
 
-  constructor(device: GPUDevice, format: GPUTextureFormat, bitDepth: BitDepth, textureFormat: GPUTextureFormat, config: DatasetConfig) {
+  constructor(device: GPUDevice, format: GPUTextureFormat, bitDepth: BitDepth, textureFormat: GPUTextureFormat, config: DatasetConfig, numChannels = 1) {
     this.device = device;
     this.config = config;
+    this.numChannels = Math.min(Math.max(1, numChannels), 4);
 
-    // Create volume canvas (empty) with specified bit depth and format
-    this.canvas = createVolumeCanvas(device, bitDepth, textureFormat);
+    // Create atlas textures — one per channel
+    this.canvases = Array.from({ length: this.numChannels }, () =>
+      createVolumeCanvas(device, bitDepth, textureFormat)
+    );
+
+    // Dummy texture for unused channel bindings (always bound, never sampled when numChannels < 4)
+    this.dummyTexture = device.createTexture({
+      size: [1, 1, 1],
+      format: textureFormat,
+      dimension: '3d',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
 
     // Create indirection table for virtual texturing
     this.indirection = new IndirectionTable(device, config);
@@ -187,9 +215,10 @@ export class Renderer {
     // Volume: mat4 mvp (64) + mat4 inverseModel (64) + vec3 cameraPos (12) + useIndirection (4)
     //       + vec3 datasetSize (12) + renderMode (4) + vec3 normalizedSize (12) + isoValue (4)
     //       + frameIndex (4) + pad (4) + windowCenter (4) + windowWidth (4) + pad2 vec2 (8)
-    //       + clipMin vec3 (12) + pad3 (4) + clipMax vec3 (12) + pad4 (4) = 240 bytes
+    //       + clipMin vec3 (12) + pad3 (4) + clipMax vec3 (12) + pad4 (4) + pad5 vec2 (8)
+    //       + channelColors array<vec4f,4> (64) = 304 bytes
     this.uniformBuffer = device.createBuffer({
-      size: 240,
+      size: 304,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -312,9 +341,10 @@ export class Renderer {
     // Compute uniform buffer: mat4 inverseViewProj (64) + vec3 cameraPos (12) + useIndirection (4)
     //                       + vec3 datasetSize (12) + renderMode (4) + vec3 normalizedSize (12) + isoValue (4)
     //                       + vec2 screenSize (8) + frameIndex (4) + pad3 (4) + windowCenter (4) + windowWidth (4)
-    //                       + pad4 vec2 (8) + clipMin vec3 (12) + pad5 (4) + clipMax vec3 (12) + pad6 (4) = 192 bytes
+    //                       + pad4 vec2 (8) + clipMin vec3 (12) + pad5 (4) + clipMax vec3 (12) + numChannels (4)
+    //                       + channelColors array<vec4f,4> (64) = 240 bytes
     this.computeUniformBuffer = device.createBuffer({
-      size: 192,
+      size: 240,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -441,12 +471,29 @@ export class Renderer {
     this.accumFrameCount = 0;
   }
 
+  /** Set the display color and intensity weight for a channel (0–3). Resets accumulation. */
+  setChannelColor(ch: number, r: number, g: number, b: number, a = 1.0): void {
+    const base = Math.min(Math.max(0, ch), 3) * 4;
+    this.channelColors[base]     = r;
+    this.channelColors[base + 1] = g;
+    this.channelColors[base + 2] = b;
+    this.channelColors[base + 3] = a;
+    this.resetAccumulation();
+  }
+
   /**
    * Set the transfer function and recreate bind groups
    */
   setTransferFunction(tf: TransferFunction): void {
     this.tfTexture = tf.texture;
     this.recreateVolumeBindGroups();
+  }
+
+  /** View for atlas channel ch (dummy if ch >= numChannels) */
+  private atlasView(ch: number): GPUTextureView {
+    return ch < this.numChannels
+      ? this.canvases[ch]!.texture.createView()
+      : this.dummyTexture.createView();
   }
 
   private recreateVolumeBindGroups(): void {
@@ -457,10 +504,13 @@ export class Renderer {
       entries: [
         { binding: 0, resource: { buffer: this.uniformBuffer } },
         { binding: 1, resource: this.volumeSampler },
-        { binding: 2, resource: this.canvas.texture.createView() },
+        { binding: 2, resource: this.atlasView(0) },
         { binding: 3, resource: this.tfSampler },
         { binding: 4, resource: this.tfTexture.createView() },
         { binding: 6, resource: this.indirection.texture.createView() },
+        { binding: 8, resource: this.atlasView(1) },
+        { binding: 9, resource: this.atlasView(2) },
+        { binding: 10, resource: this.atlasView(3) },
       ],
     });
 
@@ -469,11 +519,14 @@ export class Renderer {
       entries: [
         { binding: 0, resource: { buffer: this.computeUniformBuffer } },
         { binding: 1, resource: this.volumeSampler },
-        { binding: 2, resource: this.canvas.texture.createView() },
+        { binding: 2, resource: this.atlasView(0) },
         { binding: 3, resource: this.tfSampler },
         { binding: 4, resource: this.tfTexture.createView() },
         { binding: 6, resource: this.indirection.texture.createView() },
         { binding: 7, resource: this.computeOutputView },
+        { binding: 8, resource: this.atlasView(1) },
+        { binding: 9, resource: this.atlasView(2) },
+        { binding: 10, resource: this.atlasView(3) },
       ],
     });
   }
@@ -531,11 +584,14 @@ export class Renderer {
       entries: [
         { binding: 0, resource: { buffer: this.computeUniformBuffer } },
         { binding: 1, resource: this.volumeSampler },
-        { binding: 2, resource: this.canvas.texture.createView() },
+        { binding: 2, resource: this.atlasView(0) },
         { binding: 3, resource: this.tfSampler },
         { binding: 4, resource: this.tfTexture.createView() },
         { binding: 6, resource: this.indirection.texture.createView() },
         { binding: 7, resource: this.computeOutputView },
+        { binding: 8, resource: this.atlasView(1) },
+        { binding: 9, resource: this.atlasView(2) },
+        { binding: 10, resource: this.atlasView(3) },
       ],
     });
 
@@ -624,13 +680,15 @@ export class Renderer {
     d.set(this.config.normalizedSize, 40);    // 40-42: normalizedSize
     d[43] = this.isoValue;                     // 43: isoValue
     dv.setUint32(44 * 4, this.frameIndex, true);  // 44: frameIndex (u32)
-    // 45: _pad1
+    dv.setUint32(45 * 4, this.numChannels, true); // 45: numChannels (u32)
     d[46] = this.windowCenter;                 // 46: windowCenter
     d[47] = this.windowWidth;                  // 47: windowWidth
     // 48-49: _pad2 (vec2f for alignment)
     d.set(this.clipMin, 50);                   // 50-52: clipMin
     // 53: _pad3
-    d.set(this.clipMax, 54);                   // 54-56: clipMax (actually only uses 54-55, implicit padding after)
+    d.set(this.clipMax, 54);                   // 54-56: clipMax
+    // 57: _pad4, 58-59: _pad5 (alignment padding before channelColors)
+    d.set(this.channelColors, 60);             // 60-75: channelColors array<vec4f,4>
     this.device.queue.writeBuffer(this.uniformBuffer, 0, d as Float32Array<ArrayBuffer>);
 
     // Update wireframe uniforms
@@ -738,7 +796,8 @@ export class Renderer {
     d.set(this.clipMin, 36);                   // 36-38: clipMin
     // 39: _pad5
     d.set(this.clipMax, 40);                   // 40-42: clipMax
-    // 43: _pad6
+    dv.setUint32(43 * 4, this.numChannels, true); // 43: numChannels (u32)
+    d.set(this.channelColors, 44);             // 44-59: channelColors array<vec4f,4>
     this.device.queue.writeBuffer(this.computeUniformBuffer, 0, d as Float32Array<ArrayBuffer>);
 
     const encoder = this.device.createCommandEncoder();

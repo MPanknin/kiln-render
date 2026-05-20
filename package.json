@@ -39,6 +39,7 @@
     "dev": "vite",
     "dev:multichannel": "vite --config vite.multichannel.config.ts",
     "build": "tsc && vite build",
+    "build:multichannel": "vite build --config vite.multichannel.config.ts",
     "build:lib": "vite build --config vite.lib.config.ts && tsc -p tsconfig.lib.json && rm -rf lib/assets",
     "preview": "vite preview",
     "test": "vitest",

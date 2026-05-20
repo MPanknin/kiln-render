@@ -3,7 +3,7 @@ import { resolve } from 'path';
 
 export default defineConfig({
   root: 'examples/multichannel-viewer',
-  base: process.env.VITE_BASE || '/kiln-render/',
+  base: (process.env.VITE_BASE ?? '/kiln-render/') + 'multichannel/',
   publicDir: resolve(__dirname, 'public'),
   server: {
     port: 3001,
@@ -12,7 +12,7 @@ export default defineConfig({
   build: {
     target: 'esnext',
     minify: 'esbuild',
-    outDir: resolve(__dirname, 'dist-multichannel'),
+    outDir: resolve(__dirname, 'dist/multichannel'),
     emptyOutDir: true,
   },
   worker: {

@@ -39,6 +39,11 @@ jobs:
         env:
           VITE_BASE: /kiln-render/preview/${{ steps.sanitize.outputs.sanitized }}/
 
+      - name: Build multichannel viewer with branch-specific base
+        run: npm run build:multichannel
+        env:
+          VITE_BASE: /kiln-render/preview/${{ steps.sanitize.outputs.sanitized }}/
+
       - name: Deploy to gh-pages branch
         uses: peaceiris/actions-gh-pages@v3
         with:

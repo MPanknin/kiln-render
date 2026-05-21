@@ -60,13 +60,15 @@ export interface VolumeMetadata {
   levels: LodLevel[];
   /** Bit depth of volume data */
   bitDepth: BitDepth;
-  /** Window/level metadata (optional, from OMERO or similar) */
+  /** Window/level metadata (optional, from OMERO or similar) — first channel */
   window?: {
     start: number;
     end: number;
     min: number;
     max: number;
   };
+  /** Per-channel window/level metadata (optional, from OMERO or similar) */
+  channelWindows?: Array<{ start: number; end: number; min: number; max: number } | undefined>;
   /** Number of channels in the volume (1 for single-channel, N for multi-channel) */
   numChannels: number;
 }

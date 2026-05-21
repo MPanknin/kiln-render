@@ -40,7 +40,7 @@ function parseURLParams(): {
   if (channelsStr) {
     const parsed = channelsStr.split(';').map(part => {
       const nums = part.split(',').map(Number);
-      return { r: (nums[0] ?? NaN) | 0, g: (nums[1] ?? NaN) | 0, b: (nums[2] ?? NaN) | 0, a: nums[3] ?? NaN, visible: (nums[4] ?? 0) !== 0 };
+      return { r: (nums[0] ?? NaN) | 0, g: (nums[1] ?? NaN) | 0, b: (nums[2] ?? NaN) | 0, a: nums[3] ?? NaN, visible: (nums[4] ?? 0) !== 0, min: nums[5] ?? 0, max: nums[6] ?? 1 };
     });
     if (parsed.every(ch => !isNaN(ch.r) && !isNaN(ch.g) && !isNaN(ch.b) && !isNaN(ch.a))) {
       channels = parsed;
@@ -121,7 +121,7 @@ async function main() {
       const channelState = ui.getChannelState();
       if (channelState.length > 0) {
         p.set('channels', channelState.map(ch =>
-          `${ch.r},${ch.g},${ch.b},${ch.a.toFixed(2)},${ch.visible ? 1 : 0}`
+          `${ch.r},${ch.g},${ch.b},${ch.a.toFixed(2)},${ch.visible ? 1 : 0},${ch.min.toFixed(2)},${ch.max.toFixed(2)}`
         ).join(';'));
       }
 

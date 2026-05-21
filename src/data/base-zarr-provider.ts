@@ -244,11 +244,15 @@ export abstract class BaseZarrProvider implements DataProvider {
       };
     });
 
-    // Extract OMERO window metadata if available
-    let windowMeta: { start: number; end: number; min: number; max: number } | undefined;
+    // Extract OMERO window metadata if available (per-channel and backward-compat single)
+    type WindowEntry = { start: number; end: number; min: number; max: number };
+    let windowMeta: WindowEntry | undefined;
+    let channelWindows: Array<WindowEntry | undefined> | undefined;
     const omeroAttr = omeAttr?.omero;
-    if (omeroAttr?.channels?.[0]?.window) {
-      windowMeta = omeroAttr.channels[0].window;
+    if (Array.isArray(omeroAttr?.channels) && omeroAttr.channels.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      channelWindows = omeroAttr.channels.map((ch: any) => ch?.window as WindowEntry | undefined);
+      windowMeta = channelWindows[0];
     }
 
     const metadata: VolumeMetadata = {
@@ -261,6 +265,7 @@ export abstract class BaseZarrProvider implements DataProvider {
       levels,
       bitDepth,
       window: windowMeta,
+      channelWindows,
       numChannels,
     };
 

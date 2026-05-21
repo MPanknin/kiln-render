@@ -35,6 +35,8 @@ export interface ChannelState {
   b: number;      // 0-255
   a: number;      // 0-1
   visible: boolean;
+  min: number;    // 0-1 normalized
+  max: number;    // 0-1 normalized
 }
 
 export class MultichannelUI {
@@ -57,6 +59,8 @@ export class MultichannelUI {
   private channelParams: Array<{
     color: { r: number; g: number; b: number; a: number };
     visible: boolean;
+    min: number;
+    max: number;
   }> = [];
 
   private statsParams = {
@@ -93,11 +97,19 @@ export class MultichannelUI {
     for (let i = 0; i < this.renderer.numChannels; i++) {
       const restored = initialChannels?.[i];
       if (restored) {
-        this.channelParams.push({ color: { r: restored.r, g: restored.g, b: restored.b, a: restored.a }, visible: restored.visible });
+        this.channelParams.push({ color: { r: restored.r, g: restored.g, b: restored.b, a: restored.a }, visible: restored.visible, min: restored.min, max: restored.max });
         this.renderer.setChannelColor(i, restored.r / 255, restored.g / 255, restored.b / 255, restored.visible ? restored.a : 0);
+        this.renderer.setChannelWindow(i, (restored.min + restored.max) / 2, Math.max(0.001, restored.max - restored.min));
       } else {
         const defaults = CHANNEL_COLOR_DEFAULTS[i] ?? { r: 255, g: 255, b: 255 };
         const base = i * 4;
+        let min = 0, max = 1;
+        const w = viewer.metadata.channelWindows?.[i];
+        if (w && w.max > w.min) {
+          const range = w.max - w.min;
+          min = Math.max(0, Math.min(1, (w.start - w.min) / range));
+          max = Math.max(0, Math.min(1, (w.end - w.min) / range));
+        }
         this.channelParams.push({
           color: {
             r: Math.round((this.renderer.channelColors[base]     ?? defaults.r / 255) * 255),
@@ -106,7 +118,10 @@ export class MultichannelUI {
             a: this.renderer.channelColors[base + 3] ?? 1.0,
           },
           visible: true,
+          min,
+          max,
         });
+        this.renderer.setChannelWindow(i, (min + max) / 2, Math.max(0.001, max - min));
       }
     }
 
@@ -188,6 +203,24 @@ export class MultichannelUI {
         const c = ev.value as { r: number; g: number; b: number; a: number };
         const alpha = this.channelParams[ch]!.visible ? c.a : 0;
         this.renderer.setChannelColor(ch, c.r / 255, c.g / 255, c.b / 255, alpha);
+      });
+
+      folder.addBinding(chParam, 'min', {
+        label: 'Min',
+        min: 0, max: 1, step: 0.01,
+      }).on('change', (ev: { value: unknown }) => {
+        const min = ev.value as number;
+        const max = this.channelParams[ch]!.max;
+        this.renderer.setChannelWindow(ch, (min + max) / 2, Math.max(0.001, max - min));
+      });
+
+      folder.addBinding(chParam, 'max', {
+        label: 'Max',
+        min: 0, max: 1, step: 0.01,
+      }).on('change', (ev: { value: unknown }) => {
+        const min = this.channelParams[ch]!.min;
+        const max = ev.value as number;
+        this.renderer.setChannelWindow(ch, (min + max) / 2, Math.max(0.001, max - min));
       });
     }
 
@@ -305,6 +338,8 @@ export class MultichannelUI {
       b: ch.color.b,
       a: ch.color.a,
       visible: ch.visible,
+      min: ch.min,
+      max: ch.max,
     }));
   }
 

@@ -44,6 +44,7 @@ export class Renderer {
 
   // Show wireframe box
   showWireframe = false;
+  enableJitter = true;
 
   // Show axis helper
   showAxis = false;
@@ -701,7 +702,9 @@ export class Renderer {
     d.set(this.clipMin, 50);                   // 50-52: clipMin
     // 53: _pad3
     d.set(this.clipMax, 54);                   // 54-56: clipMax
-    // 57: _pad4, 58-59: _pad5 (alignment padding before channelColors)
+    // 57: _pad4
+    dv.setUint32(58 * 4, this.enableJitter ? 1 : 0, true);  // 58: jitter (u32)
+    // 59: _pad5
     d.set(this.channelColors, 60);             // 60-75: channelColors array<vec4f,4>
     d.set(this.channelWindowCenter, 76);       // 76-79: channelWindowCenter vec4f
     d.set(this.channelWindowWidth, 80);        // 80-83: channelWindowWidth vec4f
@@ -805,7 +808,7 @@ export class Renderer {
     d[28] = this.computeWidth;                 // 28: screenSize.x
     d[29] = this.computeHeight;                // 29: screenSize.y
     dv.setUint32(30 * 4, this.frameIndex, true);  // 30: frameIndex (u32)
-    // 31: _pad3
+    dv.setUint32(31 * 4, this.enableJitter ? 1 : 0, true);  // 31: jitter (u32)
     d[32] = this.windowCenter;                 // 32: windowCenter
     d[33] = this.windowWidth;                  // 33: windowWidth
     // 34-35: _pad4 (vec2f for alignment)

@@ -22,7 +22,7 @@ fn rayMarchLOD(
             continue;
         }
 
-        let jitter = rand(rayToSeed(rayDir) + brickIter + uniforms.frameIndex) * brick.stepSize;
+        let jitter = select(0.0, rand(rayToSeed(rayDir) + brickIter + uniforms.frameIndex) * brick.stepSize, uniforms.jitter != 0u);
         var tSample = t + jitter;
 
         for (var i = 0u; i < brick.numSteps; i++) {

@@ -52,6 +52,7 @@ export class MultichannelUI {
   private params = {
     upAxis: '-y' as UpAxis,
     renderScale: 0.5,
+    enableJitter: true,
     showWireframe: false,
     showAxis: false,
   };
@@ -92,6 +93,7 @@ export class MultichannelUI {
     this.params.showWireframe = this.renderer.showWireframe;
     this.params.showAxis = this.renderer.showAxis;
     this.params.renderScale = this.renderer.renderScale;
+    this.params.enableJitter = this.renderer.enableJitter;
 
     // Build per-channel params from renderer state (or URL-restored state)
     for (let i = 0; i < this.renderer.numChannels; i++) {
@@ -181,6 +183,13 @@ export class MultichannelUI {
       step: 0.25,
     }).on('change', (ev: { value: unknown }) => {
       this.viewer.renderScale = ev.value as number;
+    });
+
+    pane.addBinding(this.params, 'enableJitter', {
+      label: 'Jitter / TAA',
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.enableJitter = ev.value as boolean;
+      this.renderer.resetAccumulation();
     });
 
     // Per-channel folders

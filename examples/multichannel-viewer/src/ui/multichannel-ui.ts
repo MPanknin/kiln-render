@@ -188,6 +188,16 @@ export class MultichannelUI {
       const chParam = this.channelParams[ch]!;
       const folder = pane.addFolder({ title: `Channel ${ch}`, expanded: ch === 0 });
 
+      // 1. Visibility checkbox
+      folder.addBinding(chParam, 'visible', {
+        label: '',
+      }).on('change', (ev: { value: unknown }) => {
+        const visible = ev.value as boolean;
+        const c = chParam.color;
+        this.renderer.setChannelColor(ch, c.r / 255, c.g / 255, c.b / 255, visible ? c.a : 0);
+      });
+
+      // 2. Level slider
       folder.addBinding(chParam, 'level', {
         label: 'Level',
         view: 'interval',
@@ -197,50 +207,40 @@ export class MultichannelUI {
         this.renderer.setChannelWindow(ch, (min + max) / 2, Math.max(0.001, max - min));
       });
 
+      // 3. Color picker
       folder.addBinding(chParam, 'color', {
-        label: ' ',
+        label: '',
         color: { type: 'int' },
       }).on('change', (ev: { value: unknown }) => {
         const c = ev.value as { r: number; g: number; b: number; a: number };
-        const alpha = this.channelParams[ch]!.visible ? c.a : 0;
+        const alpha = chParam.visible ? c.a : 0;
         this.renderer.setChannelColor(ch, c.r / 255, c.g / 255, c.b / 255, alpha);
       });
 
-      // Arrange level slider + color swatch + checkbox on one row
+      // Arrange on one row: [checkbox] [Level──slider──] [swatch]
       const fldvC = folder.element.querySelector<HTMLElement>('.tp-fldv_c');
-      const [levelRow, colorRow] = fldvC ? (Array.from(fldvC.children) as HTMLElement[]) : [];
-      if (fldvC && levelRow && colorRow) {
+      const [visRow, levelRow, colorRow] = fldvC ? (Array.from(fldvC.children) as HTMLElement[]) : [];
+      if (fldvC && visRow && levelRow && colorRow) {
         fldvC.style.display = 'flex';
         fldvC.style.alignItems = 'center';
 
-        // Level row: fill available space, use Tweakpane's native no-label class
+        // Checkbox: hide label, shrink to widget width only
+        visRow.style.flex = '0 0 auto';
+        const visLabelEl = visRow.querySelector<HTMLElement>('.tp-lblv_l');
+        const visValueEl = visRow.querySelector<HTMLElement>('.tp-lblv_v');
+        if (visLabelEl) visLabelEl.style.display = 'none';
+        if (visValueEl) visValueEl.style.width = 'auto';
+
+        // Level slider: fill remaining space
         levelRow.style.flex = '1 1 auto';
         levelRow.style.minWidth = '0';
-        const levelLblv = levelRow.querySelector<HTMLElement>('.tp-lblv');
-        if (levelLblv) levelLblv.classList.add('tp-lblv-nol');
 
-        // Color row: swatch | checkbox, shrunk to content
+        // Color swatch: hide label, shrink to swatch width only
         colorRow.style.flex = '0 0 auto';
         const colorLabelEl = colorRow.querySelector<HTMLElement>('.tp-lblv_l');
         const colorValueEl = colorRow.querySelector<HTMLElement>('.tp-lblv_v');
-        // Use CSS order to put swatch (value) before checkbox (label) without DOM mutation
-        if (colorValueEl) { colorValueEl.style.width = 'auto'; colorValueEl.style.order = '0'; }
-        if (colorLabelEl) {
-          colorLabelEl.style.flex = '0 0 auto';
-          colorLabelEl.style.order = '1';
-          colorLabelEl.style.paddingLeft = '4px';
-          colorLabelEl.textContent = '';
-          const checkbox = document.createElement('input');
-          checkbox.type = 'checkbox';
-          checkbox.checked = chParam.visible;
-          checkbox.style.cssText = 'margin:0; cursor:pointer; width:14px; height:14px; accent-color:rgb(40,160,80); display:block;';
-          checkbox.addEventListener('change', () => {
-            chParam.visible = checkbox.checked;
-            const c = chParam.color;
-            this.renderer.setChannelColor(ch, c.r / 255, c.g / 255, c.b / 255, checkbox.checked ? c.a : 0);
-          });
-          colorLabelEl.appendChild(checkbox);
-        }
+        if (colorLabelEl) colorLabelEl.style.display = 'none';
+        if (colorValueEl) colorValueEl.style.width = 'auto';
       }
     }
 
@@ -377,7 +377,10 @@ export class MultichannelUI {
     if (document.getElementById('kiln-colswatch-style')) return;
     const style = document.createElement('style');
     style.id = 'kiln-colswatch-style';
-    style.textContent = '.tp-colv_t { display: none !important; }';
+    style.textContent = `
+      .tp-colv_t { display: none !important; }
+      .tp-colv .tp-popv { min-width: 168px !important; }
+    `;
     document.head.appendChild(style);
   }
 

@@ -54,5 +54,8 @@
     "vitest": "^4.0.18",
     "wgpu-matrix": "^3.4.0",
     "zarrita": "^0.6.1"
+  },
+  "dependencies": {
+    "@tweakpane/plugin-essentials": "^0.2.1"
   }
 }

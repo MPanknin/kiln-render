@@ -3,6 +3,7 @@
  */
 
 import { Pane } from 'tweakpane';
+import * as EssentialsPlugin from '@tweakpane/plugin-essentials';
 import type { Renderer } from '@kiln/core/renderer.js';
 import type { Camera, UpAxis } from '@kiln/core/camera.js';
 import type { StreamingManager } from '@kiln/streaming/streaming-manager.js';
@@ -59,8 +60,7 @@ export class MultichannelUI {
   private channelParams: Array<{
     color: { r: number; g: number; b: number; a: number };
     visible: boolean;
-    min: number;
-    max: number;
+    level: { min: number; max: number };
   }> = [];
 
   private statsParams = {
@@ -97,7 +97,7 @@ export class MultichannelUI {
     for (let i = 0; i < this.renderer.numChannels; i++) {
       const restored = initialChannels?.[i];
       if (restored) {
-        this.channelParams.push({ color: { r: restored.r, g: restored.g, b: restored.b, a: restored.a }, visible: restored.visible, min: restored.min, max: restored.max });
+        this.channelParams.push({ color: { r: restored.r, g: restored.g, b: restored.b, a: restored.a }, visible: restored.visible, level: { min: restored.min, max: restored.max } });
         this.renderer.setChannelColor(i, restored.r / 255, restored.g / 255, restored.b / 255, restored.visible ? restored.a : 0);
         this.renderer.setChannelWindow(i, (restored.min + restored.max) / 2, Math.max(0.001, restored.max - restored.min));
       } else {
@@ -118,8 +118,7 @@ export class MultichannelUI {
             a: this.renderer.channelColors[base + 3] ?? 1.0,
           },
           visible: true,
-          min,
-          max,
+          level: { min, max },
         });
         this.renderer.setChannelWindow(i, (min + max) / 2, Math.max(0.001, max - min));
       }
@@ -137,6 +136,7 @@ export class MultichannelUI {
       container: controlsContainer,
       expanded: false,
     });
+    this.pane.registerPlugin(EssentialsPlugin);
 
     this.setupIconCollapse(this.pane,
       '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/></svg>',
@@ -188,40 +188,60 @@ export class MultichannelUI {
       const chParam = this.channelParams[ch]!;
       const folder = pane.addFolder({ title: `Channel ${ch}`, expanded: ch === 0 });
 
-      folder.addBinding(chParam, 'visible', {
-        label: 'Visible',
+      folder.addBinding(chParam, 'level', {
+        label: 'Level',
+        view: 'interval',
+        min: 0, max: 1, step: 0.01,
       }).on('change', (ev: { value: unknown }) => {
-        const visible = ev.value as boolean;
-        const c = this.channelParams[ch]!.color;
-        this.renderer.setChannelColor(ch, c.r / 255, c.g / 255, c.b / 255, visible ? c.a : 0);
+        const { min, max } = ev.value as { min: number; max: number };
+        this.renderer.setChannelWindow(ch, (min + max) / 2, Math.max(0.001, max - min));
       });
 
       folder.addBinding(chParam, 'color', {
-        label: 'Color',
-        color: { type: 'int' },  // RGBA auto-detected from `a`; alpha is always 0-1
+        label: ' ',
+        color: { type: 'int' },
       }).on('change', (ev: { value: unknown }) => {
         const c = ev.value as { r: number; g: number; b: number; a: number };
         const alpha = this.channelParams[ch]!.visible ? c.a : 0;
         this.renderer.setChannelColor(ch, c.r / 255, c.g / 255, c.b / 255, alpha);
       });
 
-      folder.addBinding(chParam, 'min', {
-        label: 'Min',
-        min: 0, max: 1, step: 0.01,
-      }).on('change', (ev: { value: unknown }) => {
-        const min = ev.value as number;
-        const max = this.channelParams[ch]!.max;
-        this.renderer.setChannelWindow(ch, (min + max) / 2, Math.max(0.001, max - min));
-      });
+      // Arrange level slider + color swatch + checkbox on one row
+      const fldvC = folder.element.querySelector<HTMLElement>('.tp-fldv_c');
+      const [levelRow, colorRow] = fldvC ? (Array.from(fldvC.children) as HTMLElement[]) : [];
+      if (fldvC && levelRow && colorRow) {
+        fldvC.style.display = 'flex';
+        fldvC.style.alignItems = 'center';
 
-      folder.addBinding(chParam, 'max', {
-        label: 'Max',
-        min: 0, max: 1, step: 0.01,
-      }).on('change', (ev: { value: unknown }) => {
-        const min = this.channelParams[ch]!.min;
-        const max = ev.value as number;
-        this.renderer.setChannelWindow(ch, (min + max) / 2, Math.max(0.001, max - min));
-      });
+        // Level row: fill available space, use Tweakpane's native no-label class
+        levelRow.style.flex = '1 1 auto';
+        levelRow.style.minWidth = '0';
+        const levelLblv = levelRow.querySelector<HTMLElement>('.tp-lblv');
+        if (levelLblv) levelLblv.classList.add('tp-lblv-nol');
+
+        // Color row: swatch | checkbox, shrunk to content
+        colorRow.style.flex = '0 0 auto';
+        const colorLabelEl = colorRow.querySelector<HTMLElement>('.tp-lblv_l');
+        const colorValueEl = colorRow.querySelector<HTMLElement>('.tp-lblv_v');
+        // Use CSS order to put swatch (value) before checkbox (label) without DOM mutation
+        if (colorValueEl) { colorValueEl.style.width = 'auto'; colorValueEl.style.order = '0'; }
+        if (colorLabelEl) {
+          colorLabelEl.style.flex = '0 0 auto';
+          colorLabelEl.style.order = '1';
+          colorLabelEl.style.paddingLeft = '4px';
+          colorLabelEl.textContent = '';
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.checked = chParam.visible;
+          checkbox.style.cssText = 'margin:0; cursor:pointer; width:14px; height:14px; accent-color:rgb(40,160,80); display:block;';
+          checkbox.addEventListener('change', () => {
+            chParam.visible = checkbox.checked;
+            const c = chParam.color;
+            this.renderer.setChannelColor(ch, c.r / 255, c.g / 255, c.b / 255, checkbox.checked ? c.a : 0);
+          });
+          colorLabelEl.appendChild(checkbox);
+        }
+      }
     }
 
     // Debug folder
@@ -338,8 +358,8 @@ export class MultichannelUI {
       b: ch.color.b,
       a: ch.color.a,
       visible: ch.visible,
-      min: ch.min,
-      max: ch.max,
+      min: ch.level.min,
+      max: ch.level.max,
     }));
   }
 

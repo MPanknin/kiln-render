@@ -303,7 +303,7 @@ export class MultichannelUI {
 
     const totalVoxels = dims[0] * dims[1] * dims[2];
     const bytesPerVoxel = metadata.bitDepth === 16 ? 2 : 1;
-    const fileSizeMB = (totalVoxels * bytesPerVoxel) / (1024 * 1024);
+    const fileSizeMB = (totalVoxels * bytesPerVoxel * metadata.numChannels) / (1024 * 1024);
     this.statsParams.fileSize = `${fileSizeMB.toFixed(1)} MB (raw ${metadata.bitDepth}-bit)`;
 
     const spacing = metadata.voxelSpacing ?? [1, 1, 1];

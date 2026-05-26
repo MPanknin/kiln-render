@@ -36,12 +36,25 @@ export interface ViewerOptions {
   clipMax?: [number, number, number];
   /** Transfer function colour preset */
   tfPreset?: TFPreset;
+  /** Transfer function opacity control points (overrides preset defaults) */
+  tfPoints?: Array<{ x: number; y: number }>;
   /** Camera up axis */
   upAxis?: UpAxis;
   /** Camera orbit state [rx, ry, dist] or [rx, ry, dist, tx, ty, tz] */
   cam?: [number, number, number] | [number, number, number, number, number, number];
   /** performance.now() at page load, used for time-to-first-render metric */
   pageLoadStart?: number;
+  /** Slice plane positions, normalised 0–1 */
+  sliceX?: number;
+  sliceY?: number;
+  sliceZ?: number;
+  /** Slice plane visibility flags (default true) */
+  showSliceX?: boolean;
+  showSliceY?: boolean;
+  showSliceZ?: boolean;
+  /** Overlay toggles */
+  showWireframe?: boolean;
+  showAxis?: boolean;
 }
 
 /** Serialisable snapshot of viewer state — used by the share-URL feature */
@@ -53,10 +66,19 @@ export interface ViewerState {
   /** User-intended render scale (not the 0.25 interaction override) */
   renderScale: number;
   tfPreset: TFPreset;
+  tfPoints: Array<{ x: number; y: number }>;
   upAxis: UpAxis;
   cam: [number, number, number, number, number, number];
   clipMin: [number, number, number];
   clipMax: [number, number, number];
+  sliceX: number;
+  sliceY: number;
+  sliceZ: number;
+  showSliceX: boolean;
+  showSliceY: boolean;
+  showSliceZ: boolean;
+  showWireframe: boolean;
+  showAxis: boolean;
 }
 
 export class KilnViewer {
@@ -213,6 +235,14 @@ export class KilnViewer {
       }
     }
 
+    // For float32 datasets: pass raw data range to renderer so the shader can
+    // normalize (raw − floatMin) / (floatMax − floatMin) → [0, 1] on the GPU.
+    // For uint data floatMin/floatMax stay at their defaults (0 / 1 = identity).
+    if (metadata.isFloat && metadata.dataRange) {
+      renderer.floatMin = metadata.dataRange[0];
+      renderer.floatMax = metadata.dataRange[1];
+    }
+
     const transferFunction = new TransferFunction(device);
     renderer.setTransferFunction(transferFunction);
 
@@ -250,6 +280,18 @@ export class KilnViewer {
       transferFunction.setPreset(options.tfPreset);
       renderer.resetAccumulation();
     }
+    if (options.tfPoints !== undefined) {
+      transferFunction.setOpacityPoints(options.tfPoints);
+      renderer.resetAccumulation();
+    }
+    if (options.sliceX !== undefined) renderer.sliceX = options.sliceX;
+    if (options.sliceY !== undefined) renderer.sliceY = options.sliceY;
+    if (options.sliceZ !== undefined) renderer.sliceZ = options.sliceZ;
+    if (options.showSliceX !== undefined) renderer.showSliceX = options.showSliceX;
+    if (options.showSliceY !== undefined) renderer.showSliceY = options.showSliceY;
+    if (options.showSliceZ !== undefined) renderer.showSliceZ = options.showSliceZ;
+    if (options.showWireframe !== undefined) renderer.showWireframe = options.showWireframe;
+    if (options.showAxis !== undefined) renderer.showAxis = options.showAxis;
     if (options.upAxis !== undefined) {
       camera.setUpAxis(options.upAxis);
     }
@@ -317,6 +359,20 @@ export class KilnViewer {
     this.renderer.resetAccumulation();
   }
 
+  /** Minimum raw float value that maps to 0.0 in the shader (float32 datasets only). */
+  get floatMin(): number { return this.renderer.floatMin; }
+  set floatMin(value: number) {
+    this.renderer.floatMin = value;
+    this.renderer.resetAccumulation();
+  }
+
+  /** Maximum raw float value that maps to 1.0 in the shader (float32 datasets only). */
+  get floatMax(): number { return this.renderer.floatMax; }
+  set floatMax(value: number) {
+    this.renderer.floatMax = value;
+    this.renderer.resetAccumulation();
+  }
+
   get renderScale(): number { return this.userRenderScale; }
   set renderScale(value: number) {
     this.userRenderScale = value;
@@ -332,6 +388,7 @@ export class KilnViewer {
       isoValue: this.renderer.isoValue,
       renderScale: this.userRenderScale,
       tfPreset: this.transferFunction.preset,
+      tfPoints: this.transferFunction.getOpacityPoints(),
       upAxis: this.camera.getUpAxis(),
       cam: [rx, ry, dist, tx, ty, tz],
       clipMin: [
@@ -344,6 +401,14 @@ export class KilnViewer {
         this.renderer.clipMax[1]!,
         this.renderer.clipMax[2]!,
       ],
+      sliceX: this.renderer.sliceX,
+      sliceY: this.renderer.sliceY,
+      sliceZ: this.renderer.sliceZ,
+      showSliceX: this.renderer.showSliceX,
+      showSliceY: this.renderer.showSliceY,
+      showSliceZ: this.renderer.showSliceZ,
+      showWireframe: this.renderer.showWireframe,
+      showAxis: this.renderer.showAxis,
     };
   }
 

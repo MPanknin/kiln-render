@@ -71,6 +71,27 @@ export interface VolumeMetadata {
   channelWindows?: Array<{ start: number; end: number; min: number; max: number } | undefined>;
   /** Number of channels in the volume (1 for single-channel, N for multi-channel) */
   numChannels: number;
+  /** Whether source data is floating-point (float32/float64) */
+  isFloat?: boolean;
+  /** Data range [min, max] in original float values, used for normalisation to [0, 65535] */
+  dataRange?: [number, number];
+  /** Compression codec used by the zarr array (e.g. 'zstd', 'blosc/lz4', 'gzip', 'none') */
+  compression?: string;
+}
+
+/**
+ * Per-stage pipeline timing averages (rolling window over recent bricks).
+ * All values are milliseconds per brick. Zero means no data yet.
+ */
+export interface PipelineTimings {
+  /** Avg time for chunk I/O (filesystem read or HTTP fetch + decompress) per brick */
+  avgFetchMs: number;
+  /** Avg time for brick assembly loop (voxel scatter + any format conversion) per brick */
+  avgAssemblyMs: number;
+  /** Avg time for GPU atlas upload (writeTexture) per brick */
+  avgUploadMs: number;
+  /** Number of bricks in the rolling sample window */
+  sampleCount: number;
 }
 
 /**
@@ -157,6 +178,11 @@ export interface DataProvider {
    * Get network/loading statistics
    */
   getNetworkStats(): NetworkStats;
+
+  /**
+   * Get per-stage pipeline timing averages (optional — returns zeros if not implemented)
+   */
+  getPipelineTimings?(): PipelineTimings;
 
   /**
    * Clean up resources (workers, caches, etc.)

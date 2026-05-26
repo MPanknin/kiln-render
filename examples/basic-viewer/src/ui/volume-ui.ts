@@ -3,6 +3,7 @@
  */
 
 import { Pane } from 'tweakpane';
+import * as EssentialsPlugin from '@tweakpane/plugin-essentials';
 // @kiln/* is a dev-only path alias (src/ → @kiln/) defined in vite.config.ts and
 // tsconfig.json. It gives the example direct access to internal library types that
 // are not part of the public API.
@@ -18,7 +19,7 @@ import type { KilnViewer } from 'kiln-render';
 interface TweakpaneFolder {
   hidden: boolean;
   element: HTMLElement;
-  addBinding: (obj: object, key: string, params?: object) => { on: (event: string, cb: (ev: { value: unknown }) => void) => void };
+  addBinding: (obj: object, key: string, params?: object) => { element: HTMLElement; on: (event: string, cb: (ev: { value: unknown }) => void) => void };
 }
 
 // Extended Pane type with methods that exist at runtime but aren't in types
@@ -54,15 +55,23 @@ export class VolumeUI {
     // Windowing/Leveling for 16-bit data
     windowCenter: 0.5,
     windowWidth: 1.0,
+    densityScale: 1.0,
     // Render scale
     renderScale: 0.5,
+    // Jitter / TAA
+    enableJitter: true,
+    enableTAA: true,
     // Clipping planes (0-1 range for each axis)
-    clipMinX: 0.0,
-    clipMaxX: 1.0,
-    clipMinY: 0.0,
-    clipMaxY: 1.0,
-    clipMinZ: 0.0,
-    clipMaxZ: 1.0,
+    clipX: { min: 0.0, max: 1.0 },
+    clipY: { min: 0.0, max: 1.0 },
+    clipZ: { min: 0.0, max: 1.0 },
+    // Slice planes
+    showSliceX: true,
+    sliceX: 0.5,
+    showSliceY: true,
+    sliceY: 0.5,
+    showSliceZ: true,
+    sliceZ: 0.5,
   };
 
   // Stats display (read-only, updated periodically)
@@ -84,6 +93,11 @@ export class VolumeUI {
     // Network
     throughput: '',
     totalDownloaded: '',
+    // Pipeline timings
+    pipelineFetch: '',
+    pipelineAssembly: '',
+    pipelineUpload: '',
+    pipelineSamples: '',
   };
 
   // Frame timing tracking
@@ -94,12 +108,23 @@ export class VolumeUI {
   private isoFolder: TweakpaneFolder | null = null;
   private tfFolder: TweakpaneFolder | null = null;
   private windowFolder: TweakpaneFolder | null = null;
+  private clipFolder: TweakpaneFolder | null = null;
+  private sliceFolder: TweakpaneFolder | null = null;
 
   constructor(viewer: KilnViewer) {
     this.viewer = viewer;
     this.renderer = viewer.renderer;
     this.camera = viewer.camera;
     this.transferFunction = viewer.transferFunction;
+
+    // Initialize slice/clip params in absolute dataset coordinates
+    const dims = viewer.metadata.dimensions;
+    this.params.sliceX = Math.round(dims[0] / 2);
+    this.params.sliceY = Math.round(dims[1] / 2);
+    this.params.sliceZ = Math.round(dims[2] / 2);
+    this.params.clipX = { min: 0, max: dims[0] };
+    this.params.clipY = { min: 0, max: dims[1] };
+    this.params.clipZ = { min: 0, max: dims[2] };
 
     // Sync initial values from camera/renderer
     this.params.upAxis = this.camera.getUpAxis();
@@ -120,6 +145,7 @@ export class VolumeUI {
       container: controlsContainer,
       expanded: false,
     });
+    this.pane.registerPlugin(EssentialsPlugin);
 
     // Icon-only collapsed state for controls pane
     this.setupIconCollapse(this.pane, '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/></svg>', 'Controls');
@@ -161,9 +187,11 @@ export class VolumeUI {
         MIP: 'mip',
         ISO: 'iso',
         LOD: 'lod',
+        Slices: 'slice',
       },
     }).on('change', (ev: { value: unknown }) => {
-      this.renderer.volumeRenderMode = ev.value as VolumeRenderMode;
+      const mode = ev.value as VolumeRenderMode;
+      this.renderer.volumeRenderMode = mode;
       this.renderer.resetAccumulation();
       this.updateVisibility();
     });
@@ -218,6 +246,7 @@ export class VolumeUI {
       options: {
         'Cool-Warm': 'coolwarm',
         'Grayscale': 'grayscale',
+        'Grayscale (inverted)': 'grayscale-inverted',
         'Hot': 'hot',
         'Cool': 'cool',
         'Viridis': 'viridis',
@@ -283,77 +312,103 @@ export class VolumeUI {
       this.updateTFPreview();
     });
 
+    this.windowFolder.addBinding(this.params, 'densityScale', {
+      label: 'Density',
+      min: 0.1,
+      max: 10.0,
+      step: 0.1,
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.densityScale = ev.value as number;
+      this.renderer.resetAccumulation();
+    });
+
     // Clipping Planes folder
-    const clipFolder = pane.addFolder({
+    this.clipFolder = pane.addFolder({
       title: 'Clipping Planes',
       expanded: false,
     });
+    const clipFolder = this.clipFolder;
 
-    // X-axis
-    clipFolder.addBinding(this.params, 'clipMinX', {
-      label: 'X Min',
-      min: 0,
-      max: 1,
-      step: 0.01,
+    const clipDims = this.viewer.metadata.dimensions;
+
+    clipFolder.addBinding(this.params, 'clipX', {
+      label: 'X', min: 0, max: clipDims[0], step: 1,
     }).on('change', (ev: { value: unknown }) => {
-      this.renderer.clipMin[0] = ev.value as number;
+      const v = ev.value as { min: number; max: number };
+      this.renderer.clipMin[0] = v.min / clipDims[0];
+      this.renderer.clipMax[0] = v.max / clipDims[0];
       this.renderer.resetAccumulation();
     });
 
-    clipFolder.addBinding(this.params, 'clipMaxX', {
-      label: 'X Max',
-      min: 0,
-      max: 1,
-      step: 0.01,
+    clipFolder.addBinding(this.params, 'clipY', {
+      label: 'Y', min: 0, max: clipDims[1], step: 1,
     }).on('change', (ev: { value: unknown }) => {
-      this.renderer.clipMax[0] = ev.value as number;
+      const v = ev.value as { min: number; max: number };
+      this.renderer.clipMin[1] = v.min / clipDims[1];
+      this.renderer.clipMax[1] = v.max / clipDims[1];
       this.renderer.resetAccumulation();
     });
 
-    // Y-axis
-    clipFolder.addBinding(this.params, 'clipMinY', {
-      label: 'Y Min',
-      min: 0,
-      max: 1,
-      step: 0.01,
+    clipFolder.addBinding(this.params, 'clipZ', {
+      label: 'Z', min: 0, max: clipDims[2], step: 1,
     }).on('change', (ev: { value: unknown }) => {
-      this.renderer.clipMin[1] = ev.value as number;
+      const v = ev.value as { min: number; max: number };
+      this.renderer.clipMin[2] = v.min / clipDims[2];
+      this.renderer.clipMax[2] = v.max / clipDims[2];
       this.renderer.resetAccumulation();
     });
 
-    clipFolder.addBinding(this.params, 'clipMaxY', {
-      label: 'Y Max',
-      min: 0,
-      max: 1,
-      step: 0.01,
-    }).on('change', (ev: { value: unknown }) => {
-      this.renderer.clipMax[1] = ev.value as number;
-      this.renderer.resetAccumulation();
-    });
+    // Slice Planes folder (hidden until slice mode is selected)
+    this.sliceFolder = pane.addFolder({ title: 'Slice Planes', expanded: true });
 
-    // Z-axis
-    clipFolder.addBinding(this.params, 'clipMinZ', {
-      label: 'Z Min',
-      min: 0,
-      max: 1,
-      step: 0.01,
-    }).on('change', (ev: { value: unknown }) => {
-      this.renderer.clipMin[2] = ev.value as number;
-      this.renderer.resetAccumulation();
-    });
+    const sliceDims = this.viewer.metadata.dimensions;
+    const addSliceRow = (label: string, posKey: keyof typeof this.params, visKey: keyof typeof this.params, dim: number) => {
+      const folder = this.sliceFolder!;
+      const posBinding = folder.addBinding(this.params, posKey as string, { label, min: 0, max: dim, step: 1 });
+      posBinding.on('change', (ev: { value: unknown }) => {
+        (this.renderer as unknown as Record<string, number>)[posKey as string] = (ev.value as number) / dim;
+      });
+      const visBinding = folder.addBinding(this.params, visKey as string, { label: '' });
+      visBinding.on('change', (ev: { value: unknown }) => {
+        (this.renderer as unknown as Record<string, boolean>)[visKey as string] = ev.value as boolean;
+      });
 
-    clipFolder.addBinding(this.params, 'clipMaxZ', {
-      label: 'Z Max',
-      min: 0,
-      max: 1,
-      step: 0.01,
-    }).on('change', (ev: { value: unknown }) => {
-      this.renderer.clipMax[2] = ev.value as number;
-      this.renderer.resetAccumulation();
-    });
+      // Combine into a single flex row
+      const posEl = posBinding.element as HTMLElement;
+      const visEl = visBinding.element as HTMLElement;
+      const wrapper = document.createElement('div');
+      wrapper.style.cssText = 'display: flex; align-items: center; width: 100%;';
+      posEl.style.flex = '1';
+      // Compact checkbox: hide label text, shrink to fit
+      const visLabelEl = visEl.querySelector('.tp-lblv_l') as HTMLElement | null;
+      if (visLabelEl) visLabelEl.style.display = 'none';
+      const visValueEl = visEl.querySelector('.tp-lblv_v') as HTMLElement | null;
+      if (visValueEl) visValueEl.style.width = 'auto';
+      posEl.parentElement?.insertBefore(wrapper, posEl);
+      wrapper.appendChild(posEl);
+      wrapper.appendChild(visEl);
+    };
+
+    addSliceRow('X', 'sliceX', 'showSliceX', sliceDims[0]);
+    addSliceRow('Y', 'sliceY', 'showSliceY', sliceDims[1]);
+    addSliceRow('Z', 'sliceZ', 'showSliceZ', sliceDims[2]);
 
     // Debug folder (collapsed by default)
     const debugFolder = pane.addFolder({ title: 'Debug', expanded: false });
+
+    debugFolder.addBinding(this.params, 'enableJitter', {
+      label: 'Jitter',
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.enableJitter = ev.value as boolean;
+      this.renderer.resetAccumulation();
+    });
+
+    debugFolder.addBinding(this.params, 'enableTAA', {
+      label: 'TAA',
+    }).on('change', (ev: { value: unknown }) => {
+      this.renderer.enableTAA = ev.value as boolean;
+      this.renderer.resetAccumulation();
+    });
 
     debugFolder.addBinding(this.params, 'useIndirection', {
       label: 'Indirection',
@@ -454,6 +509,13 @@ export class VolumeUI {
       label: 'Downloaded',
       readonly: true,
     });
+
+    // Pipeline timing section (hidden)
+    // const pipeFolder = statsPane.addFolder({ title: 'Pipeline (avg/brick)', expanded: false });
+    // pipeFolder.addBinding(this.statsParams, 'pipelineFetch', { label: 'Fetch', readonly: true });
+    // pipeFolder.addBinding(this.statsParams, 'pipelineAssembly', { label: 'Assembly', readonly: true });
+    // pipeFolder.addBinding(this.statsParams, 'pipelineUpload', { label: 'GPU upload', readonly: true });
+    // pipeFolder.addBinding(this.statsParams, 'pipelineSamples', { label: 'Samples', readonly: true });
   }
 
   private initStreaming(manager: StreamingManager, metadata: VolumeMetadata): void {
@@ -474,7 +536,8 @@ export class VolumeUI {
     const spacing = metadata.voxelSpacing ?? [1, 1, 1];
     this.statsParams.spacing = `${spacing[0].toFixed(2)} × ${spacing[1].toFixed(2)} × ${spacing[2].toFixed(2)}`;
 
-    this.statsParams.lodLevels = `${metadata.levels.length} (LOD 0-${metadata.maxLod})`;
+    const codec = metadata.compression;
+    this.statsParams.lodLevels = `${metadata.levels.length} (LOD 0-${metadata.maxLod})${codec ? ` · ${codec}` : ''}`;
 
     const format = this.renderer.canvas.format;
     this.statsParams.textureFormat = format + (format === 'r8unorm' && metadata.bitDepth === 16 ? ' (⚠️ downsampled)' : '');
@@ -522,6 +585,13 @@ export class VolumeUI {
 
       const totalMB = stats.totalBytesDownloaded / (1024 * 1024);
       this.statsParams.totalDownloaded = `${totalMB.toFixed(2)} MB`;
+
+      // Pipeline timings
+      const pt = stats.pipelineTimings;
+      this.statsParams.pipelineFetch = pt.sampleCount > 0 ? `${pt.avgFetchMs.toFixed(1)} ms` : '—';
+      this.statsParams.pipelineAssembly = pt.sampleCount > 0 ? `${pt.avgAssemblyMs.toFixed(1)} ms` : '—';
+      this.statsParams.pipelineUpload = pt.sampleCount > 0 ? `${pt.avgUploadMs.toFixed(1)} ms` : '—';
+      this.statsParams.pipelineSamples = `${pt.sampleCount}`;
 
       // Time to first render
       if (stats.timeToFirstRender !== null) {
@@ -602,6 +672,8 @@ export class VolumeUI {
         // Start dragging existing point
         this.isDraggingPoint = true;
         this.dragPointIndex = pointIndex;
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', stopDrag);
       } else {
         // Add new point
         const x = canvasX / canvas.width;
@@ -613,7 +685,7 @@ export class VolumeUI {
       }
     });
 
-    canvas.addEventListener('mousemove', (e) => {
+    const onMouseMove = (e: MouseEvent) => {
       if (!this.isDraggingPoint) return;
 
       const rect = canvas.getBoundingClientRect();
@@ -627,9 +699,7 @@ export class VolumeUI {
       if (!point) return;
 
       // Endpoints can only move vertically
-      if (this.dragPointIndex === 0) {
-        point.y = Math.max(0, Math.min(1, 1 - canvasY / canvas.height));
-      } else if (this.dragPointIndex === points.length - 1) {
+      if (this.dragPointIndex === 0 || this.dragPointIndex === points.length - 1) {
         point.y = Math.max(0, Math.min(1, 1 - canvasY / canvas.height));
       } else {
         point.x = Math.max(0.01, Math.min(0.99, canvasX / canvas.width));
@@ -638,15 +708,16 @@ export class VolumeUI {
 
       this.transferFunction.setOpacityPoints(points);
       this.updateTFPreview();
-    });
-
-    const stopDrag = () => {
-      this.isDraggingPoint = false;
-      this.dragPointIndex = -1;
     };
 
-    canvas.addEventListener('mouseup', stopDrag);
-    canvas.addEventListener('mouseleave', stopDrag);
+    const stopDrag = () => {
+      if (!this.isDraggingPoint) return;
+      this.isDraggingPoint = false;
+      this.dragPointIndex = -1;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', stopDrag);
+    };
+
   }
 
   private updateTFPreview(): void {
@@ -666,7 +737,15 @@ export class VolumeUI {
   private onBaseLodLoaded(brickData: (Uint8Array | Uint16Array)[]): void {
     if (!this.metadata) return;
 
-    const histogram = computeHistogram(brickData, this.metadata.bitDepth);
+    const histogram = computeHistogram(
+      brickData,
+      this.metadata.bitDepth,
+      256,
+      this.metadata.isFloat ?? false,
+      this.metadata.dataRange?.[0] ?? 0,
+      this.metadata.dataRange?.[1] ?? 1,
+      this.renderer.canvas.format,
+    );
     this.transferFunction.setHistogram(histogram);
     this.updateTFPreview();
   }
@@ -680,12 +759,18 @@ export class VolumeUI {
     this.params.renderScale = this.viewer.renderScale;
     this.params.upAxis = this.camera.getUpAxis();
     this.params.tfPreset = this.transferFunction.preset;
-    this.params.clipMinX = this.renderer.clipMin[0]!;
-    this.params.clipMinY = this.renderer.clipMin[1]!;
-    this.params.clipMinZ = this.renderer.clipMin[2]!;
-    this.params.clipMaxX = this.renderer.clipMax[0]!;
-    this.params.clipMaxY = this.renderer.clipMax[1]!;
-    this.params.clipMaxZ = this.renderer.clipMax[2]!;
+    const syncDims = this.viewer.metadata.dimensions;
+    this.params.clipX = { min: Math.round(this.renderer.clipMin[0]! * syncDims[0]), max: Math.round(this.renderer.clipMax[0]! * syncDims[0]) };
+    this.params.clipY = { min: Math.round(this.renderer.clipMin[1]! * syncDims[1]), max: Math.round(this.renderer.clipMax[1]! * syncDims[1]) };
+    this.params.clipZ = { min: Math.round(this.renderer.clipMin[2]! * syncDims[2]), max: Math.round(this.renderer.clipMax[2]! * syncDims[2]) };
+    this.params.sliceX = Math.round(this.renderer.sliceX * syncDims[0]);
+    this.params.sliceY = Math.round(this.renderer.sliceY * syncDims[1]);
+    this.params.sliceZ = Math.round(this.renderer.sliceZ * syncDims[2]);
+    this.params.showSliceX = this.renderer.showSliceX;
+    this.params.showSliceY = this.renderer.showSliceY;
+    this.params.showSliceZ = this.renderer.showSliceZ;
+    this.params.showWireframe = this.renderer.showWireframe;
+    this.params.showAxis = this.renderer.showAxis;
     (this.pane as unknown as ExtendedPane).refresh();
     this.updateVisibility();
     this.updateTFPreview();
@@ -746,20 +831,21 @@ export class VolumeUI {
 
   private updateVisibility(): void {
     const mode = this.params.renderMode;
+    const isSlice = mode === 'slice';
 
-    // ISO section only visible in ISO mode
-    if (this.isoFolder) {
-      this.isoFolder.hidden = mode !== 'iso';
-    }
+    // ISO section only in ISO mode
+    if (this.isoFolder) this.isoFolder.hidden = mode !== 'iso';
 
-    // TF section visible in DVR and MIP modes
-    if (this.tfFolder) {
-      this.tfFolder.hidden = mode === 'iso';
-    }
+    // TF hidden only in ISO mode
+    if (this.tfFolder) this.tfFolder.hidden = mode === 'iso';
 
-    // Window/Level section visible in all modes except LOD debug
-    if (this.windowFolder) {
-      this.windowFolder.hidden = mode === 'lod';
-    }
+    // Window/Level hidden in LOD debug
+    if (this.windowFolder) this.windowFolder.hidden = mode === 'lod';
+
+    // Clipping planes only relevant in volume modes
+    if (this.clipFolder) this.clipFolder.hidden = isSlice;
+
+    // Slice folder only visible in slice mode
+    if (this.sliceFolder) this.sliceFolder.hidden = !isSlice;
   }
 }

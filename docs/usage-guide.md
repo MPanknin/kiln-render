@@ -31,17 +31,26 @@ Pass an optional third argument to set the initial viewer state:
 
 ```typescript
 const viewer = await KilnViewer.create(canvas, url, {
-  mode: 'dvr',          // 'dvr' | 'mip' | 'iso' | 'lod'
+  mode: 'dvr',          // 'dvr' | 'mip' | 'iso' | 'lod' | 'slice'
   windowCenter: 0.35,   // 0–1 (16-bit window centre)
   windowWidth: 0.55,    // 0–1 (16-bit window width)
   isoValue: 0.2,        // 0–1 (isosurface threshold)
   renderScale: 0.75,    // 0.25–1.0 (render resolution multiplier)
   maxPixelError: 2.0,   // LOD screen-space error threshold in pixels
   tfPreset: 'grayscale',// transfer function colour preset
+  tfPoints: [{ x: 0, y: 0 }, { x: 1, y: 1 }], // TF opacity control points (overrides preset defaults)
   upAxis: '-y',         // camera up axis
   cam: [0.07, 3.63, 3.93, 0.10, 0.00, -0.06], // [rx, ry, dist, tx, ty, tz]
   clipMin: [0, 0, 0],   // axis-aligned clip minimum (normalised 0–1)
   clipMax: [1, 1, 1],   // axis-aligned clip maximum (normalised 0–1)
+  sliceX: 0.5,          // slice plane position on X axis (normalised 0–1)
+  sliceY: 0.5,          // slice plane position on Y axis (normalised 0–1)
+  sliceZ: 0.5,          // slice plane position on Z axis (normalised 0–1)
+  showSliceX: true,     // show/hide the X slice plane
+  showSliceY: true,     // show/hide the Y slice plane
+  showSliceZ: true,     // show/hide the Z slice plane
+  showWireframe: false, // bounding box wireframe overlay
+  showAxis: false,      // world-space axis overlay
 });
 ```
 
@@ -72,7 +81,9 @@ viewer.metadata;         // VolumeMetadata (dimensions, spacing, bitDepth, …)
 const state = viewer.getState();
 // {
 //   mode, windowCenter, windowWidth, isoValue, renderScale,
-//   tfPreset, upAxis, cam, clipMin, clipMax
+//   tfPreset, tfPoints, upAxis, cam, clipMin, clipMax,
+//   sliceX, sliceY, sliceZ, showSliceX, showSliceY, showSliceZ,
+//   showWireframe, showAxis
 // }
 ```
 
@@ -191,16 +202,21 @@ Control rendering settings via URL parameters to share or bookmark specific view
 | Parameter | Values | Description | Example |
 |-----------|--------|-------------|---------|
 | `dataset` | URL | Volume data source | `dataset=https://...volume.ome.zarr` |
-| `mode` | `dvr`, `mip`, `iso`, `lod` | Render mode | `mode=mip` |
+| `mode` | `dvr`, `mip`, `iso`, `lod`, `slice` | Render mode | `mode=mip` |
 | `wc` | 0-1 | Window center | `wc=0.35` |
 | `ww` | 0-1 | Window width | `ww=0.55` |
 | `iso` | 0-1 | Isosurface threshold | `iso=0.15` |
-| `tf` | `grayscale`, `coolwarm`, `hot`, `viridis`, etc. | Transfer function | `tf=coolwarm` |
+| `tf` | `grayscale`, `grayscale-inverted`, `coolwarm`, `hot`, `cool`, `viridis`, `plasma`, `seismic` | Transfer function preset | `tf=coolwarm` |
+| `tfpts` | x,y pairs | TF opacity control points (comma-separated) | `tfpts=0,0,0.5,0.8,1,1` |
 | `up` | `x`, `y`, `z`, `-x`, `-y`, `-z` | Camera up axis | `up=-y` |
 | `scale` | 0.25-1.0 | Render resolution | `scale=1.0` |
 | `cam` | 6 numbers | Camera state (rotation, distance, target) | `cam=0.1,2.3,3.5,0,0,0` |
-| `clipMin` | x,y,z | Clipping min (0-1) | `clipMin=0.2,0.1,0` |
-| `clipMax` | x,y,z | Clipping max (0-1) | `clipMax=0.8,0.9,1` |
+| `clipMin` | x,y,z | Clipping min (normalised 0–1) | `clipMin=0.2,0.1,0` |
+| `clipMax` | x,y,z | Clipping max (normalised 0–1) | `clipMax=0.8,0.9,1` |
+| `slices` | x,y,z | Slice plane positions (normalised 0–1, only used in `slice` mode) | `slices=0.5,0.5,0.5` |
+| `sliceVis` | 0–7 | Slice plane visibility bitmask (bit 0=X, 1=Y, 2=Z; default 7 = all visible) | `sliceVis=3` |
+| `wireframe` | `1` | Enable bounding box wireframe overlay | `wireframe=1` |
+| `axis` | `1` | Enable world-space axis overlay | `axis=1` |
 
 **Example:**
 ```
@@ -223,7 +239,7 @@ The atlas is fixed-size — usage is constant regardless of dataset size. See [A
 
 ### What are the known rendering issues?
 
-Brick boundary seams are still visible in some cases, especially in isosurface (ISO) mode where normal estimation samples across brick edges. LOD transitions can also produce brief visual discontinuities while bricks stream in.
+LOD transitions can produce brief visual discontinuities while bricks stream in. Brick boundary seams have been substantially improved but may still be faintly visible in isosurface (ISO) mode where normal estimation samples across brick edges.
 
 ### Can I use Kiln in my own application?
 

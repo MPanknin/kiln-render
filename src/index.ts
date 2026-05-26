@@ -12,7 +12,7 @@ export type { ViewerOptions, ViewerState } from './viewer.js';
 
 // Render state enums/types (needed to construct ViewerOptions)
 export type { VolumeRenderMode } from './core/renderer.js';
-export type { TFPreset } from './core/transfer-function.js';
+export type { TFPreset, OpacityPoint } from './core/transfer-function.js';
 export type { UpAxis } from './core/camera.js';
 
 // Data provider interface (implement this to support custom formats)

@@ -15,8 +15,8 @@ import { open, root, Array as ZarrArray } from 'zarrita';
 import type { DataType, Readable } from 'zarrita';
 import { TolerantFetchStore } from './tolerant-fetch-store.js';
 import { ZarrWorkerPool } from './zarr-worker-pool.js';
-import { BaseZarrProvider } from './base-zarr-provider.js';
-import type { VolumeMetadata, BrickData } from './data-provider.js';
+import { BaseZarrProvider, detectCompression } from './base-zarr-provider.js';
+import type { VolumeMetadata, BrickData, PipelineTimings } from './data-provider.js';
 import { UnsupportedDatasetError } from './data-provider.js';
 import { extractMultiscales } from './zarr-validator.js';
 
@@ -91,6 +91,15 @@ export class ZarrDataProvider extends BaseZarrProvider {
     const name = urlParts[urlParts.length - 1]?.replace(/\.ome\.zarr|\.zarr/, '') ?? 'zarr-volume';
     const { metadata, lodParams } = this.parseOmeMetadata(attrs, arrays, name);
 
+    // Scan coarsest LOD for float range if no OMERO window provided it
+    if (metadata.isFloat && !metadata.dataRange) {
+      console.log('[Kiln] Float dataset — scanning coarsest LOD for data range…');
+      metadata.dataRange = await this.scanFloatRange(arrays[arrays.length - 1]!, lodParams[lodParams.length - 1]!);
+      console.log(`[Kiln] Float data range: [${metadata.dataRange[0]}, ${metadata.dataRange[1]}]`);
+    }
+
+    metadata.compression = await detectCompression(store, arrayPaths[0] ?? '');
+
     this.metadata = metadata;
 
     // Initialize worker pool — all heavy lifting happens there
@@ -103,6 +112,8 @@ export class ZarrDataProvider extends BaseZarrProvider {
       metadata.physicalBrickSize,
       metadata.bitDepth === 16,
       this.targetFormat,
+      metadata.isFloat ?? false,
+      metadata.dataRange,
     );
 
     return this.metadata;
@@ -142,6 +153,12 @@ export class ZarrDataProvider extends BaseZarrProvider {
       console.warn(`Failed to load brick lod${lod}:${bx}-${by}-${bz}:`, e);
       return null;
     }
+  }
+
+  getPipelineTimings(): PipelineTimings {
+    return this.workerPool?.getPipelineTimings() ?? {
+      avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0,
+    };
   }
 
   dispose(): void {

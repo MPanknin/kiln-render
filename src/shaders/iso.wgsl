@@ -13,6 +13,8 @@ fn rayMarchISO(
     var prevDensity = 0.0;
     var prevT = tStart;
     var t = tStart;
+    var tSample = -1.0;  // sentinel: not yet initialized
+    var rayStepSize = 0.0;
 
     for (var brickIter = 0u; brickIter < MAX_BRICK_TRAVERSALS; brickIter++) {
         if (t >= tEnd) { break; }
@@ -21,30 +23,43 @@ fn rayMarchISO(
 
         if (!brick.valid) {
             t = brick.tEnd + 0.0001;
-            prevDensity = 0.0;  // Reset at brick boundary
+            if (tSample >= 0.0 && tSample < t) { tSample = t; }
+            prevDensity = 0.0;  // Reset across empty space to avoid false crossings
             continue;
         }
 
-        let jitter = select(0.0, rand(rayToSeed(rayDir) + brickIter + uniforms.frameIndex) * brick.stepSize, uniforms.jitter != 0u);
-        var tSample = t + jitter;
+        // Apply jitter once for the whole ray on the first valid brick
+        if (tSample < 0.0) {
+            rayStepSize = brick.stepSize;
+            tSample = t + rand(rayToSeed(rayDir) + uniforms.frameIndex) * rayStepSize;
+        }
 
         for (var i = 0u; i < brick.numSteps; i++) {
+            if (tSample > brick.tEnd) { break; }
+
             let pos = rayOrigin + rayDir * tSample;
             let voxel = normalizedToVoxel(pos, normalizedSize, datasetSize);
             let rawDensity = sampleAtlas(voxel, brick.indirection, brick.lodScale);
+            // Normalize from raw float range to [0, 1] (no-op for uint data where floatMin=0, floatMax=1)
+            let normalizedDensity = clamp((rawDensity - uniforms.floatMin) / max(uniforms.floatMax - uniforms.floatMin, 0.0001), 0.0, 1.0);
             // Apply windowing to density for isosurface comparison
-            let density = applyWindow(rawDensity, windowCenter, windowWidth);
+            let density = applyWindow(normalizedDensity, windowCenter, windowWidth);
 
             // Check for isosurface crossing (isoValue is in windowed space)
             if (prevDensity < isoValue && density >= isoValue) {
                 let tSurface = refineIsoSurfaceWindowed(
                     rayOrigin, rayDir, prevT, tSample, isoValue,
-                    normalizedSize, datasetSize, brick.indirection, brick.lodScale,
+                    normalizedSize, datasetSize,
                     windowCenter, windowWidth
                 );
                 let surfacePos = rayOrigin + rayDir * tSurface;
                 let surfaceVoxel = normalizedToVoxel(surfacePos, normalizedSize, datasetSize);
-                let gradient = computeGradient(surfaceVoxel, brick.indirection, brick.lodScale);
+                // Look up the indirection for the actual surface brick, which may differ
+                // from the current brick when the crossing straddles a brick boundary
+                let surfaceBrickIdx = floor(surfaceVoxel / LOGICAL_BRICK_SIZE);
+                let surfaceIndirection = lookupIndirection(surfaceBrickIdx);
+                let surfaceLodScale = getLodScale(surfaceIndirection);
+                let gradient = computeGradient(surfaceVoxel, surfaceIndirection, surfaceLodScale);
 
                 if (length(gradient) >= 0.001) {
                     let normal = -normalize(gradient);
@@ -55,7 +70,7 @@ fn rayMarchISO(
 
             prevDensity = density;
             prevT = tSample;
-            tSample += brick.stepSize;
+            tSample += rayStepSize;
         }
 
         t = brick.tEnd + 0.0001;

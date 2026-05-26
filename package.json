@@ -1,6 +1,6 @@
 {
   "name": "kiln-render",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "A WebGPU-native out-of-core renderer for large virtualized volumetric data",
   "author": {
     "name": "Martin Panknin",
@@ -48,6 +48,7 @@
   "devDependencies": {
     "@webgpu/types": "^0.1.69",
     "fflate": "^0.8.2",
+    "@tweakpane/plugin-essentials": "^0.2.1",
     "tweakpane": "^4.0.5",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",

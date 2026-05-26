@@ -111,6 +111,7 @@ The `lodScale` factor handles coarse LOD sampling: a LOD 2 brick covers 256³ lo
 | **MIP** | Maximum intensity along ray | Angiography, vessel detection |
 | **ISO** | First surface at threshold + Phong shading | Surface extraction |
 | **LOD** | Color-coded by resolution level | Debug LOD distribution |
+| **Slice** | Three orthogonal planes sampling the atlas directly | Anatomical navigation |
 
 DVR compositing uses the optical model with extinction:
 

@@ -7,6 +7,8 @@
  */
 
 import type { ZarrWorkerRequest, ZarrWorkerResponse } from './zarr-chunk-worker.js';
+import type { PipelineTimings } from './data-provider.js';
+import { RollingAvg } from './network-tracker.js';
 import ZarrChunkWorkerInline from './zarr-chunk-worker.ts?worker&inline';
 
 /**
@@ -19,13 +21,6 @@ import ZarrChunkWorkerInline from './zarr-chunk-worker.ts?worker&inline';
  */
 function createWorker(): Worker {
   if (import.meta.env.DEV) {
-    // Use a URL-based worker in dev so zarrita codecs (blosc/zstd/lz4) can be
-    // dynamically imported from the dev server. Blob workers (?worker&inline)
-    // have null origin and cannot fetch back to localhost.
-    //
-    // Alias Worker + store the path in a variable: Vite's static analysers
-    // match `new Worker(new URL("literal", import.meta.url))` specifically —
-    // breaking either pattern prevents a spurious worker chunk in prod builds.
     const DevWorker = Worker;
     const devWorkerPath = './zarr-chunk-worker.ts';
     return new DevWorker(new URL(devWorkerPath, import.meta.url), { type: 'module' });
@@ -51,6 +46,8 @@ export class ZarrWorkerPool {
   private requestId = 0;
   private pendingRequests = new Map<number, PendingRequest>();
   private is16bit = false;
+  private fetchAvg = new RollingAvg();
+  private assemblyAvg = new RollingAvg();
 
   constructor(
     private poolSize: number = navigator.hardwareConcurrency
@@ -69,6 +66,8 @@ export class ZarrWorkerPool {
     physicalBrickSize: number,
     is16bit: boolean,
     targetFormat?: 'r8unorm' | 'r16unorm' | 'r16float',
+    isFloat32?: boolean,
+    floatRange?: [number, number],
   ): Promise<void> {
     this.is16bit = is16bit;
     const initPromises: Promise<void>[] = [];
@@ -77,7 +76,7 @@ export class ZarrWorkerPool {
       const worker = createWorker();
 
       worker.onmessage = (event: MessageEvent<ZarrWorkerResponse>) => {
-        const { type: msgType, id, error, data, min, max, avg } = event.data;
+        const { type: msgType, id, error, data, min, max, avg, fetchMs, assemblyMs } = event.data;
         const pending = this.pendingRequests.get(id);
         if (!pending) return;
         this.pendingRequests.delete(id);
@@ -87,6 +86,8 @@ export class ZarrWorkerPool {
         } else if (msgType === 'init' || msgType === 'setTargetFormat') {
           pending.resolve(undefined);
         } else if (msgType === 'loadBrick' && data) {
+          if (fetchMs !== undefined) this.fetchAvg.add(fetchMs);
+          if (assemblyMs !== undefined) this.assemblyAvg.add(assemblyMs);
           const typedData = this.is16bit
             ? new Uint16Array(data)
             : new Uint8Array(data);
@@ -117,6 +118,9 @@ export class ZarrWorkerPool {
           type: 'init', id, url, paths,
           lodParams, logicalBrickSize, physicalBrickSize, is16bit,
           targetFormat,
+          isFloat32: isFloat32 ?? false,
+          floatMin: floatRange?.[0],
+          floatMax: floatRange?.[1],
         };
         worker.postMessage(req);
       });
@@ -165,6 +169,15 @@ export class ZarrWorkerPool {
       const req: ZarrWorkerRequest = { type: 'loadBrick', id, lod, bx, by, bz, channelIndex };
       worker.postMessage(req);
     });
+  }
+
+  getPipelineTimings(): PipelineTimings {
+    return {
+      avgFetchMs: this.fetchAvg.value,
+      avgAssemblyMs: this.assemblyAvg.value,
+      avgUploadMs: 0, // measured in StreamingManager
+      sampleCount: this.fetchAvg.count,
+    };
   }
 
   terminate(): void {

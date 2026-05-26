@@ -89,7 +89,8 @@ When a finer LOD brick loads, it **overwrites** only its specific cell, leaving 
 
 The **atlas** is a single 3D texture (`660³`) organized as a 10×10×10 grid of 66³ slots. The texture format depends on the source data:
 - **8-bit volumes**: `r8unorm` (1 byte per voxel)
-- **16-bit volumes**: `r16unorm` (2 bytes per voxel, requires WebGPU `texture-formats-tier1` feature)
+- **16-bit integer volumes**: `r16unorm` (2 bytes per voxel, requires WebGPU `texture-formats-tier1` feature)
+- **float32 volumes**: `r16float` (2 bytes per voxel) — `filterable-float32-texture` is not universally available, so float32 inputs are repacked to half-precision on ingest
 
 > **Note:** Atlas dimensions (660³, 1,000 slots) are fixed at build time in `src/core/config.ts`. They are not configurable via the public `KilnViewer` API.
 
@@ -278,17 +279,17 @@ The **ZarrDataProvider** (`src/data/zarr-provider.ts`) loads OME-Zarr volumes di
 
 ---
 
-## 16-bit Volume Support
+## 16-bit and Float32 Volume Support
 
-Kiln supports both 8-bit and 16-bit unsigned integer volumes:
+Kiln supports 8-bit unsigned, 16-bit unsigned, and 32-bit float volumes:
 
-| Feature | 8-bit | 16-bit |
-|---------|-------|--------|
-| Texture format | `r8unorm` | `r16unorm` |
-| Value range | 0-255 | 0-65535 |
-| Bytes per voxel | 1 | 2 |
-| Atlas size | ~274 MiB | ~548 MiB |
-| WebGPU feature | (none) | `texture-formats-tier1` |
+| Feature | 8-bit | 16-bit integer | float32 |
+|---------|-------|----------------|---------|
+| Source dtype | `uint8` | `uint16` | `float32` |
+| Texture format | `r8unorm` | `r16unorm` | `r16float` |
+| Bytes per voxel (GPU) | 1 | 2 | 2 |
+| Atlas size | ~274 MiB | ~548 MiB | ~548 MiB |
+| WebGPU feature | (none) | `texture-formats-tier1` | (none) |
 
 ### Windowing/Leveling
 

@@ -90,8 +90,10 @@ export function validateZarrSupport(
     );
   }
 
-  if (!['uint8', 'uint16'].includes(dtype)) {
-    reasons.push(`Data type "${dtype}" is not supported (only uint8 or uint16)`);
+  if (!['uint8', 'uint16', 'float32', 'float64'].includes(dtype)) {
+    reasons.push(`Data type "${dtype}" is not supported (only uint8, uint16, or float32)`);
+  } else if (dtype === 'float64') {
+    console.warn('[Kiln] float64 detected — will be read as float32 (precision loss possible)');
   }
 
   return reasons;

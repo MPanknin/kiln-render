@@ -22,11 +22,11 @@ Kiln can load [OME-Zarr](https://ngff.openmicroscopy.org/) volumes directly over
 - **OME-NGFF v0.5** with `multiscales` metadata in group attributes (v0.4 not supported)
 - **Single-channel datasets only** (multi-channel/RGB not supported)
 - **3D arrays** with dimensions ordered `[z, y, x]` (standard C-order)
-- **Supported dtypes:** `uint8`, `uint16` only (signed integers and float32/float64 not supported)
+- **Supported dtypes:** `uint8`, `uint16`, `float32` (signed integers and `float64` not supported)
 - Multiple resolution levels (datasets within `multiscales`) are used as LODs
 - Voxel spacing is read from `coordinateTransformations` if present
 
-> **Note:** Currently unsupported: OME-Zarr v0.4, multi-channel datasets, signed integer types (`int8`, `int16`), and floating-point types (`float32`, `float64`).
+> **Note:** Currently unsupported: OME-Zarr v0.4, multi-channel datasets, signed integer types (`int8`, `int16`), and `float64`. `float32` volumes are stored internally as `r16float` (WebGPU filterable-float32 is not universally available); min/max range is read from metadata and used to normalise values in the shader.
 
 ### Usage
 

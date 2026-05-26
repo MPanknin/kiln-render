@@ -44,6 +44,11 @@ function parseURLParams(): {
   cam?: [number, number, number] | [number, number, number, number, number, number];
   clipMin?: [number, number, number];
   clipMax?: [number, number, number];
+  slices?: [number, number, number];
+  sliceVis?: [boolean, boolean, boolean];
+  tfPoints?: Array<{ x: number; y: number }>;
+  wireframe?: boolean;
+  axis?: boolean;
 } {
   const params = new URLSearchParams(window.location.search);
   let cam: [number, number, number] | [number, number, number, number, number, number] | undefined;
@@ -72,6 +77,36 @@ function parseURLParams(): {
     }
   }
 
+  let slices: [number, number, number] | undefined;
+  const slicesStr = params.get('slices');
+  if (slicesStr) {
+    const parts = slicesStr.split(',').map(Number);
+    if (parts.length === 3 && parts.every(n => !isNaN(n))) {
+      slices = parts as [number, number, number];
+    }
+  }
+
+  let sliceVis: [boolean, boolean, boolean] | undefined;
+  const sliceVisStr = params.get('sliceVis');
+  if (sliceVisStr !== null) {
+    const mask = parseInt(sliceVisStr, 10);
+    if (!isNaN(mask)) {
+      sliceVis = [!!(mask & 1), !!(mask & 2), !!(mask & 4)];
+    }
+  }
+
+  let tfPoints: Array<{ x: number; y: number }> | undefined;
+  const tfPtsStr = params.get('tfpts');
+  if (tfPtsStr) {
+    const nums = tfPtsStr.split(',').map(Number);
+    if (nums.length >= 2 && nums.length % 2 === 0 && nums.every(n => !isNaN(n))) {
+      tfPoints = [];
+      for (let i = 0; i < nums.length; i += 2) {
+        tfPoints.push({ x: nums[i]!, y: nums[i + 1]! });
+      }
+    }
+  }
+
   return {
     dataset: params.get('dataset') ?? DEFAULT_VOLUME_SOURCE,
     mode: (params.get('mode') as VolumeRenderMode) ?? undefined,
@@ -85,6 +120,11 @@ function parseURLParams(): {
     cam,
     clipMin,
     clipMax,
+    slices,
+    sliceVis,
+    tfPoints,
+    wireframe: params.get('wireframe') === '1' ? true : undefined,
+    axis: params.get('axis') === '1' ? true : undefined,
   };
 }
 
@@ -127,12 +167,21 @@ async function main() {
     windowWidth: urlParams.ww,
     isoValue: urlParams.iso,
     tfPreset: urlParams.tf as TFPreset | undefined,
+    tfPoints: urlParams.tfPoints,
     upAxis: urlParams.up as UpAxis | undefined,
     cam: urlParams.cam,
     renderScale: urlParams.scale,
     maxPixelError: urlParams.sse,
     clipMin: urlParams.clipMin,
     clipMax: urlParams.clipMax,
+    sliceX: urlParams.slices?.[0],
+    sliceY: urlParams.slices?.[1],
+    sliceZ: urlParams.slices?.[2],
+    showSliceX: urlParams.sliceVis?.[0],
+    showSliceY: urlParams.sliceVis?.[1],
+    showSliceZ: urlParams.sliceVis?.[2],
+    showWireframe: urlParams.wireframe,
+    showAxis: urlParams.axis,
     pageLoadStart: PAGE_LOAD_START,
   };
 
@@ -175,6 +224,7 @@ async function main() {
       p.set('ww', state.windowWidth.toFixed(2));
       p.set('iso', state.isoValue.toFixed(2));
       p.set('tf', state.tfPreset);
+      p.set('tfpts', state.tfPoints.map(pt => `${pt.x.toFixed(2)},${pt.y.toFixed(2)}`).join(','));
       p.set('up', state.upAxis);
       p.set('scale', state.renderScale.toFixed(2));
       const [rx, ry, dist, tx, ty, tz] = state.cam;
@@ -185,6 +235,17 @@ async function main() {
       }
       if (state.clipMax[0] !== 1 || state.clipMax[1] !== 1 || state.clipMax[2] !== 1) {
         p.set('clipMax', state.clipMax.map(v => v.toFixed(2)).join(','));
+      }
+
+      // Overlays — only emit when non-default (both default to false)
+      if (state.showWireframe) p.set('wireframe', '1');
+      if (state.showAxis) p.set('axis', '1');
+
+      // Slice planes — only emit when in slice mode
+      if (state.mode === 'slice') {
+        p.set('slices', `${state.sliceX.toFixed(2)},${state.sliceY.toFixed(2)},${state.sliceZ.toFixed(2)}`);
+        const visMask = (state.showSliceX ? 1 : 0) | (state.showSliceY ? 2 : 0) | (state.showSliceZ ? 4 : 0);
+        if (visMask !== 7) p.set('sliceVis', String(visMask)); // omit when all visible
       }
 
       const url = `${window.location.origin}${window.location.pathname}?${p.toString()}`;

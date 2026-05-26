@@ -2,7 +2,7 @@
  * Transfer function - maps density to RGBA color
  */
 
-export type TFPreset = 'grayscale' | 'hot' | 'cool' | 'viridis' | 'plasma' | 'coolwarm' | 'seismic';
+export type TFPreset = 'grayscale' | 'grayscale-inverted' | 'hot' | 'cool' | 'viridis' | 'plasma' | 'coolwarm' | 'seismic';
 
 export interface OpacityPoint {
   x: number;  // 0-1 density
@@ -75,6 +75,11 @@ export class TransferFunction {
       case 'grayscale':
         const v = Math.floor(t * 255);
         return [v, v, v];
+
+      case 'grayscale-inverted': {
+        const v = Math.floor((1 - t) * 255);
+        return [v, v, v];
+      }
 
       case 'hot':
         // Black -> Red -> Yellow -> White

@@ -32,6 +32,7 @@ import wireframeWGSL from './wireframe.wgsl?raw';
 import axisWGSL from './axis.wgsl?raw';
 import blitWGSL from './blit.wgsl?raw';
 import accumulateWGSL from './accumulate.wgsl?raw';
+import slicePlanesWGSL from './slice-planes.wgsl?raw';
 
 // Inject all rendering constants from config into shader source
 function injectConfig(shader: string): string {
@@ -106,11 +107,12 @@ struct Uniforms {
     numChannels: u32,
     windowCenter: f32,
     windowWidth: f32,
-    _pad2: vec2f,
+    floatMin: f32,
+    floatMax: f32,
     clipMin: vec3f,
     _pad3: f32,
     clipMax: vec3f,
-    _pad4: f32,
+    densityScale: f32,
     jitter: u32,
     _pad5: u32,
     channelColors: array<vec4f, 4>,
@@ -174,12 +176,13 @@ struct Uniforms {
     isoValue: f32,
     screenSize: vec2f,
     frameIndex: u32,
-    jitter: u32,
+    _pad3: u32,
     windowCenter: f32,
     windowWidth: f32,
-    _pad4: vec2f,
+    floatMin: f32,
+    floatMax: f32,
     clipMin: vec3f,
-    _pad5: f32,
+    densityScale: f32,
     clipMax: vec3f,
     numChannels: u32,
     channelColors: array<vec4f, 4>,
@@ -249,3 +252,10 @@ export const wireframeShader = wireframeWGSL;
 export const axisShader = axisWGSL;
 export const blitShader = blitWGSL;
 export const accumulateShader = accumulateWGSL;
+
+// Slice planes shader: axis-aligned cross-sections through the volume
+export const slicePlanesShader = [
+  injectConfig(commonWGSL),
+  samplingWGSL,
+  slicePlanesWGSL,
+].join('\n');

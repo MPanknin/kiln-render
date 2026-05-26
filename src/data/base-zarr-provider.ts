@@ -32,8 +32,7 @@ import { extractMultiscales, normalizeAxes, validateZarrSupport } from './zarr-v
 /** OME-NGFF multiscales metadata (from group attributes) */
 export interface OmeMultiscales {
   // may be string[] (v0.4) or {name,type}[] (v0.5) or absent — use normalizeAxes()
-  // this needs to be hardened once the spec has settled
-  axes?: unknown; 
+  axes?: unknown;
   datasets: { path: string; coordinateTransformations?: { type: string; scale?: number[] }[] }[];
   coordinateTransformations?: { type: string; scale?: number[] }[]; // v0.4 group-level fallback
   name?: string;
@@ -55,6 +54,42 @@ export interface LodParams {
   shapePrefixLength: number;
   /** Index of the channel axis within the full shape array (-1 if no channel axis). */
   channelAxisIdx: number;
+}
+
+/**
+ * Detect the compression codec by reading raw zarr metadata from a store.
+ * Tries zarr v2 (.zarray) first, then zarr v3 (zarr.json).
+ *
+ * @param store - Any zarr store with a `get(key)` method
+ * @param arrayPath - Path to the zarr array relative to the store root (e.g. "s0" or "0/s0")
+ */
+export async function detectCompression(
+  store: { get: (key: any) => Promise<Uint8Array | undefined> },
+  arrayPath: string,
+): Promise<string | undefined> {
+  const tryParse = async (key: string): Promise<any> => {
+    const bytes = await store.get(key).catch(() => undefined);
+    return bytes ? JSON.parse(new TextDecoder().decode(bytes)) : null;
+  };
+
+  // Zarr v2: .zarray has a "compressor" field
+  const v2 = await tryParse(`/${arrayPath}/.zarray`);
+  if (v2) {
+    const c = v2.compressor;
+    if (!c) return undefined;
+    return c.id === 'blosc' ? `blosc/${c.cname ?? 'lz4'}` : String(c.id);
+  }
+
+  // Zarr v3: zarr.json has a "codecs" array
+  const v3 = await tryParse(`/${arrayPath}/zarr.json`);
+  if (v3?.codecs) {
+    const comp = (v3.codecs as { name: string }[]).find(c =>
+      ['blosc', 'zstd', 'gzip', 'zlib', 'bz2', 'lz4'].includes(c.name)
+    );
+    return comp?.name;
+  }
+
+  return undefined;
 }
 
 /**
@@ -125,6 +160,56 @@ export abstract class BaseZarrProvider implements DataProvider {
   }
 
   /**
+   * Scan every chunk of the given array to find the global float min/max.
+   * Used as a fallback when no OMERO window metadata is available for float datasets.
+   */
+  protected async scanFloatRange(
+    arr: ZarrArray<DataType, any>,
+    params: LodParams,
+  ): Promise<[number, number]> {
+    const { actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx } = params;
+    const maxCx = Math.floor((actualDimX - 1) / csx);
+    const maxCy = Math.floor((actualDimY - 1) / csy);
+    const maxCz = Math.floor((actualDimZ - 1) / csz);
+
+    const values: number[] = [];
+
+    const prefix = new Array(shapePrefixLength).fill(0);
+    // For channel axis, always use channel 0 for the range scan
+    if (channelAxisIdx >= 0 && channelAxisIdx < shapePrefixLength) {
+      prefix[channelAxisIdx] = 0;
+    }
+
+    for (let cz = 0; cz <= maxCz; cz++) {
+      for (let cy = 0; cy <= maxCy; cy++) {
+        for (let cx = 0; cx <= maxCx; cx++) {
+          const chunk = await arr.getChunk([...prefix, cz, cy, cx]);
+          const data = chunk.data as ArrayLike<number>;
+          for (let i = 0; i < data.length; i++) {
+            const v = Number(data[i]);
+            if (isFinite(v)) {
+              values.push(v);
+            }
+          }
+        }
+      }
+    }
+
+    if (values.length === 0) return [0, 1];
+
+    values.sort((a, b) => a - b);
+
+    // Use p0.1 / p99.9 percentiles to clip outliers and fill-value artifacts
+    const lo = values[Math.floor(values.length * 0.001)] ?? values[0]!;
+    const hi = values[Math.floor(values.length * 0.999)] ?? values[values.length - 1]!;
+
+    // Guard against degenerate range (uniform data)
+    if (lo >= hi) return [lo, lo + 1];
+
+    return [lo, hi];
+  }
+
+  /**
    * Cache brick statistics
    */
   protected cacheBrickStats(lod: number, bx: number, by: number, bz: number, stats: BrickStats): void {
@@ -160,7 +245,7 @@ export abstract class BaseZarrProvider implements DataProvider {
 
     const numScales = ms.datasets.length;
 
-    // Parse axes to detect channel axis and number of channels
+    // Parse axes — supports both v0.4 string arrays and v0.5 typed objects
     const axisNames = normalizeAxes(ms.axes);
     const channelAxisIdx = axisNames.findIndex(a => a.type === 'channel');
     const numChannels = channelAxisIdx >= 0
@@ -172,18 +257,23 @@ export abstract class BaseZarrProvider implements DataProvider {
     const validationReasons = validateZarrSupport(ms, arrays[0]!.shape, String(dtype));
     if (validationReasons.length > 0) throw new UnsupportedDatasetError(validationReasons);
 
-    // Determine bit depth from dtype (validation above ensures only uint8/uint16 reach here)
+    // Determine bit depth from dtype
+    const dtypeStr = String(dtype);
     let bitDepth: BitDepth;
-    if (dtype === 'uint8' || dtype === 'int8') {
+    let isFloat = false;
+    if (dtypeStr === 'uint8' || dtypeStr === 'int8') {
       bitDepth = 8;
-    } else if (dtype === 'uint16' || dtype === 'int16') {
+    } else if (dtypeStr === 'uint16' || dtypeStr === 'int16') {
       bitDepth = 16;
+    } else if (dtypeStr === 'float32' || dtypeStr === 'float64') {
+      // Float data is normalised to [0, 65535] in the worker → 16-bit pipeline
+      bitDepth = 16;
+      isFloat = true;
     } else {
       bitDepth = 8; // unreachable after validation, satisfies type checker
     }
 
     // Compute voxel spacing from coordinateTransformations if available.
-    // also needs to be hardened once the spec has settled
     // v0.5: per-dataset transforms; v0.4: may be at group level instead.
     let voxelSpacing: [number, number, number] | undefined;
     const transforms = ms.datasets[0]?.coordinateTransformations ?? ms.coordinateTransformations;
@@ -255,6 +345,13 @@ export abstract class BaseZarrProvider implements DataProvider {
       windowMeta = channelWindows[0];
     }
 
+    // For float data, derive initial dataRange from OMERO window (absolute min/max).
+    // If no OMERO window is present, the caller must scan the coarsest LOD to fill this in.
+    let dataRange: [number, number] | undefined;
+    if (isFloat && windowMeta) {
+      dataRange = [windowMeta.min, windowMeta.max];
+    }
+
     const metadata: VolumeMetadata = {
       name,
       dimensions: levels[0]!.dimensions,
@@ -267,6 +364,8 @@ export abstract class BaseZarrProvider implements DataProvider {
       window: windowMeta,
       channelWindows,
       numChannels,
+      isFloat,
+      dataRange,
     };
 
     return { metadata, lodParams };

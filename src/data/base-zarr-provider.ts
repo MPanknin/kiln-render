@@ -172,40 +172,83 @@ export abstract class BaseZarrProvider implements DataProvider {
     const maxCy = Math.floor((actualDimY - 1) / csy);
     const maxCz = Math.floor((actualDimZ - 1) / csz);
 
-    const values: number[] = [];
-
     const prefix = new Array(shapePrefixLength).fill(0);
     // For channel axis, always use channel 0 for the range scan
     if (channelAxisIdx >= 0 && channelAxisIdx < shapePrefixLength) {
       prefix[channelAxisIdx] = 0;
     }
 
+    // Collect all chunk coordinates, then fetch in parallel
+    const chunkCoords: [number, number, number][] = [];
     for (let cz = 0; cz <= maxCz; cz++) {
       for (let cy = 0; cy <= maxCy; cy++) {
         for (let cx = 0; cx <= maxCx; cx++) {
-          const chunk = await arr.getChunk([...prefix, cz, cy, cx]);
-          const data = chunk.data as ArrayLike<number>;
-          for (let i = 0; i < data.length; i++) {
-            const v = Number(data[i]);
-            if (isFinite(v)) {
-              values.push(v);
-            }
-          }
+          chunkCoords.push([cz, cy, cx]);
         }
       }
     }
 
-    if (values.length === 0) return [0, 1];
+    const chunks = await Promise.all(
+      chunkCoords.map(([cz, cy, cx]) => arr.getChunk([...prefix, cz, cy, cx]))
+    );
 
-    values.sort((a, b) => a - b);
+    // First pass: find actual min/max for histogram bounds
+    let globalMin = Infinity;
+    let globalMax = -Infinity;
+    for (const chunk of chunks) {
+      const data = chunk.data as ArrayLike<number>;
+      for (let i = 0; i < data.length; i++) {
+        const v = Number(data[i]);
+        if (isFinite(v)) {
+          if (v < globalMin) globalMin = v;
+          if (v > globalMax) globalMax = v;
+        }
+      }
+    }
 
-    // Use p0.1 / p99.9 percentiles to clip outliers and fill-value artifacts
-    const lo = values[Math.floor(values.length * 0.001)] ?? values[0]!;
-    const hi = values[Math.floor(values.length * 0.999)] ?? values[values.length - 1]!;
+    if (!isFinite(globalMin)) return [0, 1];
+    if (globalMin >= globalMax) return [globalMin, globalMin + 1];
 
-    // Guard against degenerate range (uniform data)
+    // Second pass: build histogram for p0.1/p99.9 percentile without sorting
+    const BINS = 65536;
+    const range = globalMax - globalMin;
+    const histogram = new Uint32Array(BINS);
+    let totalCount = 0;
+
+    for (const chunk of chunks) {
+      const data = chunk.data as ArrayLike<number>;
+      for (let i = 0; i < data.length; i++) {
+        const v = Number(data[i]);
+        if (isFinite(v)) {
+          const bin = Math.min(BINS - 1, Math.floor(((v - globalMin) / range) * BINS));
+          histogram[bin] = (histogram[bin] ?? 0) + 1;
+          totalCount++;
+        }
+      }
+    }
+
+    if (totalCount === 0) return [0, 1];
+
+    // Walk histogram to find p0.1 and p99.9
+    const loTarget = totalCount * 0.001;
+    const hiTarget = totalCount * 0.999;
+    let lo = globalMin;
+    let hi = globalMax;
+    let count = 0;
+    let loFound = false;
+    for (let b = 0; b < BINS; b++) {
+      count += histogram[b]!;
+      if (!loFound && count > loTarget) {
+        lo = globalMin + (b / BINS) * range;
+        loFound = true;
+      }
+      if (count >= hiTarget) {
+        hi = globalMin + ((b + 1) / BINS) * range;
+        break;
+      }
+    }
+
     if (lo >= hi) return [lo, lo + 1];
-
     return [lo, hi];
   }
 

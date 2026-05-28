@@ -14,7 +14,6 @@ const RENDER_MODE_ISO: i32 = 2;
 const RENDER_MODE_LOD: i32 = 3;
 
 // Lighting constants
-const LIGHT_DIR: vec3f = vec3f(0.1, -0.8, 0.1);
 const AMBIENT: f32 = 0.3;
 const DIFFUSE: f32 = 0.9;
 const SPECULAR: f32 = 0.3;
@@ -91,11 +90,11 @@ fn intersectBoxInv(rayOrigin: vec3f, invDir: vec3f, boxMin: vec3f, boxMax: vec3f
     return vec2f(tNear, tFar);
 }
 
-// Phong lighting
-fn phongLighting(normal: vec3f, viewDir: vec3f, baseColor: vec3f) -> vec3f {
+// Phong lighting — lightDir points away from the surface (headlight: pass -rayDir)
+fn phongLighting(normal: vec3f, lightDir: vec3f, baseColor: vec3f) -> vec3f {
     let N = normalize(normal);
-    let L = normalize(LIGHT_DIR);
-    let V = normalize(viewDir);
+    let L = normalize(lightDir);
+    let V = L;
     let R = reflect(-L, N);
     let ambient = AMBIENT * baseColor;
     let diffuse = DIFFUSE * max(dot(N, L), 0.0) * baseColor;

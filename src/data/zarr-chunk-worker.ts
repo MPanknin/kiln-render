@@ -31,17 +31,6 @@ registry.set('lz4', async () => lz4 as any);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 registry.set('zstd', async () => zstd as any);
 
-// Override zarrita's default codec registry with static imports.
-// By default zarrita lazily loads codecs via dynamic import("numcodecs/blosc") etc.,
-// which Vite pre-bundles to @fs paths that workers cannot fetch in dev mode.
-// Static imports bundle the codecs directly into the worker chunk.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-registry.set('blosc', async () => blosc as any);
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-registry.set('lz4', async () => lz4 as any);
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-registry.set('zstd', async () => zstd as any);
-
 /** Messages from main thread to worker */
 export interface ZarrWorkerRequest {
   type: 'init' | 'loadBrick' | 'setTargetFormat';

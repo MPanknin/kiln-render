@@ -8,7 +8,7 @@ import type { Renderer } from '@kiln/core/renderer.js';
 import type { Camera, UpAxis } from '@kiln/core/camera.js';
 import type { StreamingManager } from '@kiln/streaming/streaming-manager.js';
 import type { VolumeMetadata } from '@kiln/data/data-provider.js';
-import type { KilnViewer } from 'kiln-render';
+import type { KilnViewer, VolumeRenderMode } from 'kiln-render';
 
 interface TweakpaneFolder {
   hidden: boolean;
@@ -51,6 +51,7 @@ export class MultichannelUI {
 
   private params = {
     upAxis: '-y' as UpAxis,
+    renderMode: 'dvr' as VolumeRenderMode,
     renderScale: 0.5,
     enableJitter: true,
     showWireframe: false,
@@ -174,6 +175,13 @@ export class MultichannelUI {
       options: { 'X': 'x', 'Y': 'y', 'Z': 'z', '-X': '-x', '-Y': '-y', '-Z': '-z' },
     }).on('change', (ev: { value: unknown }) => {
       this.camera.setUpAxis(ev.value as UpAxis);
+    });
+
+    pane.addBinding(this.params, 'renderMode', {
+      label: 'Mode',
+      options: { DVR: 'dvr', MIP: 'mip' },
+    }).on('change', (ev: { value: unknown }) => {
+      this.viewer.mode = ev.value as VolumeRenderMode;
     });
 
     pane.addBinding(this.params, 'renderScale', {

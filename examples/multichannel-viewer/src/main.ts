@@ -17,7 +17,8 @@ import type { ViewerOptions, DataProvider, UpAxis } from 'kiln-render';
 import { MultichannelUI } from './ui/multichannel-ui.js';
 import type { ChannelState } from './ui/multichannel-ui.js';
 
-const DEFAULT_VOLUME_SOURCE = 'https://livingobjects.ebi.ac.uk/idr/zarr/v0.4/idr0062A/6001247.zarr';
+// const DEFAULT_VOLUME_SOURCE = 'https://livingobjects.ebi.ac.uk/idr/zarr/v0.4/idr0062A/6001247.zarr';
+const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/Fly-eFISH/NP01_1_1_SS00790_AstA546_CCHa1_647_1x_LOL.chunked.zarr';
 
 function parseURLParams(): {
   dataset: string;

@@ -50,6 +50,8 @@ export interface StreamingStats {
   requestCount: number;
   // Timing
   timeToFirstRender: number | null; // ms, null if not yet loaded
+  // Evictions since last stats reset
+  evictedCount: number;
   // Per-stage pipeline timings (rolling avg over last ~32 bricks)
   pipelineTimings: PipelineTimings;
 }
@@ -71,7 +73,7 @@ export class StreamingManager {
   private emptyBricks = new Set<string>();
 
   // CPU-side cache of decompressed brick data (avoids re-download after GPU eviction)
-  private brickCache = new BrickCache();
+  private brickCache: BrickCache;
 
   baseLodLoaded = false;
 
@@ -130,6 +132,7 @@ export class StreamingManager {
     bytesPerSecond: 0,
     requestCount: 0,
     timeToFirstRender: null,
+    evictedCount: 0,
     pipelineTimings: { avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0 },
   };
 
@@ -156,6 +159,11 @@ export class StreamingManager {
     this.metadata = metadata;
     this.device = device;
     this.config = config;
+
+    // Scale concurrent requests and cache budget for multichannel
+    const numChannels = renderer.numChannels;
+    this.maxConcurrentRequests = numChannels > 1 ? 12 : 8;
+    this.brickCache = new BrickCache(numChannels * 256 * 1024 * 1024);
 
     // Use page load start time if provided for true time-to-first-render
     this.loadStartTime = pageLoadStartTime ?? performance.now();
@@ -209,11 +217,11 @@ export class StreamingManager {
           this.dataProvider.loadBrick(maxLod, bx, by, bz, ch)
         )
       );
-      if (channelData.some(d => !d)) return;
+      if (!channelData[0]) return; // ch0 mandatory; skip brick entirely if it failed
 
       const result = this.renderer.allocator.allocate(this.frameCount);
       if (!result) {
-        console.warn('Failed to allocate slot for base LOD brick');
+        console.warn('[Kiln] loadBaseLod: atlas allocation failed');
         return;
       }
 
@@ -224,10 +232,12 @@ export class StreamingManager {
       ];
       const tUpload = performance.now();
       for (let ch = 0; ch < numChannels; ch++) {
+        const data = channelData[ch];
+        if (!data) continue; // skip failed channels — slot position is shared, missing ch shows as zero
         writeToCanvas(
           this.device,
           this.renderer.canvases[ch]!,
-          channelData[ch]!,
+          data,
           [PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE],
           offset
         );
@@ -240,7 +250,7 @@ export class StreamingManager {
 
       this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
       this.pinnedBricks.add(key);
-      allBrickData.push(channelData[0]!);
+      allBrickData.push(channelData[0]);
     }));
 
     this.baseLodLoaded = true;
@@ -537,6 +547,7 @@ export class StreamingManager {
       bytesPerSecond: 0,
       requestCount: 0,
       timeToFirstRender: null, // Actual value comes from getStats()
+      evictedCount: this.lastStats.evictedCount,
       pipelineTimings: { avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0 },
     };
   }
@@ -624,6 +635,7 @@ export class StreamingManager {
 
     // Handle eviction
     if (result.evicted) {
+      this.lastStats.evictedCount++;
       const evictedKey = result.evicted.key;
       const evictedEntry = this.loadedBricks.get(evictedKey);
 

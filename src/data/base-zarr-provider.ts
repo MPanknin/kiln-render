@@ -257,7 +257,19 @@ export abstract class BaseZarrProvider implements DataProvider {
    */
   protected cacheBrickStats(lod: number, bx: number, by: number, bz: number, stats: BrickStats): void {
     const key = `${lod}:${bx}/${by}/${bz}`;
-    this.brickStatsCache.set(key, stats);
+    const existing = this.brickStatsCache.get(key);
+    if (existing) {
+      // Multiple channels update the same key — keep the max across all channels.
+      // isBrickEmpty should return true only if ALL channels are below the threshold,
+      // not just whichever channel happened to write last.
+      this.brickStatsCache.set(key, {
+        min: Math.min(existing.min, stats.min),
+        max: Math.max(existing.max, stats.max),
+        avg: (existing.avg + stats.avg) / 2,
+      });
+    } else {
+      this.brickStatsCache.set(key, stats);
+    }
   }
 
   /**

@@ -336,6 +336,14 @@ export class StreamingManager {
     const regularUpdate = (this.frameCount - this.lastUpdateFrame) >= this.updateInterval;
     const cameraJustStopped = this.cameraStillFrames === this.cameraStillThreshold;
 
+    // Don't start streaming finer LODs until base LOD is fully loaded.
+    // loadBaseLod runs independently; fine bricks requested before it finishes
+    // have no parent in loadedBricks, so eviction calls clearBrick without a
+    // fallback and permanently holes the indirection table.
+    if (!this.baseLodLoaded) {
+      return false;
+    }
+
     if (regularUpdate || cameraJustStopped) {
       this.lastUpdateFrame = this.frameCount;
       this.computeDesiredSet(camera, canvas);

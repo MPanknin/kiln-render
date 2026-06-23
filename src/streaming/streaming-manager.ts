@@ -179,14 +179,18 @@ export class StreamingManager {
 
   /**
    * Load and pin the coarsest LOD level (ensures no holes)
-   * All bricks are fetched in parallel; GPU uploads happen sequentially afterwards.
+   * Bricks are processed with bounded concurrency to avoid saturating the HTTP
+   * connection pool — especially important for multichannel where each brick
+   * triggers N parallel channel fetches.
    */
   private async loadBaseLod(): Promise<void> {
+    const t0 = performance.now();
     const maxLod = Math.max(...this.metadata.levels.map(l => l.lod));
     const level = this.metadata.levels.find(l => l.lod === maxLod);
     if (!level) return;
 
     const [gridX, gridY, gridZ] = level.brickGrid;
+    const numChannels = this.renderer.numChannels;
 
     // Build flat list of all brick coords
     const bricks: { bx: number; by: number; bz: number; key: string }[] = [];
@@ -198,25 +202,39 @@ export class StreamingManager {
       }
     }
 
-    // Fetch all bricks in parallel; register each in loadedBricks immediately on arrival
-    // so findParentBrick can use it as a fallback while other bricks are still loading.
-    const allBrickData: (Uint8Array | Uint16Array)[] = [];
+    const concurrency = Math.min(bricks.length, this.maxConcurrentRequests);
+    console.log(`[Kiln] loadBaseLod: ${bricks.length} bricks × ${numChannels} channels (concurrency: ${concurrency})`);
 
-    await Promise.all(bricks.map(async ({ bx, by, bz, key }) => {
+    // Process bricks with bounded concurrency — avoids firing all N×channels network
+    // requests simultaneously, which saturates the browser's HTTP connection pool.
+    // Uses an async worker-pool pattern: spawn `concurrency` runners that each pull
+    // from the shared queue until empty.
+    const allBrickData: (Uint8Array | Uint16Array)[] = [];
+    let firstBrickMs: number | null = null;
+    let sumIsEmptyMs = 0, sumFetchMs = 0, sumUploadMs = 0, brickCount = 0;
+
+    const queue = [...bricks];
+
+    const processBrick = async ({ bx, by, bz, key }: typeof bricks[0]) => {
+      const tIsEmpty = performance.now();
       const isEmpty = await this.dataProvider.isBrickEmpty(maxLod, bx, by, bz, this.config.emptyBrickThreshold);
+      sumIsEmptyMs += performance.now() - tIsEmpty;
+
       if (isEmpty) {
         this.emptyBricks.add(key);
         this.renderer.indirection.setEmpty(bx, by, bz, maxLod);
         return;
       }
 
-      // Load all channels in parallel — capped to renderer's supported count
-      const numChannels = this.renderer.numChannels;
+      // Load all channels in parallel — ch0 is mandatory, others degrade gracefully
+      const tFetch = performance.now();
       const channelData = await Promise.all(
         Array.from({ length: numChannels }, (_, ch) =>
           this.dataProvider.loadBrick(maxLod, bx, by, bz, ch)
         )
       );
+      sumFetchMs += performance.now() - tFetch;
+
       if (!channelData[0]) return; // ch0 mandatory; skip brick entirely if it failed
 
       const result = this.renderer.allocator.allocate(this.frameCount);
@@ -242,7 +260,9 @@ export class StreamingManager {
           offset
         );
       }
-      this.uploadAvg.add(performance.now() - tUpload);
+      const uploadMs = performance.now() - tUpload;
+      sumUploadMs += uploadMs;
+      this.uploadAvg.add(uploadMs);
 
       this.renderer.indirection.setBrick(bx, by, bz, result.slot.x, result.slot.y, result.slot.z, maxLod);
       this.renderer.allocator.setMetadata(result.slotIndex, { lod: maxLod, bx, by, bz, key });
@@ -251,10 +271,36 @@ export class StreamingManager {
       this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
       this.pinnedBricks.add(key);
       allBrickData.push(channelData[0]);
-    }));
+      brickCount++;
 
+      if (firstBrickMs === null) {
+        firstBrickMs = performance.now() - this.loadStartTime;
+      }
+    };
+
+    // Spawn `concurrency` runners that drain the shared queue
+    await Promise.all(
+      Array.from({ length: concurrency }, async () => {
+        let brick;
+        while ((brick = queue.shift()) !== undefined) {
+          await processBrick(brick);
+        }
+      })
+    );
+
+    const totalMs = performance.now() - t0;
+    const firstBrickMsValue = firstBrickMs as number | null;
+    const firstBrickStr = firstBrickMsValue !== null ? firstBrickMsValue.toFixed(0) : 'n/a';
     this.baseLodLoaded = true;
-    this.timeToFirstRender = performance.now() - this.loadStartTime;
+    this.timeToFirstRender = firstBrickMsValue ?? totalMs;
+
+    console.log(
+      `[Kiln] loadBaseLod done: ${brickCount}/${bricks.length} bricks loaded in ${totalMs.toFixed(0)}ms` +
+      ` | first brick: ${firstBrickStr}ms` +
+      ` | avg isEmpty: ${(sumIsEmptyMs / bricks.length).toFixed(1)}ms` +
+      ` | avg fetch: ${brickCount > 0 ? (sumFetchMs / brickCount).toFixed(1) : 'n/a'}ms` +
+      ` | avg upload: ${brickCount > 0 ? (sumUploadMs / brickCount).toFixed(1) : 'n/a'}ms`
+    );
 
     if (allBrickData.length > 0 && this.onBaseLodLoaded) {
       this.onBaseLodLoaded(allBrickData);

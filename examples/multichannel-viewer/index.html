@@ -320,6 +320,25 @@
       background: rgba(187, 188, 196, 0.15);
       color: #fff;
     }
+
+    .beta-badge {
+      position: fixed;
+      top: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: rgba(200, 160, 40, 0.12);
+      border: 1px solid rgba(200, 160, 40, 0.3);
+      color: rgba(200, 160, 40, 0.75);
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -375,6 +394,7 @@
     </a>
   </div>
 
+  <span class="beta-badge">Beta</span>
   <div id="toast" class="toast">Current view copied to clipboard</div>
   <div id="spinner"></div>
   <script type="module" src="./src/main.ts"></script>

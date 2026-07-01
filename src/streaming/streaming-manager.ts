@@ -288,6 +288,15 @@ export class StreamingManager {
       })
     );
 
+    // Retry any bricks that failed (ch0 network error) 
+    const failed = bricks.filter(b => !this.loadedBricks.has(b.key) && !this.emptyBricks.has(b.key));
+    if (failed.length > 0) {
+      console.warn(`[Kiln] loadBaseLod: ${failed.length} bricks failed, retrying sequentially`);
+      for (const brick of failed) {
+        await processBrick(brick);
+      }
+    }
+
     const totalMs = performance.now() - t0;
     const firstBrickMsValue = firstBrickMs as number | null;
     const firstBrickStr = firstBrickMsValue !== null ? firstBrickMsValue.toFixed(0) : 'n/a';
@@ -331,9 +340,13 @@ export class StreamingManager {
     }
 
     // Decide when to recompute:
-    // 1. Regular interval (every N frames while moving)
+    // 1. Every frame while moving — keeps desiredKeys fresh so stale in-flight
+    //    requests are cancelled within 1 frame instead of `updateInterval` frames.
     // 2. Immediately when camera comes to rest (after stillness threshold)
-    const regularUpdate = (this.frameCount - this.lastUpdateFrame) >= this.updateInterval;
+    // 3. Regular interval as a fallback when still (no-op if nothing changed)
+    const regularUpdate = cameraMoved
+      ? true
+      : (this.frameCount - this.lastUpdateFrame) >= this.updateInterval;
     const cameraJustStopped = this.cameraStillFrames === this.cameraStillThreshold;
 
     // Don't start streaming finer LODs until base LOD is fully loaded.
@@ -658,7 +671,7 @@ export class StreamingManager {
 
     if (isEmpty) {
       this.emptyBricks.add(key);
-      this.renderer.indirection.setEmpty(bx, by, bz, lod);
+      // TODO: check if this.renderer.indirection.setEmpty(bx, by, bz, lod);
       return;
     }
 

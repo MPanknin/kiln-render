@@ -213,11 +213,10 @@ export class IndirectionTable {
             this.data[idx + 2] = fallbackAtlas[2];
             this.data[idx + 3] = fallbackLod + 1;
           } else {
-            // Clear completely
             this.data[idx + 0] = 0;
             this.data[idx + 1] = 0;
             this.data[idx + 2] = 0;
-            this.data[idx + 3] = 0;
+            this.data[idx + 3] = 255;
           }
         }
       }

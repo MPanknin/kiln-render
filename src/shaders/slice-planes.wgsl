@@ -2,38 +2,7 @@
 // Three instanced quads (instance 0=X, 1=Y, 2=Z) positioned in normalized
 // volume space and sampled from the atlas.
 //
-// Prepend: common.wgsl + sampling.wgsl
-
-struct Uniforms {
-    mvp:             mat4x4f,
-    normalizedSize:  vec3f,
-    _pad0:           f32,
-    datasetSize:     vec3f,
-    _pad1:           f32,
-    windowCenter:    f32,
-    windowWidth:     f32,
-    floatMin:        f32,
-    floatMax:        f32,
-    slicePositions:  vec3f,  // X, Y, Z slice positions in [0, 1]
-    _pad2:           f32,
-    sliceXEnabled:   u32,
-    sliceYEnabled:   u32,
-    sliceZEnabled:   u32,
-    numChannels:     u32,
-    channelColors:   array<vec4f, 4>,
-    channelWindowCenter: vec4f,
-    channelWindowWidth:  vec4f,
-}
-
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
-@group(0) @binding(1) var volumeSampler: sampler;
-@group(0) @binding(2) var volumeTexture: texture_3d<f32>;
-@group(0) @binding(3) var tfSampler: sampler;
-@group(0) @binding(4) var tfTexture: texture_2d<f32>;
-@group(0) @binding(6) var indirectionTexture: texture_3d<u32>;
-@group(0) @binding(8) var volumeTexture1: texture_3d<f32>;
-@group(0) @binding(9) var volumeTexture2: texture_3d<f32>;
-@group(0) @binding(10) var volumeTexture3: texture_3d<f32>;
+// Prepend: uniform-layout (Uniforms struct) + bindings + common.wgsl + sampling.wgsl
 
 struct VertexOut {
     @builtin(position) position: vec4f,

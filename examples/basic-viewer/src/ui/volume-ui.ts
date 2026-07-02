@@ -209,6 +209,7 @@ export class VolumeUI {
       },
     }).on('change', (ev: { value: unknown }) => {
       this.camera.setUpAxis(ev.value as UpAxis);
+      this.renderer.resetAccumulation();
     });
 
     // Render scale slider

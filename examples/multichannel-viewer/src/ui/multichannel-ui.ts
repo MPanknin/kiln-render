@@ -186,6 +186,7 @@ export class MultichannelUI {
       options: { 'X': 'x', 'Y': 'y', 'Z': 'z', '-X': '-x', '-Y': '-y', '-Z': '-z' },
     }).on('change', (ev: { value: unknown }) => {
       this.camera.setUpAxis(ev.value as UpAxis);
+      this.renderer.resetAccumulation();
     });
 
     pane.addBinding(this.params, 'renderMode', {

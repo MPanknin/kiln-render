@@ -18,6 +18,7 @@
  */
 
 import { CONFIG } from '../core/config.js';
+import { COMPUTE_UNIFORMS, SLICE_UNIFORMS } from './uniform-layout.js';
 
 // Import WGSL shader sources
 import commonWGSL from './common.wgsl?raw';
@@ -95,27 +96,7 @@ fn rayMarchMode(
 // Compute shader (full-screen ray marching)
 export const computeShader = /* wgsl */ `
 struct Uniforms {
-    inverseViewProj: mat4x4f,
-    cameraPos: vec3f,
-    useIndirection: f32,
-    datasetSize: vec3f,
-    renderMode: i32,
-    normalizedSize: vec3f,
-    isoValue: f32,
-    screenSize: vec2f,
-    frameIndex: u32,
-    jitter: u32,
-    windowCenter: f32,
-    windowWidth: f32,
-    floatMin: f32,
-    floatMax: f32,
-    clipMin: vec3f,
-    densityScale: f32,
-    clipMax: vec3f,
-    numChannels: u32,
-    channelColors: array<vec4f, 4>,
-    channelWindowCenter: vec4f,
-    channelWindowWidth: vec4f,
+${COMPUTE_UNIFORMS.fields}
 }
 
 ${sharedCode}
@@ -183,6 +164,9 @@ export const accumulateShader = accumulateWGSL;
 
 // Slice planes shader: axis-aligned cross-sections through the volume
 export const slicePlanesShader = [
+  `struct Uniforms {\n${SLICE_UNIFORMS.fields}\n}`,
+  `@group(0) @binding(0) var<uniform> uniforms: Uniforms;`,
+  sharedBindings,
   injectConfig(commonWGSL),
   samplingWGSL,
   slicePlanesWGSL,

@@ -10,6 +10,7 @@ import { TransferFunction } from './transfer-function.js';
 import { IndirectionTable } from './indirection.js';
 import { AtlasAllocator } from '../streaming/atlas-allocator.js';
 import { wireframeShader, axisShader, computeShader, blitShader, accumulateShader, slicePlanesShader } from '../shaders/index.js';
+import { COMPUTE_UNIFORMS, SLICE_UNIFORMS } from '../shaders/uniform-layout.js';
 import type { DatasetConfig } from './config.js';
 import type { BitDepth } from '../data/data-provider.js';
 
@@ -168,10 +169,10 @@ export class Renderer {
   // Pre-allocated scratch buffers (avoid per-frame GC pressure)
   private readonly vpScratch = new Float32Array(16);
   private readonly invVPScratch = new Float32Array(16);
-  private readonly computeUniformScratch = new Float32Array(68); // 272 bytes
+  private readonly computeUniformScratch = new Float32Array(COMPUTE_UNIFORMS.size / 4);
   private readonly computeUniformView = new DataView(this.computeUniformScratch.buffer);
   private readonly accumScratch = new Float32Array(4);
-  private readonly sliceUniformScratch = new Float32Array(60); // 240 bytes
+  private readonly sliceUniformScratch = new Float32Array(SLICE_UNIFORMS.size / 4);
   private readonly sliceUniformView = new DataView(this.sliceUniformScratch.buffer);
 
   constructor(device: GPUDevice, format: GPUTextureFormat, bitDepth: BitDepth, textureFormat: GPUTextureFormat, config: DatasetConfig, numChannels = 1) {
@@ -303,13 +304,8 @@ export class Renderer {
     });
 
     // Slice planes pipeline
-    // Uniform buffer layout (240 bytes / 60 floats):
-    //   mvp mat4x4f (64) + normalizedSize vec3f + _pad0 (16) + datasetSize vec3f + _pad1 (16)
-    //   + windowCenter/Width/floatMin/floatMax (16) + slicePositions vec3f + _pad2 (16)
-    //   + sliceXYZEnabled u32x3 + numChannels (16) + channelColors array<vec4f,4> (64)
-    //   + channelWindowCenter vec4f (16) + channelWindowWidth vec4f (16)
     this.sliceUniformBuffer = device.createBuffer({
-      size: 240,
+      size: SLICE_UNIFORMS.size,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -348,14 +344,8 @@ export class Renderer {
 
     // ===== Compute shader pipeline =====
 
-    // Compute uniform buffer: mat4 inverseViewProj (64) + vec3 cameraPos (12) + useIndirection (4)
-    //                       + vec3 datasetSize (12) + renderMode (4) + vec3 normalizedSize (12) + isoValue (4)
-    //                       + vec2 screenSize (8) + frameIndex (4) + pad3 (4) + windowCenter (4) + windowWidth (4)
-    //                       + pad4 vec2 (8) + clipMin vec3 (12) + pad5 (4) + clipMax vec3 (12) + numChannels (4)
-    //                       + channelColors array<vec4f,4> (64)
-    //                       + channelWindowCenter vec4f (16) + channelWindowWidth vec4f (16) = 272 bytes
     this.computeUniformBuffer = device.createBuffer({
-      size: 272,
+      size: COMPUTE_UNIFORMS.size,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -628,39 +618,26 @@ export class Renderer {
   }
 
   private updateSliceUniforms(vp: Float32Array): void {
-    // SliceUniforms layout (240 bytes / 60 f32 slots):
-    //  0-15: mvp mat4x4f
-    // 16-18: normalizedSize, 19: _pad0
-    // 20-22: datasetSize,    23: _pad1
-    //    24: windowCenter,   25: windowWidth, 26: floatMin, 27: floatMax
-    // 28-30: slicePositions, 31: _pad2
-    //    32: sliceXEnabled,  33: sliceYEnabled, 34: sliceZEnabled, 35: numChannels
-    // 36-51: channelColors array<vec4f,4>
-    // 52-55: channelWindowCenter vec4f
-    // 56-59: channelWindowWidth vec4f
+    const o = SLICE_UNIFORMS.offsets;
     const d = this.sliceUniformScratch;
     const dv = this.sliceUniformView;
-    d.set(vp, 0);
-    d[16] = this.config.normalizedSize[0]!;
-    d[17] = this.config.normalizedSize[1]!;
-    d[18] = this.config.normalizedSize[2]!;
-    d[20] = this.config.dimensions[0]!;
-    d[21] = this.config.dimensions[1]!;
-    d[22] = this.config.dimensions[2]!;
-    d[24] = this.windowCenter;
-    d[25] = this.windowWidth;
-    d[26] = this.floatMin;
-    d[27] = this.floatMax;
-    d[28] = this.sliceX;
-    d[29] = this.sliceY;
-    d[30] = this.sliceZ;
-    dv.setUint32(32 * 4, this.showSliceX ? 1 : 0, true);
-    dv.setUint32(33 * 4, this.showSliceY ? 1 : 0, true);
-    dv.setUint32(34 * 4, this.showSliceZ ? 1 : 0, true);
-    dv.setUint32(35 * 4, this.numChannels, true);
-    d.set(this.channelColors, 36);
-    d.set(this.channelWindowCenter, 52);
-    d.set(this.channelWindowWidth, 56);
+    d.set(vp, o.mvp / 4);
+    d.set(this.config.normalizedSize, o.normalizedSize / 4);
+    d.set(this.config.dimensions, o.datasetSize / 4);
+    d[o.windowCenter / 4] = this.windowCenter;
+    d[o.windowWidth / 4] = this.windowWidth;
+    d[o.floatMin / 4] = this.floatMin;
+    d[o.floatMax / 4] = this.floatMax;
+    d[o.slicePositions / 4] = this.sliceX;
+    d[o.slicePositions / 4 + 1] = this.sliceY;
+    d[o.slicePositions / 4 + 2] = this.sliceZ;
+    dv.setUint32(o.sliceXEnabled, this.showSliceX ? 1 : 0, true);
+    dv.setUint32(o.sliceYEnabled, this.showSliceY ? 1 : 0, true);
+    dv.setUint32(o.sliceZEnabled, this.showSliceZ ? 1 : 0, true);
+    dv.setUint32(o.numChannels, this.numChannels, true);
+    d.set(this.channelColors, o.channelColors / 4);
+    d.set(this.channelWindowCenter, o.channelWindowCenter / 4);
+    d.set(this.channelWindowWidth, o.channelWindowWidth / 4);
     this.device.queue.writeBuffer(this.sliceUniformBuffer, 0, d as Float32Array<ArrayBuffer>);
   }
 
@@ -717,34 +694,32 @@ export class Renderer {
     // Compute inverse view-projection for ray generation (writes into scratch buffer)
     mat4.inverse(vp, this.invVPScratch);
 
-    // Update compute uniforms (reuse pre-allocated scratch buffer)
-    // Layout: mat4 inverseViewProj (64) + vec3 cameraPos (12) + useIndirection (4)
-    //       + vec3 datasetSize (12) + renderMode (4) + vec3 normalizedSize (12) + isoValue (4)
-    //       + vec2 screenSize (8) + frameIndex (4) + pad (4) + windowCenter (4) + windowWidth (4) = 136 bytes = 34 floats
+    // Update compute uniforms (offsets from COMPUTE_UNIFORMS — single source of truth)
+    const o = COMPUTE_UNIFORMS.offsets;
     const d = this.computeUniformScratch;
     const dv = this.computeUniformView;
-    d.set(this.invVPScratch, 0);               // 0-15: inverseViewProj
-    d.set(camera.position, 16);                // 16-18: cameraPos
-    d[19] = this.useIndirection ? 1.0 : 0.0;  // 19: useIndirection
-    d.set(this.config.dimensions, 20);         // 20-22: datasetSize
-    dv.setInt32(23 * 4, this.getRenderModeInt(), true);  // 23: renderMode (i32)
-    d.set(this.config.normalizedSize, 24);    // 24-26: normalizedSize
-    d[27] = this.isoValue;                     // 27: isoValue
-    d[28] = this.computeWidth;                 // 28: screenSize.x
-    d[29] = this.computeHeight;                // 29: screenSize.y
-    dv.setUint32(30 * 4, this.frameIndex, true);                          // 30: frameIndex (u32)
-    dv.setUint32(31 * 4, this.enableJitter ? 1 : 0, true);              // 31: jitter (u32)
-    d[32] = this.windowCenter;                 // 32: windowCenter
-    d[33] = this.windowWidth;                  // 33: windowWidth
-    d[34] = this.floatMin;                     // 34: floatMin
-    d[35] = this.floatMax;                     // 35: floatMax
-    d.set(this.clipMin, 36);                   // 36-38: clipMin
-    d[39] = this.densityScale;                 // 39: densityScale (was _pad5)
-    d.set(this.clipMax, 40);                   // 40-42: clipMax
-    dv.setUint32(43 * 4, this.numChannels, true); // 43: numChannels (u32)
-    d.set(this.channelColors, 44);             // 44-59: channelColors array<vec4f,4>
-    d.set(this.channelWindowCenter, 60);       // 60-63: channelWindowCenter vec4f
-    d.set(this.channelWindowWidth, 64);        // 64-67: channelWindowWidth vec4f
+    d.set(this.invVPScratch, o.inverseViewProj / 4);
+    d.set(camera.position, o.cameraPos / 4);
+    d[o.useIndirection / 4] = this.useIndirection ? 1.0 : 0.0;
+    d.set(this.config.dimensions, o.datasetSize / 4);
+    dv.setInt32(o.renderMode, this.getRenderModeInt(), true);
+    d.set(this.config.normalizedSize, o.normalizedSize / 4);
+    d[o.isoValue / 4] = this.isoValue;
+    d[o.screenSize / 4] = this.computeWidth;
+    d[o.screenSize / 4 + 1] = this.computeHeight;
+    dv.setUint32(o.frameIndex, this.frameIndex, true);
+    dv.setUint32(o.jitter, this.enableJitter ? 1 : 0, true);
+    d[o.windowCenter / 4] = this.windowCenter;
+    d[o.windowWidth / 4] = this.windowWidth;
+    d[o.floatMin / 4] = this.floatMin;
+    d[o.floatMax / 4] = this.floatMax;
+    d.set(this.clipMin, o.clipMin / 4);
+    d[o.densityScale / 4] = this.densityScale;
+    d.set(this.clipMax, o.clipMax / 4);
+    dv.setUint32(o.numChannels, this.numChannels, true);
+    d.set(this.channelColors, o.channelColors / 4);
+    d.set(this.channelWindowCenter, o.channelWindowCenter / 4);
+    d.set(this.channelWindowWidth, o.channelWindowWidth / 4);
     this.device.queue.writeBuffer(this.computeUniformBuffer, 0, d as Float32Array<ArrayBuffer>);
 
     const encoder = this.device.createCommandEncoder();

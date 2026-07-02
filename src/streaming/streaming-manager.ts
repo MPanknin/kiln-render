@@ -702,6 +702,16 @@ export class StreamingManager {
     );
     if (signal.aborted || channelData.some(d => !d)) return;
 
+    // Re-check emptiness — stats are now cached from the fetch/decompress step.
+    // On first encounter isBrickEmpty() returned false (no stats), but after
+    // loadBrick() the worker's min/max are cached and the check is accurate.
+    const isEmptyNow = await this.dataProvider.isBrickEmpty(lod, bx, by, bz, this.config.emptyBrickThreshold);
+    if (isEmptyNow) {
+      this.emptyBricks.add(key);
+      this.renderer.indirection.setEmpty(bx, by, bz, lod);
+      return;
+    }
+
     // Camera may have moved while the fetch was in flight — skip if no longer desired
     if (!this.desiredKeys.has(key)) return;
 
@@ -729,6 +739,15 @@ export class StreamingManager {
             result.evicted.lod,
             [fallback.slot.x, fallback.slot.y, fallback.slot.z],
             fallback.lod
+          );
+        } else if (this.hasEmptyAncestor(result.evicted.bx, result.evicted.by, result.evicted.bz, result.evicted.lod)) {
+          // Ancestor is known-empty — restore empty marker (w=255) so the
+          // shader skips this region instead of treating w=0 as unloaded.
+          this.renderer.indirection.setEmpty(
+            result.evicted.bx,
+            result.evicted.by,
+            result.evicted.bz,
+            result.evicted.lod
           );
         } else {
           // No parent found - clear completely (shouldn't happen if base LOD is loaded)
@@ -882,5 +901,21 @@ export class StreamingManager {
     }
 
     return null;
+  }
+
+  /**
+   * Check if any ancestor brick is known-empty.
+   * Used during eviction: if no loaded parent exists but an ancestor was
+   * empty, the evicted region should be marked empty (w=255) rather than
+   * cleared to unloaded (w=0).
+   */
+  private hasEmptyAncestor(bx: number, by: number, bz: number, lod: number): boolean {
+    const maxLod = Math.max(...this.metadata.levels.map(l => l.lod));
+    for (let parentLod = lod + 1; parentLod <= maxLod; parentLod++) {
+      const scale = 1 << (parentLod - lod);
+      const parentKey = `lod${parentLod}:${Math.floor(bz / scale)}/${Math.floor(by / scale)}/${Math.floor(bx / scale)}`;
+      if (this.emptyBricks.has(parentKey)) return true;
+    }
+    return false;
   }
 }

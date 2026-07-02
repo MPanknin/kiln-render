@@ -8,6 +8,11 @@
 
 import { GRID_SIZE } from '../core/config.js';
 
+// Slots touched within this many frames are protected from eviction.
+// Prevents thrash when atlas is under pressure — a freshly loaded brick
+// can't be immediately evicted by the next allocation in the same burst.
+const MIN_EVICTION_AGE = 30;
+
 export interface AtlasSlot {
   x: number;
   y: number;
@@ -140,7 +145,7 @@ export class AtlasAllocator {
     }
 
     // Atlas is full - find LRU slot to evict
-    const victim = this.findLRUSlot();
+    const victim = this.findLRUSlot(frame);
     if (victim === -1) {
       // This shouldn't happen if atlas has slots
       return null;
@@ -160,18 +165,22 @@ export class AtlasAllocator {
   }
 
   /**
-   * Find the least recently used slot (skips pinned slots)
+   * Find the least recently used slot (skips pinned and recently-touched slots)
    */
-  private findLRUSlot(): number {
+  private findLRUSlot(currentFrame: number): number {
     let oldestFrame = Infinity;
     let victimIdx = -1;
 
     for (let i = 0; i < this.totalSlots; i++) {
-      // Never evict pinned slots
       if (this.pinned.has(i)) continue;
+      if (!this.used.has(i)) continue;
 
       const frameNum = this.lastUsedFrame[i] ?? 0;
-      if (this.used.has(i) && frameNum < oldestFrame) {
+
+      // Skip recently-touched slots to prevent thrash
+      if (currentFrame - frameNum < MIN_EVICTION_AGE) continue;
+
+      if (frameNum < oldestFrame) {
         oldestFrame = frameNum;
         victimIdx = i;
       }

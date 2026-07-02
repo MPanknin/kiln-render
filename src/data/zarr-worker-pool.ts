@@ -42,12 +42,15 @@ interface PendingRequest {
 
 export class ZarrWorkerPool {
   private workers: Worker[] = [];
-  private nextWorkerIndex = 0;
   private requestId = 0;
   private pendingRequests = new Map<number, PendingRequest>();
   private is16bit = false;
   private fetchAvg = new RollingAvg();
   private assemblyAvg = new RollingAvg();
+
+  /** Per-LOD chunk layout, kept on main thread for spatial-affinity dispatch */
+  private lodChunkInfo: { scaleX: number; scaleY: number; scaleZ: number; csx: number; csy: number; csz: number }[] = [];
+  private logicalBrickSize = 64;
 
   constructor(
     private poolSize: number = navigator.hardwareConcurrency
@@ -70,6 +73,11 @@ export class ZarrWorkerPool {
     floatRange?: [number, number],
   ): Promise<void> {
     this.is16bit = is16bit;
+    this.logicalBrickSize = logicalBrickSize;
+    this.lodChunkInfo = (lodParams ?? []).map(p => ({
+      scaleX: p.scaleX, scaleY: p.scaleY, scaleZ: p.scaleZ,
+      csx: p.csx, csy: p.csy, csz: p.csz,
+    }));
     const initPromises: Promise<void>[] = [];
 
     for (let i = 0; i < this.poolSize; i++) {
@@ -156,13 +164,31 @@ export class ZarrWorkerPool {
   }
 
   /**
+   * Pick a worker by spatial affinity: bricks that overlap the same zarr chunks
+   * land on the same worker, maximizing per-worker chunk-cache hits.
+   */
+  private getAffinityWorker(lod: number, bx: number, by: number, bz: number): number {
+    const info = this.lodChunkInfo[lod];
+    if (!info) return 0;
+
+    // Brick center in virtual voxel coords → actual zarr coords → chunk index
+    const half = this.logicalBrickSize >> 1;
+    const cx = Math.floor((bx * this.logicalBrickSize + half) * info.scaleX / info.csx);
+    const cy = Math.floor((by * this.logicalBrickSize + half) * info.scaleY / info.csy);
+    const cz = Math.floor((bz * this.logicalBrickSize + half) * info.scaleZ / info.csz);
+
+    // Spatial hash → worker index (constants are large coprime numbers for mixing)
+    const h = ((lod * 73856093) ^ (cx * 19349663) ^ (cy * 83492791) ^ (cz * 4256233)) >>> 0;
+    return h % this.workers.length;
+  }
+
+  /**
    * Load a fully assembled 66³ brick in a worker (off main thread)
    */
   loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0): Promise<BrickResult> {
     return new Promise((resolve, reject) => {
       const id = this.requestId++;
-      const worker = this.workers[this.nextWorkerIndex]!;
-      this.nextWorkerIndex = (this.nextWorkerIndex + 1) % this.workers.length;
+      const worker = this.workers[this.getAffinityWorker(lod, bx, by, bz)]!;
 
       this.pendingRequests.set(id, { resolve, reject });
 

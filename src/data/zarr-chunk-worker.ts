@@ -98,6 +98,10 @@ const chunkCache = new Map<string, { data: ArrayLike<number>; shape: number[]; b
 let cacheBytes = 0;
 const MAX_CACHE_BYTES = 128 * 1024 * 1024; // 128 MB per worker
 
+// In-flight chunk fetch promises — coalesces concurrent requests for the same chunk
+// so multiple assembleBrick calls that need the same chunk share one fetch+decompress
+const inflightFetches = new Map<string, Promise<{ data: ArrayLike<number>; shape: number[] }>>();
+
 function cacheKey(lod: number, cz: number, cy: number, cx: number, channelIndex: number): string {
   return `${lod}:ch${channelIndex}:${cz}/${cy}/${cx}`;
 }
@@ -226,10 +230,8 @@ async function assembleBrick(
   const maxCy = Math.floor(aEndY / csy);
   const maxCz = Math.floor(aEndZ / csz);
 
-  // --- Stage 1: chunk fetch (HTTP + zarr decompression, parallel, with cache) ---
+  // --- Stage 1: chunk fetch (HTTP + zarr decompression, parallel, with cache + dedup) ---
   const t0 = performance.now();
-  // Per-brick snapshot: concurrent assembleBrick calls share chunkCache and can evict
-  // each other's entries between the await and the loop below. Read from here, not chunkCache.
   const localChunks = new Map<string, { data: ArrayLike<number>; shape: number[] }>();
   const fetchPromises: Promise<void>[] = [];
   for (let cz = minCz; cz <= maxCz; cz++) {
@@ -240,17 +242,26 @@ async function assembleBrick(
         if (cached) {
           localChunks.set(key, cached);
         } else {
-          const prefix = new Array(shapePrefixLength).fill(0);
-          if (channelAxisIdx >= 0 && channelAxisIdx < shapePrefixLength) {
-            prefix[channelAxisIdx] = channelIndex;
-          }
-          fetchPromises.push(
-            arr.getChunk([...prefix, cz, cy, cx]).then(chunk => {
+          // In-flight dedup: if another assembleBrick is already fetching this
+          // chunk, share its promise instead of issuing a duplicate HTTP request
+          let chunkPromise = inflightFetches.get(key);
+          if (!chunkPromise) {
+            const prefix = new Array(shapePrefixLength).fill(0);
+            if (channelAxisIdx >= 0 && channelAxisIdx < shapePrefixLength) {
+              prefix[channelAxisIdx] = channelIndex;
+            }
+            chunkPromise = arr.getChunk([...prefix, cz, cy, cx]).then(chunk => {
               const entry = { data: chunk.data as unknown as ArrayLike<number>, shape: chunk.shape };
-              localChunks.set(key, entry);
-              cacheSet(key, chunk.data as unknown as ArrayLike<number>, chunk.shape);
-            })
-          );
+              cacheSet(key, entry.data, entry.shape);
+              return entry;
+            }).finally(() => {
+              inflightFetches.delete(key);
+            });
+            inflightFetches.set(key, chunkPromise);
+          }
+          fetchPromises.push(chunkPromise.then(entry => {
+            localChunks.set(key, entry);
+          }));
         }
       }
     }

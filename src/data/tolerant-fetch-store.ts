@@ -11,17 +11,16 @@
  *    receives index.html, tries to JSON-parse it, and throws
  *    "Unexpected token '<'". We detect HTML responses by Content-Type and
  *    return undefined instead.
+ *
+ * 3. Fetch concurrency is bounded by a per-store semaphore. Each worker creates
+ *    its own store, so the limit is per-worker. This prevents exhausting
+ *    Chrome's socket pool (ERR_INSUFFICIENT_RESOURCES) when many bricks are
+ *    assembled concurrently — especially on HTTP/1.1 where ~6 connections
+ *    per origin is the hard browser limit.
  */
 
 import { FetchStore } from 'zarrita';
 import type { AbsolutePath, AsyncReadable, RangeQuery } from 'zarrita';
-
-/** Jittered exponential backoff: ~200ms, ~600ms */
-function jitteredDelay(attempt: number): Promise<void> {
-  const base = (attempt + 1) * 200;
-  const jitter = Math.random() * 200;
-  return new Promise(r => setTimeout(r, base + jitter));
-}
 
 /** Replicate zarrita's internal URL resolution: base URL + absolute key path */
 function resolveUrl(base: string | URL, key: AbsolutePath): string {
@@ -37,34 +36,51 @@ export class TolerantFetchStore implements AsyncReadable<RequestInit> {
   private baseUrl: string | URL;
   private overrides?: RequestInit;
 
-  constructor(url: string | URL, options?: { overrides?: RequestInit }) {
+  /** Fetch concurrency control — limits active HTTP requests per store instance */
+  private activeFetches = 0;
+  private fetchQueue: (() => void)[] = [];
+  private readonly maxConcurrentFetches: number;
+
+  constructor(url: string | URL, options?: { overrides?: RequestInit; maxConcurrentFetches?: number }) {
     this.inner = new FetchStore(url, options);
     this.baseUrl = url;
     this.overrides = options?.overrides;
+    this.maxConcurrentFetches = options?.maxConcurrentFetches ?? 6;
+  }
+
+  private async acquireFetchSlot(): Promise<void> {
+    if (this.activeFetches < this.maxConcurrentFetches) {
+      this.activeFetches++;
+      return;
+    }
+    await new Promise<void>(resolve => this.fetchQueue.push(resolve));
+  }
+
+  private releaseFetchSlot(): void {
+    const next = this.fetchQueue.shift();
+    if (next) {
+      // Hand the slot directly to the next waiter (no decrement/increment)
+      next();
+    } else {
+      this.activeFetches--;
+    }
   }
 
   async get(key: AbsolutePath, options?: RequestInit): Promise<Uint8Array | undefined> {
-    const href = resolveUrl(this.baseUrl, key);
-    const init: RequestInit = { ...this.overrides, ...options };
+    await this.acquireFetchSlot();
+    try {
+      const href = resolveUrl(this.baseUrl, key);
+      const init: RequestInit = { ...this.overrides, ...options };
 
-    for (let attempt = 0; attempt <= 2; attempt++) {
       let response: Response;
       try {
         response = await fetch(href, init);
       } catch {
-        // Network error / connection reset / dropped stream — retry
-        if (attempt < 2) { await jitteredDelay(attempt); continue; }
-        return undefined;
+        return undefined; // network error
       }
 
-      // 403/404 are intentional "not found" (CloudFront OAI, missing chunks) — no retry
+      // 403/404 are intentional "not found" (CloudFront OAI, missing chunks)
       if (response.status === 404 || response.status === 403) return undefined;
-
-      // 5xx — transient server error, retry
-      if (response.status >= 500) {
-        if (attempt < 2) { await jitteredDelay(attempt); continue; }
-        return undefined;
-      }
 
       if (response.status === 200 || response.status === 206) {
         const ct = response.headers.get('content-type') ?? '';
@@ -72,10 +88,11 @@ export class TolerantFetchStore implements AsyncReadable<RequestInit> {
         return new Uint8Array(await response.arrayBuffer());
       }
 
-      throw new Error(`Unexpected response status ${response.status} ${response.statusText}`);
+      // 5xx or unexpected status — treat as missing (don't throw, don't retry)
+      return undefined;
+    } finally {
+      this.releaseFetchSlot();
     }
-
-    return undefined;
   }
 
   async getRange(key: AbsolutePath, range: RangeQuery, options?: RequestInit): Promise<Uint8Array | undefined> {

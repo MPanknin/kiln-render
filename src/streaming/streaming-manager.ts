@@ -288,12 +288,24 @@ export class StreamingManager {
       })
     );
 
-    // Retry any bricks that failed (ch0 network error) 
+    // Retry any bricks that failed (ch0 network error)
     const failed = bricks.filter(b => !this.loadedBricks.has(b.key) && !this.emptyBricks.has(b.key));
     if (failed.length > 0) {
       console.warn(`[Kiln] loadBaseLod: ${failed.length} bricks failed, retrying sequentially`);
       for (const brick of failed) {
         await processBrick(brick);
+      }
+    }
+
+    // Any base bricks that still failed after retry must not leave cells at w=0
+    // (unloaded → shader treats as invalid → permanent black hole). Mark them as
+    // empty so the shader cleanly skips them instead of rendering a broken hole.
+    const stillFailed = bricks.filter(b => !this.loadedBricks.has(b.key) && !this.emptyBricks.has(b.key));
+    if (stillFailed.length > 0) {
+      console.error(`[Kiln] loadBaseLod: ${stillFailed.length} bricks permanently failed — marking empty to prevent holes`);
+      for (const { bx, by, bz, key } of stillFailed) {
+        this.emptyBricks.add(key);
+        this.renderer.indirection.setEmpty(bx, by, bz, maxLod);
       }
     }
 
@@ -671,7 +683,7 @@ export class StreamingManager {
 
     if (isEmpty) {
       this.emptyBricks.add(key);
-      // TODO: check if this.renderer.indirection.setEmpty(bx, by, bz, lod);
+      this.renderer.indirection.setEmpty(bx, by, bz, lod);
       return;
     }
 

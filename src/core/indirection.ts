@@ -149,9 +149,11 @@ export class IndirectionTable {
 
           const idx = (x + y * this.gridX + z * this.gridX * this.gridY) * 4;
 
-          // Only overwrite if this LOD is finer or equal (same logic as setBrick)
+          // Never overwrite loaded data with the empty marker.
+          // Any cell with a real brick (w in 1..254) must keep its data —
+          // even coarser LOD fallback is better than marking the cell empty.
           const existingLod = this.data[idx + 3] ?? 0;
-          if (existingLod > 0 && existingLod < 255 && existingLod <= lod + 1) {
+          if (existingLod > 0 && existingLod < 255) {
             continue;
           }
 

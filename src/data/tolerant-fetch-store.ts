@@ -16,6 +16,13 @@
 import { FetchStore } from 'zarrita';
 import type { AbsolutePath, AsyncReadable, RangeQuery } from 'zarrita';
 
+/** Jittered exponential backoff: ~200ms, ~600ms */
+function jitteredDelay(attempt: number): Promise<void> {
+  const base = (attempt + 1) * 200;
+  const jitter = Math.random() * 200;
+  return new Promise(r => setTimeout(r, base + jitter));
+}
+
 /** Replicate zarrita's internal URL resolution: base URL + absolute key path */
 function resolveUrl(base: string | URL, key: AbsolutePath): string {
   const url = new URL(typeof base === 'string' ? base : base.href);
@@ -39,22 +46,36 @@ export class TolerantFetchStore implements AsyncReadable<RequestInit> {
   async get(key: AbsolutePath, options?: RequestInit): Promise<Uint8Array | undefined> {
     const href = resolveUrl(this.baseUrl, key);
     const init: RequestInit = { ...this.overrides, ...options };
-    let response: Response;
-    try {
-      response = await fetch(href, init);
-    } catch {
-      return undefined; // network error
+
+    for (let attempt = 0; attempt <= 2; attempt++) {
+      let response: Response;
+      try {
+        response = await fetch(href, init);
+      } catch {
+        // Network error / connection reset / dropped stream — retry
+        if (attempt < 2) { await jitteredDelay(attempt); continue; }
+        return undefined;
+      }
+
+      // 403/404 are intentional "not found" (CloudFront OAI, missing chunks) — no retry
+      if (response.status === 404 || response.status === 403) return undefined;
+
+      // 5xx — transient server error, retry
+      if (response.status >= 500) {
+        if (attempt < 2) { await jitteredDelay(attempt); continue; }
+        return undefined;
+      }
+
+      if (response.status === 200 || response.status === 206) {
+        const ct = response.headers.get('content-type') ?? '';
+        if (ct.includes('text/html')) return undefined;
+        return new Uint8Array(await response.arrayBuffer());
+      }
+
+      throw new Error(`Unexpected response status ${response.status} ${response.statusText}`);
     }
 
-    if (response.status === 404 || response.status === 403) return undefined;
-
-    if (response.status === 200 || response.status === 206) {
-      const ct = response.headers.get('content-type') ?? '';
-      if (ct.includes('text/html')) return undefined;
-      return new Uint8Array(await response.arrayBuffer());
-    }
-
-    throw new Error(`Unexpected response status ${response.status} ${response.statusText}`);
+    return undefined;
   }
 
   async getRange(key: AbsolutePath, range: RangeQuery, options?: RequestInit): Promise<Uint8Array | undefined> {

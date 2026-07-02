@@ -17,6 +17,8 @@ export class Camera {
   private rotationY = 3.5;
   private isDragging = false;
   private isPanning = false;
+  private isZooming = false;
+  private zoomTimer: number | null = null;
   private lastX = 0;
   private lastY = 0;
 
@@ -29,6 +31,9 @@ export class Camera {
   // Up vector configuration
   private upAxis: UpAxis = '-y';
   private upVector: [number, number, number] = [0, -1, 0];
+
+  // Clamp away from poles to avoid degenerate view matrix
+  private poleEpsilon = 0.001;
 
   constructor(canvas: HTMLCanvasElement) {
     this.position = new Float32Array(3);
@@ -56,23 +61,9 @@ export class Camera {
       this.lastY = e.clientY;
 
       if (this.isDragging) {
-        // Orbit: rotate around target
-        const baseAxis = this.upAxis.replace('-', '');
-        const isNegative = this.upAxis.startsWith('-');
-        let hSign = baseAxis === 'z' ? 1 : -1;
-        if (baseAxis === 'y' && isNegative) hSign = 1;
-        this.rotationY += hSign * dx * 0.01;
-        this.rotationX += dy * 0.01;
-        this.rotationX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.rotationX));
+        this.applyOrbit(dx, dy);
       } else if (this.isPanning) {
-        // Pan: move target in screen space
-        const panSpeed = this.distance * 0.002;
-        const right = this.getRightVector();
-        const up = this.getUpVectorLocal();
-        // Note: dy is inverted (drag up = move target up = subtract)
-        this.target[0] -= (dx * right[0] - dy * up[0]) * panSpeed;
-        this.target[1] -= (dx * right[1] - dy * up[1]) * panSpeed;
-        this.target[2] -= (dx * right[2] - dy * up[2]) * panSpeed;
+        this.applyPan(dx, dy);
       }
 
       this.updatePosition();
@@ -93,6 +84,13 @@ export class Camera {
       // Zoom limits for normalized space
       this.distance = Math.max(0.5, Math.min(10, this.distance));
       this.updatePosition();
+
+      this.isZooming = true;
+      if (this.zoomTimer !== null) clearTimeout(this.zoomTimer);
+      this.zoomTimer = setTimeout(() => {
+        this.isZooming = false;
+        this.zoomTimer = null;
+      }, 200) as unknown as number;
     }, { passive: false });
 
     // Touch controls
@@ -140,14 +138,7 @@ export class Camera {
         this.lastX = touch.clientX;
         this.lastY = touch.clientY;
 
-        // Orbit logic (same as mouse)
-        const baseAxis = this.upAxis.replace('-', '');
-        const isNegative = this.upAxis.startsWith('-');
-        let hSign = baseAxis === 'z' ? 1 : -1;
-        if (baseAxis === 'y' && isNegative) hSign = 1;
-        this.rotationY += hSign * dx * 0.01;
-        this.rotationX += dy * 0.01;
-        this.rotationX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.rotationX));
+        this.applyOrbit(dx, dy);
 
         this.updatePosition();
 
@@ -170,12 +161,7 @@ export class Camera {
         const dy = currentCenter.y - this.lastTouchCenter.y;
 
         if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
-          const panSpeed = this.distance * 0.002;
-          const right = this.getRightVector();
-          const up = this.getUpVectorLocal();
-          this.target[0] -= (dx * right[0] - dy * up[0]) * panSpeed;
-          this.target[1] -= (dx * right[1] - dy * up[1]) * panSpeed;
-          this.target[2] -= (dx * right[2] - dy * up[2]) * panSpeed;
+          this.applyPan(dx, dy);
         }
         this.lastTouchCenter = currentCenter;
 
@@ -211,6 +197,24 @@ export class Camera {
 
     canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
     canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+  }
+
+  private applyOrbit(dx: number, dy: number): void {
+    const baseAxis = this.upAxis.replace('-', '');
+    const isNegative = this.upAxis.startsWith('-');
+    let hSign = baseAxis === 'z' ? 1 : -1;
+    if (baseAxis === 'y' && isNegative) hSign = 1;
+    this.rotationY += hSign * dx * 0.01;
+    this.rotationX += dy * 0.01;
+    this.rotationX = Math.max(-Math.PI / 2 + this.poleEpsilon, Math.min(Math.PI / 2 - this.poleEpsilon, this.rotationX));
+  }
+
+  private applyPan(dx: number, dy: number): void {
+    const panSpeed = this.distance * 0.002;
+    const { right, up } = this.getScreenSpaceVectors();
+    this.target[0] -= (dx * right[0]! - dy * up[0]!) * panSpeed;
+    this.target[1] -= (dx * right[1]! - dy * up[1]!) * panSpeed;
+    this.target[2] -= (dx * right[2]! - dy * up[2]!) * panSpeed;
   }
 
   /** Calculate distance between two touch points */
@@ -263,40 +267,14 @@ export class Camera {
     }
   }
 
-  /** Get camera right vector (screen X direction in world space) */
-  private getRightVector(): [number, number, number] {
-    const cosY = Math.cos(this.rotationY);
-    const sinY = Math.sin(this.rotationY);
-    const sign = this.upAxis.startsWith('-') ? -1 : 1;
-    const baseAxis = this.upAxis.replace('-', '') as 'x' | 'y' | 'z';
-
-    switch (baseAxis) {
-      case 'x':
-        return [0, -sinY * sign, cosY * sign];
-      case 'y':
-        return [cosY * sign, 0, -sinY * sign];
-      case 'z':
-        return [-sinY * sign, cosY * sign, 0];
-    }
-  }
-
-  /** Get camera up vector in view space (screen Y direction in world space) */
-  private getUpVectorLocal(): [number, number, number] {
-    const cosX = Math.cos(this.rotationX);
-    const sinX = Math.sin(this.rotationX);
-    const cosY = Math.cos(this.rotationY);
-    const sinY = Math.sin(this.rotationY);
-    const sign = this.upAxis.startsWith('-') ? -1 : 1;
-    const baseAxis = this.upAxis.replace('-', '') as 'x' | 'y' | 'z';
-
-    switch (baseAxis) {
-      case 'x':
-        return [sign * cosX, sinX * cosY, sinX * sinY];
-      case 'y':
-        return [sinX * sinY, sign * cosX, sinX * cosY];
-      case 'z':
-        return [sinX * cosY, sinX * sinY, sign * cosX];
-    }
+  /** Get screen-space right and up vectors from view matrix for panning */
+  private getScreenSpaceVectors(): { right: [number, number, number]; up: [number, number, number] } {
+    const viewMatrix = this.getViewMatrix();
+    // View matrix columns (column-major order): right is column 0, up is column 1
+    return {
+      right: [viewMatrix[0]!, viewMatrix[4]!, viewMatrix[8]!],
+      up: [viewMatrix[1]!, viewMatrix[5]!, viewMatrix[9]!],
+    };
   }
 
   /**
@@ -356,6 +334,10 @@ export class Camera {
       this.target = [state[3], state[4], state[5]];
     }
     this.updatePosition();
+  }
+
+   isInteracting(): boolean {
+    return this.isDragging || this.isPanning || this.isZooming;
   }
 
   getViewMatrix(): Float32Array {
@@ -478,9 +460,3 @@ export function isAABBInFrustum(
   return true;
 }
 
-/**
- * Multiply two 4x4 matrices (column-major)
- */
-export function multiplyMatrices(a: Float32Array, b: Float32Array): Float32Array {
-  return mat4.multiply(a, b) as Float32Array;
-}

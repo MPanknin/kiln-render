@@ -12,15 +12,14 @@
  * - Supports 8-bit and 16-bit volumes
  */
 
-import { getEmptyBrickThreshold } from '../core/config.js';
-import { getDecompressionPool } from './decompression-pool.js';
+import { DecompressionPool } from './decompression-pool.js';
+import { NetworkTracker } from './network-tracker.js';
 import type {
   DataProvider,
   VolumeMetadata,
   LodLevel,
   BrickData,
   BrickStats,
-  BitDepth,
   NetworkStats,
 } from './data-provider.js';
 
@@ -76,14 +75,25 @@ export class ShardedDataProvider implements DataProvider {
   private metadata: VolumeMetadata | null = null;
   private cache = new Map<string, BrickData>();
   private lodIndices = new Map<number, ShardedLodIndex>();
-
-  // Network tracking
-  private totalBytesDownloaded = 0;
-  private requestCount = 0;
-  private recentDownloads: { timestamp: number; bytes: number }[] = [];
+  private networkTracker = new NetworkTracker();
+  private pool: DecompressionPool | null = null;
 
   constructor(basePath: string) {
     this.basePath = basePath;
+  }
+
+  /**
+   * Set the target texture format for decompressed brick data.
+   * Must be called before the first brick load.
+   */
+  setTargetFormat(format: 'r8unorm' | 'r16unorm' | 'r16float'): void {
+    if (this.pool) {
+      this.pool.setTargetFormat(format);
+    } else {
+      // Pool not yet created — store the format so we can apply it on first use
+      this.pool = new DecompressionPool();
+      this.pool.setTargetFormat(format);
+    }
   }
 
   /**
@@ -123,6 +133,7 @@ export class ShardedDataProvider implements DataProvider {
       maxLod: raw.maxLod,
       levels,
       bitDepth: raw.format === 'uint16' ? 16 : 8,
+      numChannels: 1,
     };
   }
 
@@ -134,13 +145,6 @@ export class ShardedDataProvider implements DataProvider {
       throw new Error('Metadata not loaded. Call initialize() first.');
     }
     return this.metadata;
-  }
-
-  /**
-   * Get bit depth
-   */
-  getBitDepth(): BitDepth {
-    return this.metadata?.bitDepth ?? 8;
   }
 
   /**
@@ -204,14 +208,14 @@ export class ShardedDataProvider implements DataProvider {
   async isBrickEmpty(lod: number, bx: number, by: number, bz: number, maxThreshold?: number): Promise<boolean> {
     const stats = await this.getBrickStats(lod, bx, by, bz);
     if (!stats) return false; // Unknown = assume non-empty
-    const threshold = maxThreshold ?? getEmptyBrickThreshold();
+    const threshold = maxThreshold ?? 100;
     return stats.max < threshold;
   }
 
   /**
    * Load a single brick
    */
-  async loadBrick(lod: number, bx: number, by: number, bz: number): Promise<BrickData | null> {
+  async loadBrick(lod: number, bx: number, by: number, bz: number, _channelIndex?: number): Promise<BrickData | null> {
     const key = `lod${lod}:${bx}-${by}-${bz}`;
 
     // Check cache first
@@ -257,15 +261,15 @@ export class ShardedDataProvider implements DataProvider {
       }
 
       const buffer = await response.arrayBuffer();
-      this.recordDownload(buffer.byteLength);
+      this.networkTracker.record(buffer.byteLength);
 
       // Check if data is compressed
       const isCompressed = index.compressed ?? this.rawMetadata.compressed ?? false;
 
       let rawData: Uint8Array;
       if (isCompressed) {
-        const pool = getDecompressionPool();
-        rawData = await pool.decompress(buffer);
+        if (!this.pool) this.pool = new DecompressionPool();
+        rawData = await this.pool.decompress(buffer);
       } else {
         rawData = new Uint8Array(buffer);
       }
@@ -286,36 +290,8 @@ export class ShardedDataProvider implements DataProvider {
     }
   }
 
-  /**
-   * Record a download for network stats
-   */
-  private recordDownload(bytes: number): void {
-    this.totalBytesDownloaded += bytes;
-    this.requestCount++;
-    this.recentDownloads.push({
-      timestamp: performance.now(),
-      bytes,
-    });
-  }
-
-  /**
-   * Get network statistics
-   */
   getNetworkStats(): NetworkStats {
-    const now = performance.now();
-    const windowMs = 2000;
-    const cutoff = now - windowMs;
-
-    // Clean old entries and sum recent bytes
-    this.recentDownloads = this.recentDownloads.filter(d => d.timestamp > cutoff);
-    const recentBytes = this.recentDownloads.reduce((sum, d) => sum + d.bytes, 0);
-    const recentBytesPerSecond = (recentBytes / windowMs) * 1000;
-
-    return {
-      totalBytesDownloaded: this.totalBytesDownloaded,
-      recentBytesPerSecond,
-      requestCount: this.requestCount,
-    };
+    return this.networkTracker.getStats();
   }
 
   /**
@@ -345,15 +321,8 @@ export class ShardedDataProvider implements DataProvider {
   dispose(): void {
     this.cache.clear();
     this.lodIndices.clear();
-    // Note: We don't terminate the decompression pool here since it's shared
+    this.pool?.terminate();
+    this.pool = null;
   }
 }
 
-/**
- * Factory function to create a ShardedDataProvider
- */
-export async function createShardedProvider(basePath: string): Promise<ShardedDataProvider> {
-  const provider = new ShardedDataProvider(basePath);
-  await provider.initialize();
-  return provider;
-}

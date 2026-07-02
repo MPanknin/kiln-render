@@ -39,10 +39,10 @@ fn setupBrick(
 
     if (info.valid) {
         info.lodScale = getLodScale(info.indirection);
-        let brickLength = info.tEnd - t;
         let brickWorldSize = length(brickMaxWorld - brickMinWorld);
-        info.numSteps = max(1u, u32(STEPS_PER_BRICK * brickLength / brickWorldSize));
-        info.stepSize = brickLength / f32(info.numSteps);
+        let brickLength = info.tEnd - t;
+        info.stepSize = brickWorldSize / STEPS_PER_BRICK;
+        info.numSteps = max(1u, u32(ceil(brickLength / info.stepSize)) + 1u);
     }
 
     return info;
@@ -51,7 +51,7 @@ fn setupBrick(
 // Refine isosurface position using bisection
 fn refineIsoSurface(
     rayOrigin: vec3f, rayDir: vec3f, tLow: f32, tHigh: f32, isoValue: f32,
-    normalizedSize: vec3f, datasetSize: vec3f, indirection: vec4u, lodScale: f32
+    normalizedSize: vec3f, datasetSize: vec3f
 ) -> f32 {
     var lo = tLow;
     var hi = tHigh;
@@ -59,16 +59,17 @@ fn refineIsoSurface(
         let mid = (lo + hi) * 0.5;
         let pos = rayOrigin + rayDir * mid;
         let voxel = normalizedToVoxel(pos, normalizedSize, datasetSize);
-        let density = sampleAtlas(voxel, indirection, lodScale);
+        let density = sampleWithIndirection(voxel);
         if (density >= isoValue) { hi = mid; } else { lo = mid; }
     }
     return (lo + hi) * 0.5;
 }
 
-// Refine isosurface position using bisection with windowing
+// Refine isosurface position using bisection with windowing.
+// Uses sampleWithIndirection so bisection across brick boundaries is correct.
 fn refineIsoSurfaceWindowed(
     rayOrigin: vec3f, rayDir: vec3f, tLow: f32, tHigh: f32, isoValue: f32,
-    normalizedSize: vec3f, datasetSize: vec3f, indirection: vec4u, lodScale: f32,
+    normalizedSize: vec3f, datasetSize: vec3f,
     windowCenter: f32, windowWidth: f32
 ) -> f32 {
     var lo = tLow;
@@ -77,8 +78,9 @@ fn refineIsoSurfaceWindowed(
         let mid = (lo + hi) * 0.5;
         let pos = rayOrigin + rayDir * mid;
         let voxel = normalizedToVoxel(pos, normalizedSize, datasetSize);
-        let rawDensity = sampleAtlas(voxel, indirection, lodScale);
-        let density = applyWindow(rawDensity, windowCenter, windowWidth);
+        let rawDensity = sampleWithIndirection(voxel);
+        let normalizedDensity = clamp((rawDensity - uniforms.floatMin) / max(uniforms.floatMax - uniforms.floatMin, 0.0001), 0.0, 1.0);
+        let density = applyWindow(normalizedDensity, windowCenter, windowWidth);
         if (density >= isoValue) { hi = mid; } else { lo = mid; }
     }
     return (lo + hi) * 0.5;

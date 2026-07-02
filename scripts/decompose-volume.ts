@@ -146,7 +146,7 @@ function parseArgs(): Config {
   if (maxLod < 0) {
     const minDim = Math.min(...dimensions);
     maxLod = Math.floor(Math.log2(minDim / brickSize));
-    maxLod = Math.max(0, Math.min(maxLod, 4)); // Cap at 4 levels
+    maxLod = Math.max(0, Math.min(maxLod, 10)); // Cap at 10 levels for now
   }
 
   return { inputPath, outputDir, dimensions, voxelSpacing, headerSize, brickSize, maxLod, bitDepth, native };

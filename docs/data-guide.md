@@ -19,33 +19,96 @@ Kiln can load [OME-Zarr](https://ngff.openmicroscopy.org/) volumes directly over
 
 ### Requirements
 
-- OME-NGFF v0.5 with `multiscales` metadata in group attributes
-- 3D arrays with dimensions ordered `[z, y, x]` (standard C-order)
-- Supported dtypes: `uint8`, `int8`, `uint16`, `int16`
+- **OME-NGFF v0.5** with `multiscales` metadata in group attributes (v0.4 not supported)
+- **Single-channel datasets only** (multi-channel/RGB not supported)
+- **3D arrays** with dimensions ordered `[z, y, x]` (standard C-order)
+- **Supported dtypes:** `uint8`, `uint16`, `float32` (signed integers and `float64` not supported)
 - Multiple resolution levels (datasets within `multiscales`) are used as LODs
 - Voxel spacing is read from `coordinateTransformations` if present
 
+> **Note:** Currently unsupported: OME-Zarr v0.4, multi-channel datasets, signed integer types (`int8`, `int16`), and `float64`. `float32` volumes are stored internally as `r16float` (WebGPU filterable-float32 is not universally available); min/max range is read from metadata and used to normalise values in the shader.
+
 ### Usage
 
-Set the volume source URL to a `.ome.zarr` path. Kiln auto-detects the format:
+Pass the `.ome.zarr` URL directly to `KilnViewer.create()`:
 
 ```typescript
-const VOLUME_SOURCE = 'https://example.com/data/scan.ome.zarr';
+import { KilnViewer } from 'kiln-render';
+
+const viewer = await KilnViewer.create(canvas, 'https://example.com/data/scan.ome.zarr');
 ```
 
-Brick assembly (fetching Zarr chunks, decompressing, and re-chunking into 66³ bricks with ghost borders) runs in a Web Worker pool off the main thread.
+Kiln auto-detects the format from the URL. Brick assembly (fetching Zarr chunks, decompressing, and re-chunking into 66³ bricks with ghost borders) runs in a Web Worker pool off the main thread.
 
 ### Public OME-Zarr Datasets
 
 The [OME-Zarr Open SciVis Datasets](https://registry.opendata.aws/ome-zarr-open-scivis/) on AWS provide ready-to-use test volumes:
 
 ```typescript
-const VOLUME_SOURCE = 'https://ome-zarr-scivis.s3.us-east-1.amazonaws.com/v0.5/96x2/beechnut.ome.zarr';
+const viewer = await KilnViewer.create(
+  canvas,
+  'https://ome-zarr-scivis.s3.us-east-1.amazonaws.com/v0.5/96x2/beechnut.ome.zarr',
+);
 ```
 
 ### Axis Convention
 
 Zarr stores dimensions as `[z, y, x]` (C-order, x fastest-varying). Kiln uses `[x, y, z]` in its metadata. Only metadata tuples are swapped; no data transposition is needed since the memory layout is identical.
+
+---
+
+## Local OME-Zarr (File System Access API)
+
+Local `.zarr` or `.ome.zarr` directories can be loaded directly from disk without a server, using the browser's File System Access API.
+
+> **Browser requirement:** Only supported in Chrome and Edge. Not available in Firefox or Safari.
+
+```typescript
+import {
+  KilnViewer,
+  LocalZarrDataProvider,
+  promptForZarrDirectory,
+  preValidateLocalZarr,
+  getStoredHandle,
+  requestPermission,
+} from 'kiln-render';
+
+// Show native directory picker and store the handle for later
+const handle = await promptForZarrDirectory();
+
+// Optional: check format support before loading
+const issues = await preValidateLocalZarr(handle);
+if (issues.length > 0) {
+  console.error('Unsupported dataset:', issues);
+  return;
+}
+
+const viewer = await KilnViewer.create(canvas, new LocalZarrDataProvider(handle));
+```
+
+### Restoring a handle across page loads
+
+Handles are persisted in IndexedDB automatically when `promptForZarrDirectory()` is called. On subsequent visits:
+
+```typescript
+const handle = await getStoredHandle();
+if (handle && await requestPermission(handle)) {
+  const viewer = await KilnViewer.create(canvas, new LocalZarrDataProvider(handle));
+}
+```
+
+To clear the stored handle:
+
+```typescript
+import { clearHandle } from 'kiln-render';
+await clearHandle();
+```
+
+### Limitations vs. HTTP streaming
+
+- Runs on the main thread (the `FileSystemDirectoryHandle` cannot be transferred to a worker)
+- No HTTP Range streaming — each chunk is read fully from disk
+- Otherwise identical feature support: LOD streaming, 16-bit, clipping, etc.
 
 ---
 
@@ -133,6 +196,10 @@ npx ts-node scripts/decompose-volume.ts data/ct_scan.raw 512 512 400 \
 # Skip 2048-byte header (common in some medical formats)
 npx ts-node scripts/decompose-volume.ts data/dicom.raw 512 512 400 --header 2048
 ```
+
+### Important: Coarsest LOD Size
+
+Kiln currently loads the entire coarsest (highest) LOD at startup and keeps it pinned in the atlas. If your dataset's coarsest LOD has a large brick grid (e.g., 8×8×8 = 512 bricks), it will consume over half the default 1,000-slot atlas, limiting space for high-resolution bricks. Keep the coarsest LOD small (ideally ≤4×4×4 grid) by setting appropriate `--max-lod` during preprocessing.
 
 ### Output Format
 
@@ -228,7 +295,7 @@ Higher LOD levels are created by 2×2×2 box-filter downsampling:
 - LOD 2: Quarter resolution
 - etc.
 
-The number of LOD levels is automatically calculated based on volume size, capped at 5 levels.
+The number of LOD levels is automatically calculated based on volume size, capped at 11 levels (LOD 0-10).
 
 ---
 

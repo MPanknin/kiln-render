@@ -12,13 +12,28 @@
  * and uploads the returned buffers to the GPU atlas.
  */
 
-import { open, root, Array as ZarrArray } from 'zarrita';
+import { open, root, Array as ZarrArray, registry } from 'zarrita';
 import type { DataType, Readable } from 'zarrita';
+import blosc from 'numcodecs/blosc';
+import lz4 from 'numcodecs/lz4';
+import zstd from 'numcodecs/zstd';
 import { TolerantFetchStore } from './tolerant-fetch-store.js';
+import { uint16ToFloat16, float32ToFloat16Bits } from '../utils/float16.js';
+
+// Override zarrita's default codec registry with static imports.
+// By default zarrita lazily loads codecs via dynamic import("numcodecs/blosc") etc.,
+// which Vite pre-bundles to @fs paths that workers cannot fetch in dev mode.
+// Static imports bundle the codecs directly into the worker chunk.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+registry.set('blosc', async () => blosc as any);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+registry.set('lz4', async () => lz4 as any);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+registry.set('zstd', async () => zstd as any);
 
 /** Messages from main thread to worker */
 export interface ZarrWorkerRequest {
-  type: 'init' | 'loadBrick';
+  type: 'init' | 'loadBrick' | 'setTargetFormat';
   id: number;
   /** For 'init': dataset URL and array paths */
   url?: string;
@@ -36,13 +51,24 @@ export interface ZarrWorkerRequest {
     scaleX: number; scaleY: number; scaleZ: number;
     actualDimX: number; actualDimY: number; actualDimZ: number;
     csx: number; csy: number; csz: number;
+    shapePrefixLength: number;
+    channelAxisIdx: number;
   }[];
+  /** Channel index to load (for datasets with a channel axis) */
+  channelIndex?: number;
   is16bit?: boolean;
+  /** Target texture format: r8unorm (8-bit), r16unorm (16-bit uint), r16float (16-bit float) */
+  targetFormat?: 'r8unorm' | 'r16unorm' | 'r16float';
+  /** Whether source data is float32/float64 */
+  isFloat32?: boolean;
+  /** Float normalisation range — voxel values are mapped from [floatMin, floatMax] → [0, 65535] */
+  floatMin?: number;
+  floatMax?: number;
 }
 
 /** Messages from worker to main thread */
 export interface ZarrWorkerResponse {
-  type: 'init' | 'loadBrick';
+  type: 'init' | 'loadBrick' | 'setTargetFormat';
   id: number;
   error?: string;
   /** For 'loadBrick': assembled brick data (transferable) */
@@ -51,6 +77,9 @@ export interface ZarrWorkerResponse {
   min?: number;
   max?: number;
   avg?: number;
+  /** Per-stage timing (ms) — for pipeline telemetry */
+  fetchMs?: number;
+  assemblyMs?: number;
 }
 
 // Worker state
@@ -59,14 +88,22 @@ let LOGICAL_SIZE = 64;
 let PHYSICAL_SIZE = 66;
 let lodParams: ZarrWorkerRequest['lodParams'] = [];
 let is16bit = false;
+let targetFormat: 'r8unorm' | 'r16unorm' | 'r16float' = 'r16unorm';
+let isFloat32 = false;
+let floatMin = 0;
+let floatMax = 1;
 
 // Per-worker chunk cache (LRU, bounded by byte count to prevent OOM)
 const chunkCache = new Map<string, { data: ArrayLike<number>; shape: number[]; bytes: number }>();
 let cacheBytes = 0;
 const MAX_CACHE_BYTES = 128 * 1024 * 1024; // 128 MB per worker
 
-function cacheKey(lod: number, cz: number, cy: number, cx: number): string {
-  return `${lod}:${cz}/${cy}/${cx}`;
+// In-flight chunk fetch promises — coalesces concurrent requests for the same chunk
+// so multiple assembleBrick calls that need the same chunk share one fetch+decompress
+const inflightFetches = new Map<string, Promise<{ data: ArrayLike<number>; shape: number[] }>>();
+
+function cacheKey(lod: number, cz: number, cy: number, cx: number, channelIndex: number): string {
+  return `${lod}:ch${channelIndex}:${cz}/${cy}/${cx}`;
 }
 
 function estimateBytes(data: ArrayLike<number>): number {
@@ -95,6 +132,13 @@ function cacheSet(key: string, data: ArrayLike<number>, shape: number[]): void {
 self.onmessage = async (event: MessageEvent<ZarrWorkerRequest>) => {
   const { type, id } = event.data;
 
+  if (type === 'setTargetFormat') {
+    targetFormat = event.data.targetFormat ?? 'r16unorm';
+    const resp: ZarrWorkerResponse = { type: 'setTargetFormat', id };
+    (self as unknown as Worker).postMessage(resp);
+    return;
+  }
+
   if (type === 'init') {
     try {
       const { url, paths } = event.data;
@@ -102,6 +146,13 @@ self.onmessage = async (event: MessageEvent<ZarrWorkerRequest>) => {
       PHYSICAL_SIZE = event.data.physicalBrickSize ?? 66;
       lodParams = event.data.lodParams ?? [];
       is16bit = event.data.is16bit ?? false;
+      targetFormat = event.data.targetFormat ?? 'r16unorm';
+      isFloat32 = event.data.isFloat32 ?? false;
+      floatMin = event.data.floatMin ?? 0;
+      floatMax = event.data.floatMax ?? 1;
+      if (isFloat32) {
+        console.log(`[ZarrWorker] Float32 normalization range: [${floatMin}, ${floatMax}]`);
+      }
 
       const store = new TolerantFetchStore(url!);
       const rootGroup = await open(root(store), { kind: 'group' });
@@ -124,7 +175,8 @@ self.onmessage = async (event: MessageEvent<ZarrWorkerRequest>) => {
   } else if (type === 'loadBrick') {
     try {
       const { lod, bx, by, bz } = event.data;
-      const result = await assembleBrick(lod!, bx!, by!, bz!);
+      const channelIndex = event.data.channelIndex ?? 0;
+      const result = await assembleBrick(lod!, bx!, by!, bz!, channelIndex);
 
       const resp: ZarrWorkerResponse = {
         type: 'loadBrick', id,
@@ -132,6 +184,8 @@ self.onmessage = async (event: MessageEvent<ZarrWorkerRequest>) => {
         min: result.min,
         max: result.max,
         avg: result.avg,
+        fetchMs: result.fetchMs,
+        assemblyMs: result.assemblyMs,
       };
       (self as unknown as Worker).postMessage(resp, [result.buffer]);
     } catch (e) {
@@ -148,11 +202,11 @@ self.onmessage = async (event: MessageEvent<ZarrWorkerRequest>) => {
  * Full brick assembly: fetch overlapping chunks, decompress, re-chunk into 66³ brick
  */
 async function assembleBrick(
-  lod: number, bx: number, by: number, bz: number
-): Promise<{ buffer: ArrayBuffer; min: number; max: number; avg: number }> {
+  lod: number, bx: number, by: number, bz: number, channelIndex: number
+): Promise<{ buffer: ArrayBuffer; min: number; max: number; avg: number; fetchMs: number; assemblyMs: number }> {
   const arr = arrays[lod]!;
   const params = lodParams![lod]!;
-  const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz } = params;
+  const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx } = params;
   const physSize = PHYSICAL_SIZE;
 
   // Virtual brick voxel range (in uniformly downsampled space)
@@ -176,18 +230,38 @@ async function assembleBrick(
   const maxCy = Math.floor(aEndY / csy);
   const maxCz = Math.floor(aEndZ / csz);
 
-  // Fetch all overlapping chunks in parallel (with per-worker cache)
+  // --- Stage 1: chunk fetch (HTTP + zarr decompression, parallel, with cache + dedup) ---
+  const t0 = performance.now();
+  const localChunks = new Map<string, { data: ArrayLike<number>; shape: number[] }>();
   const fetchPromises: Promise<void>[] = [];
   for (let cz = minCz; cz <= maxCz; cz++) {
     for (let cy = minCy; cy <= maxCy; cy++) {
       for (let cx = minCx; cx <= maxCx; cx++) {
-        const key = cacheKey(lod, cz, cy, cx);
-        if (!chunkCache.has(key)) {
-          fetchPromises.push(
-            arr.getChunk([cz, cy, cx]).then(chunk => {
-              cacheSet(key, chunk.data as unknown as ArrayLike<number>, chunk.shape);
-            })
-          );
+        const key = cacheKey(lod, cz, cy, cx, channelIndex);
+        const cached = chunkCache.get(key);
+        if (cached) {
+          localChunks.set(key, cached);
+        } else {
+          // In-flight dedup: if another assembleBrick is already fetching this
+          // chunk, share its promise instead of issuing a duplicate HTTP request
+          let chunkPromise = inflightFetches.get(key);
+          if (!chunkPromise) {
+            const prefix = new Array(shapePrefixLength).fill(0);
+            if (channelAxisIdx >= 0 && channelAxisIdx < shapePrefixLength) {
+              prefix[channelAxisIdx] = channelIndex;
+            }
+            chunkPromise = arr.getChunk([...prefix, cz, cy, cx]).then(chunk => {
+              const entry = { data: chunk.data as unknown as ArrayLike<number>, shape: chunk.shape };
+              cacheSet(key, entry.data, entry.shape);
+              return entry;
+            }).finally(() => {
+              inflightFetches.delete(key);
+            });
+            inflightFetches.set(key, chunkPromise);
+          }
+          fetchPromises.push(chunkPromise.then(entry => {
+            localChunks.set(key, entry);
+          }));
         }
       }
     }
@@ -195,8 +269,10 @@ async function assembleBrick(
   if (fetchPromises.length > 0) {
     await Promise.all(fetchPromises);
   }
+  const fetchMs = performance.now() - t0;
 
-  // Assemble 66³ brick
+  // --- Stage 2: brick assembly (voxel scatter + format conversion) ---
+  const t1 = performance.now();
   const brick = is16bit
     ? new Uint16Array(physSize * physSize * physSize)
     : new Uint8Array(physSize * physSize * physSize);
@@ -224,28 +300,90 @@ async function assembleBrick(
         const lcy = gy - cy * csy;
         const lcz = gz - cz * csz;
 
-        const key = cacheKey(lod, cz, cy, cx);
-        const chunk = chunkCache.get(key);
+        const key = cacheKey(lod, cz, cy, cx, channelIndex);
+        const chunk = localChunks.get(key);
         if (chunk) {
           const chunkW = chunk.shape[chunk.shape.length - 1]!;
           const chunkH = chunk.shape[chunk.shape.length - 2]!;
           const idx = lcz * chunkH * chunkW + lcy * chunkW + lcx;
-          const val = Number(chunk.data[idx]!);
+          const raw = Number(chunk.data[idx]!);
 
-          brick[lx + ly * physSize + lz * physSize * physSize] = val;
-          min = Math.min(min, val);
-          max = Math.max(max, val);
-          sum += val;
+          let brickVal: number;
+          let statVal: number;
+
+          if (isFloat32) {
+            const range = floatMax - floatMin;
+            const normalizedVal = range > 0
+              ? Math.max(0, Math.min(1, (raw - floatMin) / range))
+              : 0;
+            // Stats always in [0, 65535] space so isBrickEmpty thresholds work
+            statVal = Math.round(normalizedVal * 65535);
+            // Store raw float value as float16 bits — shader normalises using floatMin/floatMax uniforms.
+            // Clamp to r16float representable range (±65504) before encoding.
+            brickVal = float32ToFloat16Bits(Math.max(-65504, Math.min(65504, raw)));
+          } else {
+            brickVal = raw;
+            statVal = raw;
+          }
+
+          brick[lx + ly * physSize + lz * physSize * physSize] = brickVal;
+          min = Math.min(min, statVal);
+          max = Math.max(max, statVal);
+          sum += statVal;
         }
       }
     }
   }
 
   const voxelCount = physSize * physSize * physSize;
+
+  // Handle format conversions based on targetFormat
+  let outputBrick: Uint8Array | Uint16Array = brick;
+
+  if (is16bit && targetFormat === 'r8unorm') {
+    // 16-bit → 8-bit conversion (downsample for r8unorm fallback)
+    const uint16Brick = brick as Uint16Array;
+    const uint8Brick = new Uint8Array(uint16Brick.length);
+
+    // Downsample: take high byte (>> 8)
+    let min8 = Infinity;
+    let max8 = -Infinity;
+    let sum8 = 0;
+
+    for (let i = 0; i < uint16Brick.length; i++) {
+      const val8 = (uint16Brick[i] ?? 0) >> 8;
+      uint8Brick[i] = val8;
+      min8 = Math.min(min8, val8);
+      max8 = Math.max(max8, val8);
+      sum8 += val8;
+    }
+
+    outputBrick = uint8Brick;
+    min = min8 === Infinity ? 0 : min8;
+    max = max8 === -Infinity ? 0 : max8;
+    sum = sum8;
+  } else if (is16bit && targetFormat === 'r16float' && !isFloat32) {
+    // uint16 data → float16 conversion: maps [0, 65535] → [0.0, 1.0] in float16 bits
+    // Skipped for float32 data — float16 bits already written per-voxel in the inner loop
+    const uint16Brick = brick as Uint16Array;
+    const float16Brick = uint16ToFloat16(uint16Brick);
+    outputBrick = float16Brick;
+    // Stats remain in original uint16 range (0-65535)
+  }
+  // else: r16unorm or 8-bit source - no conversion needed
+
+  const assemblyMs = performance.now() - t1;
+
+  const buffer = outputBrick.buffer instanceof ArrayBuffer
+    ? outputBrick.buffer
+    : outputBrick.buffer.slice(0);
+
   return {
-    buffer: brick.buffer as ArrayBuffer,
+    buffer: buffer as ArrayBuffer,
     min: min === Infinity ? 0 : min,
     max: max === -Infinity ? 0 : max,
     avg: sum / voxelCount,
+    fetchMs,
+    assemblyMs,
   };
 }

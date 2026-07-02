@@ -10,6 +10,8 @@ fn rayMarchLOD(
     var color = vec3f(0.0);
     var alpha = 0.0;
     var t = tStart;
+    var tSample = -1.0;
+    var rayStepSize = 0.0;
 
     for (var brickIter = 0u; brickIter < MAX_BRICK_TRAVERSALS; brickIter++) {
         if (t >= tEnd) { break; }
@@ -19,24 +21,29 @@ fn rayMarchLOD(
 
         if (!brick.valid) {
             t = brick.tEnd + 0.0001;
+            if (tSample >= 0.0 && tSample < t) { tSample = t; }
             continue;
         }
 
-        let jitter = rand(rayToSeed(rayDir) + brickIter + uniforms.frameIndex) * brick.stepSize;
-        var tSample = t + jitter;
+        if (tSample < 0.0) {
+            rayStepSize = brick.stepSize;
+            tSample = t + rand(rayToSeed(rayDir) + uniforms.frameIndex) * rayStepSize;
+        }
 
         for (var i = 0u; i < brick.numSteps; i++) {
+            if (tSample > brick.tEnd) { break; }
+
             let pos = rayOrigin + rayDir * tSample;
             let voxel = normalizedToVoxel(pos, normalizedSize, datasetSize);
             let density = sampleAtlas(voxel, brick.indirection, brick.lodScale);
 
             // Use LOD color with TF opacity
-            let tfColor = textureSampleLevel(tfTexture, tfSampler, density, 0.0);
+            let tfColor = textureSampleLevel(tfTexture, tfSampler, vec2f(density, 0.5), 0.0);
             let lodColor = getLodColor(brick.indirection.w);
-            composeSampleWithColor(density, brick.stepSize, maxDim, vec4f(lodColor, tfColor.a), &color, &alpha);
+            composeSampleWithColor(density, rayStepSize, maxDim, vec4f(lodColor, tfColor.a), &color, &alpha);
 
             if (alpha > EARLY_EXIT_ALPHA) { break; }
-            tSample += brick.stepSize;
+            tSample += rayStepSize;
         }
 
         t = brick.tEnd + 0.0001;

@@ -12,6 +12,8 @@ fn rayMarchMIP(
 
     var maxDensity = 0.0;
     var t = tStart;
+    var tSample = -1.0;
+    var rayStepSize = 0.0;
 
     for (var brickIter = 0u; brickIter < MAX_BRICK_TRAVERSALS; brickIter++) {
         if (t >= tEnd) { break; }
@@ -20,19 +22,25 @@ fn rayMarchMIP(
 
         if (!brick.valid) {
             t = brick.tEnd + 0.0001;
+            if (tSample >= 0.0 && tSample < t) { tSample = t; }
             continue;
         }
 
-        let jitter = rand(rayToSeed(rayDir) + brickIter + uniforms.frameIndex) * brick.stepSize;
-        var tSample = t + jitter;
+        if (tSample < 0.0) {
+            rayStepSize = brick.stepSize;
+            tSample = t + rand(rayToSeed(rayDir) + uniforms.frameIndex) * rayStepSize;
+        }
 
         for (var i = 0u; i < brick.numSteps; i++) {
+            if (tSample > brick.tEnd) { break; }
+
             let pos = rayOrigin + rayDir * tSample;
             let voxel = normalizedToVoxel(pos, normalizedSize, datasetSize);
-            let density = sampleAtlas(voxel, brick.indirection, brick.lodScale);
+            let rawDensity = sampleAtlas(voxel, brick.indirection, brick.lodScale);
+            let density = clamp((rawDensity - uniforms.floatMin) / max(uniforms.floatMax - uniforms.floatMin, 0.0001), 0.0, 1.0);
 
             maxDensity = max(maxDensity, density);
-            tSample += brick.stepSize;
+            tSample += rayStepSize;
         }
 
         t = brick.tEnd + 0.0001;
@@ -40,6 +48,6 @@ fn rayMarchMIP(
 
     // Apply windowing to final max density before TF lookup
     let windowedDensity = applyWindow(maxDensity, windowCenter, windowWidth);
-    let tfColor = textureSampleLevel(tfTexture, tfSampler, windowedDensity, 0.0);
+    let tfColor = textureSampleLevel(tfTexture, tfSampler, vec2f(windowedDensity, 0.5), 0.0);
     return vec4f(tfColor.rgb * windowedDensity, 1.0);
 }

@@ -11,13 +11,17 @@
  * - Request cancellation for stale bricks
  */
 
-import { Camera, extractFrustumPlanes, isAABBInFrustum, multiplyMatrices } from '../core/camera.js';
+import { mat4 } from 'wgpu-matrix';
+import { Camera, extractFrustumPlanes, isAABBInFrustum } from '../core/camera.js';
 import { Renderer } from '../core/renderer.js';
 import type { DataProvider, VolumeMetadata } from '../data/data-provider.js';
 import { AtlasSlot } from './atlas-allocator.js';
 import { BrickCache } from './brick-cache.js';
-import { PHYSICAL_BRICK_SIZE, getNormalizedSize } from '../core/config.js';
+import { PHYSICAL_BRICK_SIZE } from '../core/config.js';
+import type { DatasetConfig } from '../core/config.js';
 import { writeToCanvas } from '../core/volume.js';
+import type { PipelineTimings } from '../data/data-provider.js';
+import { RollingAvg } from '../data/network-tracker.js';
 
 export interface BrickRequest {
   lod: number;
@@ -37,9 +41,6 @@ export interface StreamingStats {
   desiredCount: number;
   loadedCount: number;
   pendingCount: number;
-  culledCount: number;
-  emptyCount: number;
-  evictedCount: number;
   cancelledCount: number;
   atlasUsage: number;
   atlasCapacity: number;
@@ -49,6 +50,10 @@ export interface StreamingStats {
   requestCount: number;
   // Timing
   timeToFirstRender: number | null; // ms, null if not yet loaded
+  // Evictions since last stats reset
+  evictedCount: number;
+  // Per-stage pipeline timings (rolling avg over last ~32 bricks)
+  pipelineTimings: PipelineTimings;
 }
 
 export class StreamingManager {
@@ -56,6 +61,7 @@ export class StreamingManager {
   private dataProvider: DataProvider;
   private metadata: VolumeMetadata;
   private device: GPUDevice;
+  private config: DatasetConfig;
 
   // Track loaded bricks: key -> { slot, slotIndex }
   private loadedBricks = new Map<string, LoadedBrickInfo>();
@@ -67,24 +73,13 @@ export class StreamingManager {
   private emptyBricks = new Set<string>();
 
   // CPU-side cache of decompressed brick data (avoids re-download after GPU eviction)
-  private brickCache = new BrickCache();
+  private brickCache: BrickCache;
 
-  // Whether base LOD has been loaded
-  private _baseLodLoaded = false;
+  baseLodLoaded = false;
 
   // Timing for first render
   private loadStartTime: number = 0;
-  private _timeToFirstRender: number | null = null;
-
-  /** Check if base LOD is loaded */
-  get baseLodLoaded(): boolean {
-    return this._baseLodLoaded;
-  }
-
-  /** Get time to first render in ms (null if not yet loaded) */
-  get timeToFirstRender(): number | null {
-    return this._timeToFirstRender;
-  }
+  timeToFirstRender: number | null = null;
 
   // Current desired set (keys) - updated each computeDesiredSet
   private desiredKeys = new Set<string>();
@@ -96,10 +91,19 @@ export class StreamingManager {
   private inFlightRequests = new Map<string, AbortController>();
 
   // Max concurrent requests
-  private maxConcurrentRequests = 4;
+  private maxConcurrentRequests = 8;
+
+  // Callback for when base LOD is loaded with brick data
+  private onBaseLodLoaded: ((brickData: (Uint8Array | Uint16Array)[]) => void) | null = null;
 
   // Frame counter for LRU
   private frameCount = 0;
+
+  // Debounced accumulation reset (wait for streaming to settle)
+  private resetAccumulationTimer: number | null = null;
+
+  // GPU upload timing (writeTexture, measured on main thread for all providers)
+  private uploadAvg = new RollingAvg();
 
   // Screen-Space Error (SSE) threshold in pixels
   // Split to finer LOD when projected voxel error exceeds this value
@@ -121,9 +125,6 @@ export class StreamingManager {
     desiredCount: 0,
     loadedCount: 0,
     pendingCount: 0,
-    culledCount: 0,
-    emptyCount: 0,
-    evictedCount: 0,
     cancelledCount: 0,
     atlasUsage: 0,
     atlasCapacity: 512,
@@ -131,6 +132,8 @@ export class StreamingManager {
     bytesPerSecond: 0,
     requestCount: 0,
     timeToFirstRender: null,
+    evictedCount: 0,
+    pipelineTimings: { avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0 },
   };
 
   // Throttle updates (don't recompute every frame)
@@ -148,12 +151,19 @@ export class StreamingManager {
     dataProvider: DataProvider,
     metadata: VolumeMetadata,
     device: GPUDevice,
+    config: DatasetConfig,
     pageLoadStartTime?: number
   ) {
     this.renderer = renderer;
     this.dataProvider = dataProvider;
     this.metadata = metadata;
     this.device = device;
+    this.config = config;
+
+    // Scale concurrent requests and cache budget for multichannel
+    const numChannels = renderer.numChannels;
+    this.maxConcurrentRequests = numChannels > 1 ? 12 : 8;
+    this.brickCache = new BrickCache(numChannels * 256 * 1024 * 1024);
 
     // Use page load start time if provided for true time-to-first-render
     this.loadStartTime = pageLoadStartTime ?? performance.now();
@@ -162,70 +172,160 @@ export class StreamingManager {
     this.loadBaseLod();
   }
 
+  /** Set callback to be invoked when base LOD is loaded with brick data */
+  setBaseLodLoadedCallback(callback: (brickData: (Uint8Array | Uint16Array)[]) => void): void {
+    this.onBaseLodLoaded = callback;
+  }
+
   /**
    * Load and pin the coarsest LOD level (ensures no holes)
+   * Bricks are processed with bounded concurrency to avoid saturating the HTTP
+   * connection pool — especially important for multichannel where each brick
+   * triggers N parallel channel fetches.
    */
   private async loadBaseLod(): Promise<void> {
+    const t0 = performance.now();
     const maxLod = Math.max(...this.metadata.levels.map(l => l.lod));
     const level = this.metadata.levels.find(l => l.lod === maxLod);
     if (!level) return;
 
     const [gridX, gridY, gridZ] = level.brickGrid;
+    const numChannels = this.renderer.numChannels;
 
+    // Build flat list of all brick coords
+    const bricks: { bx: number; by: number; bz: number; key: string }[] = [];
     for (let bz = 0; bz < gridZ; bz++) {
       for (let by = 0; by < gridY; by++) {
         for (let bx = 0; bx < gridX; bx++) {
-          const key = `lod${maxLod}:${bz}/${by}/${bx}`;
-
-          // Check if empty
-          const isEmpty = await this.dataProvider.isBrickEmpty(maxLod, bx, by, bz);
-          if (isEmpty) {
-            this.emptyBricks.add(key);
-            this.renderer.indirection.setEmpty(bx, by, bz, maxLod);
-            continue;
-          }
-
-          // Load brick data
-          const data = await this.dataProvider.loadBrick(maxLod, bx, by, bz);
-          if (!data) continue;
-
-          // Allocate slot
-          const result = this.renderer.allocator.allocate(this.frameCount);
-          if (!result) {
-            console.warn('Failed to allocate slot for base LOD brick');
-            continue;
-          }
-
-          // Upload to atlas
-          const offset: [number, number, number] = [
-            result.slot.x * PHYSICAL_BRICK_SIZE,
-            result.slot.y * PHYSICAL_BRICK_SIZE,
-            result.slot.z * PHYSICAL_BRICK_SIZE,
-          ];
-          writeToCanvas(
-            this.device,
-            this.renderer.canvas,
-            data,
-            [PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE],
-            offset
-          );
-
-          // Update indirection
-          this.renderer.indirection.setBrick(bx, by, bz, result.slot.x, result.slot.y, result.slot.z, maxLod);
-
-          // Set metadata and pin the slot (base LOD is never evicted)
-          this.renderer.allocator.setMetadata(result.slotIndex, { lod: maxLod, bx, by, bz, key });
-          this.renderer.allocator.pin(result.slotIndex);
-
-          // Track as loaded AND pinned
-          this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
-          this.pinnedBricks.add(key);
+          bricks.push({ bx, by, bz, key: `lod${maxLod}:${bz}/${by}/${bx}` });
         }
       }
     }
 
-    this._baseLodLoaded = true;
-    this._timeToFirstRender = performance.now() - this.loadStartTime;
+    const concurrency = Math.min(bricks.length, this.maxConcurrentRequests);
+    console.log(`[Kiln] loadBaseLod: ${bricks.length} bricks × ${numChannels} channels (concurrency: ${concurrency})`);
+
+    // Process bricks with bounded concurrency — avoids firing all N×channels network
+    // requests simultaneously, which saturates the browser's HTTP connection pool.
+    // Uses an async worker-pool pattern: spawn `concurrency` runners that each pull
+    // from the shared queue until empty.
+    const allBrickData: (Uint8Array | Uint16Array)[] = [];
+    let firstBrickMs: number | null = null;
+    let sumIsEmptyMs = 0, sumFetchMs = 0, sumUploadMs = 0, brickCount = 0;
+
+    const queue = [...bricks];
+
+    const processBrick = async ({ bx, by, bz, key }: typeof bricks[0]) => {
+      const tIsEmpty = performance.now();
+      const isEmpty = await this.dataProvider.isBrickEmpty(maxLod, bx, by, bz, this.config.emptyBrickThreshold);
+      sumIsEmptyMs += performance.now() - tIsEmpty;
+
+      if (isEmpty) {
+        this.emptyBricks.add(key);
+        this.renderer.indirection.setEmpty(bx, by, bz, maxLod);
+        return;
+      }
+
+      // Load all channels in parallel — ch0 is mandatory, others degrade gracefully
+      const tFetch = performance.now();
+      const channelData = await Promise.all(
+        Array.from({ length: numChannels }, (_, ch) =>
+          this.dataProvider.loadBrick(maxLod, bx, by, bz, ch)
+        )
+      );
+      sumFetchMs += performance.now() - tFetch;
+
+      if (!channelData[0]) return; // ch0 mandatory; skip brick entirely if it failed
+
+      const result = this.renderer.allocator.allocate(this.frameCount);
+      if (!result) {
+        console.warn('[Kiln] loadBaseLod: atlas allocation failed');
+        return;
+      }
+
+      const offset: [number, number, number] = [
+        result.slot.x * PHYSICAL_BRICK_SIZE,
+        result.slot.y * PHYSICAL_BRICK_SIZE,
+        result.slot.z * PHYSICAL_BRICK_SIZE,
+      ];
+      const tUpload = performance.now();
+      for (let ch = 0; ch < numChannels; ch++) {
+        const data = channelData[ch];
+        if (!data) continue; // skip failed channels — slot position is shared, missing ch shows as zero
+        writeToCanvas(
+          this.device,
+          this.renderer.canvases[ch]!,
+          data,
+          [PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE],
+          offset
+        );
+      }
+      const uploadMs = performance.now() - tUpload;
+      sumUploadMs += uploadMs;
+      this.uploadAvg.add(uploadMs);
+
+      this.renderer.indirection.setBrick(bx, by, bz, result.slot.x, result.slot.y, result.slot.z, maxLod);
+      this.renderer.allocator.setMetadata(result.slotIndex, { lod: maxLod, bx, by, bz, key });
+      this.renderer.allocator.pin(result.slotIndex);
+
+      this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
+      this.pinnedBricks.add(key);
+      allBrickData.push(channelData[0]);
+      brickCount++;
+
+      if (firstBrickMs === null) {
+        firstBrickMs = performance.now() - this.loadStartTime;
+      }
+    };
+
+    // Spawn `concurrency` runners that drain the shared queue
+    await Promise.all(
+      Array.from({ length: concurrency }, async () => {
+        let brick;
+        while ((brick = queue.shift()) !== undefined) {
+          await processBrick(brick);
+        }
+      })
+    );
+
+    // Retry any bricks that failed (ch0 network error)
+    const failed = bricks.filter(b => !this.loadedBricks.has(b.key) && !this.emptyBricks.has(b.key));
+    if (failed.length > 0) {
+      console.warn(`[Kiln] loadBaseLod: ${failed.length} bricks failed, retrying sequentially`);
+      for (const brick of failed) {
+        await processBrick(brick);
+      }
+    }
+
+    // Any base bricks that still failed after retry must not leave cells at w=0
+    // (unloaded → shader treats as invalid → permanent black hole). Mark them as
+    // empty so the shader cleanly skips them instead of rendering a broken hole.
+    const stillFailed = bricks.filter(b => !this.loadedBricks.has(b.key) && !this.emptyBricks.has(b.key));
+    if (stillFailed.length > 0) {
+      console.error(`[Kiln] loadBaseLod: ${stillFailed.length} bricks permanently failed — marking empty to prevent holes`);
+      for (const { bx, by, bz, key } of stillFailed) {
+        this.emptyBricks.add(key);
+        this.renderer.indirection.setEmpty(bx, by, bz, maxLod);
+      }
+    }
+
+    const totalMs = performance.now() - t0;
+    const firstBrickMsValue = firstBrickMs as number | null;
+    const firstBrickStr = firstBrickMsValue !== null ? firstBrickMsValue.toFixed(0) : 'n/a';
+    this.baseLodLoaded = true;
+    this.timeToFirstRender = firstBrickMsValue ?? totalMs;
+
+    console.log(
+      `[Kiln] loadBaseLod done: ${brickCount}/${bricks.length} bricks loaded in ${totalMs.toFixed(0)}ms` +
+      ` | first brick: ${firstBrickStr}ms` +
+      ` | avg isEmpty: ${(sumIsEmptyMs / bricks.length).toFixed(1)}ms` +
+      ` | avg fetch: ${brickCount > 0 ? (sumFetchMs / brickCount).toFixed(1) : 'n/a'}ms` +
+      ` | avg upload: ${brickCount > 0 ? (sumUploadMs / brickCount).toFixed(1) : 'n/a'}ms`
+    );
+
+    if (allBrickData.length > 0 && this.onBaseLodLoaded) {
+      this.onBaseLodLoaded(allBrickData);
+    }
   }
 
   /**
@@ -252,10 +352,22 @@ export class StreamingManager {
     }
 
     // Decide when to recompute:
-    // 1. Regular interval (every N frames while moving)
+    // 1. Every frame while moving — keeps desiredKeys fresh so stale in-flight
+    //    requests are cancelled within 1 frame instead of `updateInterval` frames.
     // 2. Immediately when camera comes to rest (after stillness threshold)
-    const regularUpdate = (this.frameCount - this.lastUpdateFrame) >= this.updateInterval;
+    // 3. Regular interval as a fallback when still (no-op if nothing changed)
+    const regularUpdate = cameraMoved
+      ? true
+      : (this.frameCount - this.lastUpdateFrame) >= this.updateInterval;
     const cameraJustStopped = this.cameraStillFrames === this.cameraStillThreshold;
+
+    // Don't start streaming finer LODs until base LOD is fully loaded.
+    // loadBaseLod runs independently; fine bricks requested before it finishes
+    // have no parent in loadedBricks, so eviction calls clearBrick without a
+    // fallback and permanently holes the indirection table.
+    if (!this.baseLodLoaded) {
+      return false;
+    }
 
     if (regularUpdate || cameraJustStopped) {
       this.lastUpdateFrame = this.frameCount;
@@ -307,7 +419,7 @@ export class StreamingManager {
     this.brickCache.clear();
     this.desiredKeys.clear();
     this.loadQueue = [];
-    this._baseLodLoaded = false;
+    this.baseLodLoaded = false;
     this.renderer.indirection.clearAll();
 
     // Reload base LOD
@@ -318,14 +430,22 @@ export class StreamingManager {
    * Get current stats
    */
   getStats(): StreamingStats {
-    // Get live network stats from DataProvider
     const networkStats = this.dataProvider.getNetworkStats();
+    const providerTimings = this.dataProvider.getPipelineTimings?.() ?? {
+      avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0,
+    };
     return {
       ...this.lastStats,
       totalBytesDownloaded: networkStats.totalBytesDownloaded,
       bytesPerSecond: networkStats.recentBytesPerSecond,
       requestCount: networkStats.requestCount,
-      timeToFirstRender: this._timeToFirstRender,
+      timeToFirstRender: this.timeToFirstRender,
+      pipelineTimings: {
+        avgFetchMs: providerTimings.avgFetchMs,
+        avgAssemblyMs: providerTimings.avgAssemblyMs,
+        avgUploadMs: this.uploadAvg.value,
+        sampleCount: Math.max(providerTimings.sampleCount, this.uploadAvg.count),
+      },
     };
   }
 
@@ -344,7 +464,7 @@ export class StreamingManager {
     const aspect = canvas.width / canvas.height;
     const viewMatrix = camera.getViewMatrix();
     const projMatrix = camera.getProjectionMatrix(aspect);
-    const viewProj = multiplyMatrices(projMatrix, viewMatrix);
+    const viewProj = mat4.multiply(projMatrix, viewMatrix);
     const frustum = extractFrustumPlanes(viewProj);
 
     // Compute projection factor for SSE calculation
@@ -356,8 +476,6 @@ export class StreamingManager {
 
     // Desired bricks from traversal
     const desiredBricks: BrickRequest[] = [];
-    let culledCount = 0;
-    let emptyCount = 0;
 
     // Recursive traversal function
     const traverse = (bx: number, by: number, bz: number, lod: number): void => {
@@ -374,7 +492,6 @@ export class StreamingManager {
 
       // Frustum culling
       if (!isAABBInFrustum(aabb.min, aabb.max, frustum)) {
-        culledCount++;
         return;
       }
 
@@ -431,7 +548,6 @@ export class StreamingManager {
 
       // Check if known empty
       if (this.emptyBricks.has(key)) {
-        emptyCount++;
         return;
       }
 
@@ -502,9 +618,6 @@ export class StreamingManager {
       desiredCount: desiredBricks.length,
       loadedCount,
       pendingCount: this.loadQueue.length + this.inFlightRequests.size,
-      culledCount,
-      emptyCount,
-      evictedCount: 0, // Reset, updated during loadBrick
       cancelledCount,
       atlasUsage: this.renderer.allocator.usedCount,
       atlasCapacity: this.renderer.allocator.totalSlots,
@@ -513,6 +626,8 @@ export class StreamingManager {
       bytesPerSecond: 0,
       requestCount: 0,
       timeToFirstRender: null, // Actual value comes from getStats()
+      evictedCount: this.lastStats.evictedCount,
+      pipelineTimings: { avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0 },
     };
   }
 
@@ -544,7 +659,11 @@ export class StreamingManager {
       this.inFlightRequests.set(request.key, controller);
 
       this.loadBrick(request, controller.signal).finally(() => {
-        this.inFlightRequests.delete(request.key);
+        // Guard against a stale .finally() from an aborted request deleting a newer
+        // controller that was registered for the same key in the same sync block.
+        if (this.inFlightRequests.get(request.key) === controller) {
+          this.inFlightRequests.delete(request.key);
+        }
       });
     }
   }
@@ -559,7 +678,7 @@ export class StreamingManager {
     if (signal.aborted) return;
 
     // Check if empty
-    const isEmpty = await this.dataProvider.isBrickEmpty(lod, bx, by, bz);
+    const isEmpty = await this.dataProvider.isBrickEmpty(lod, bx, by, bz, this.config.emptyBrickThreshold);
     if (signal.aborted) return;
 
     if (isEmpty) {
@@ -568,69 +687,80 @@ export class StreamingManager {
       return;
     }
 
-    // Try CPU cache first, fall back to network
-    let data = this.brickCache.get(key) ?? null;
-    if (!data) {
-      data = await this.dataProvider.loadBrick(lod, bx, by, bz);
-      if (signal.aborted) return;
-      if (!data) return;
-      this.brickCache.put(key, data);
-    }
+    // Try CPU cache first, fall back to network — load all channels in parallel
+    // Capped to renderer.numChannels (≤ 4) so we never write to a non-existent atlas
+    const numChannels = this.renderer.numChannels;
+    const channelData = await Promise.all(
+      Array.from({ length: numChannels }, async (_, ch) => {
+        const cacheKey = `ch${ch}:${key}`;
+        const cached = this.brickCache.get(cacheKey);
+        if (cached) return cached;
+        const data = await this.dataProvider.loadBrick(lod, bx, by, bz, ch);
+        if (data) this.brickCache.put(cacheKey, data);
+        return data;
+      })
+    );
+    if (signal.aborted || channelData.some(d => !d)) return;
 
-    // CRITICAL: Check if still desired before uploading to GPU
-    if (!this.desiredKeys.has(key)) {
-      // Brick is no longer needed - camera moved (data stays in CPU cache)
-      return;
-    }
+    // Camera may have moved while the fetch was in flight — skip if no longer desired
+    if (!this.desiredKeys.has(key)) return;
 
-    // Allocate slot (will evict LRU if full, but never pinned slots)
+    // Allocate one slot (shared atlas position across all channels)
     const result = this.renderer.allocator.allocate(this.frameCount);
     if (!result) {
       console.warn('StreamingManager: allocation failed (all slots pinned?)');
       return;
     }
 
-    // Handle eviction - allocator already skips pinned slots
+    // Handle eviction
     if (result.evicted) {
-      // Find parent brick to fall back to
-      const fallback = this.findParentBrick(result.evicted.bx, result.evicted.by, result.evicted.bz, result.evicted.lod);
+      this.lastStats.evictedCount++;
+      const evictedKey = result.evicted.key;
+      const evictedEntry = this.loadedBricks.get(evictedKey);
 
-      if (fallback) {
-        this.renderer.indirection.clearBrick(
-          result.evicted.bx,
-          result.evicted.by,
-          result.evicted.bz,
-          result.evicted.lod,
-          [fallback.slot.x, fallback.slot.y, fallback.slot.z],
-          fallback.lod
-        );
-      } else {
-        // No parent found - clear completely (shouldn't happen if base LOD is loaded)
-        this.renderer.indirection.clearBrick(
-          result.evicted.bx,
-          result.evicted.by,
-          result.evicted.bz,
-          result.evicted.lod
-        );
+      if (!evictedEntry || evictedEntry.slotIndex === result.slotIndex) {
+        const fallback = this.findParentBrick(result.evicted.bx, result.evicted.by, result.evicted.bz, result.evicted.lod);
+
+        if (fallback) {
+          this.renderer.indirection.clearBrick(
+            result.evicted.bx,
+            result.evicted.by,
+            result.evicted.bz,
+            result.evicted.lod,
+            [fallback.slot.x, fallback.slot.y, fallback.slot.z],
+            fallback.lod
+          );
+        } else {
+          // No parent found - clear completely (shouldn't happen if base LOD is loaded)
+          this.renderer.indirection.clearBrick(
+            result.evicted.bx,
+            result.evicted.by,
+            result.evicted.bz,
+            result.evicted.lod
+          );
+        }
+        this.loadedBricks.delete(evictedKey);
       }
 
-      this.loadedBricks.delete(result.evicted.key);
-      this.lastStats.evictedCount++;
     }
 
-    // Upload to atlas
+    // Upload each channel to its atlas at the same slot coordinates (timed for pipeline telemetry)
     const offset: [number, number, number] = [
       result.slot.x * PHYSICAL_BRICK_SIZE,
       result.slot.y * PHYSICAL_BRICK_SIZE,
       result.slot.z * PHYSICAL_BRICK_SIZE,
     ];
-    writeToCanvas(
-      this.device,
-      this.renderer.canvas,
-      data,
-      [PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE],
-      offset
-    );
+    const tUpload = performance.now();
+    for (let ch = 0; ch < numChannels; ch++) {
+      writeToCanvas(
+        this.device,
+        this.renderer.canvases[ch]!,
+        channelData[ch]!,
+        [PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE],
+        offset
+      );
+    }
+    this.uploadAvg.add(performance.now() - tUpload);
 
     // Update indirection
     this.renderer.indirection.setBrick(bx, by, bz, result.slot.x, result.slot.y, result.slot.z, lod);
@@ -641,9 +771,18 @@ export class StreamingManager {
     // Track
     this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
 
-    // Reset temporal accumulation — atlas content changed, history buffer is stale
-    // I hate it. Either ghosting or noise during loading, pick your poison.
-    this.renderer.resetAccumulation(); 
+    // Schedule accumulation reset to prevent constant flickering during streaming bursts
+    this.scheduleAccumulationReset();
+  }
+
+  private scheduleAccumulationReset(): void {
+    if (this.resetAccumulationTimer !== null) {
+      clearTimeout(this.resetAccumulationTimer);
+    }
+    this.resetAccumulationTimer = setTimeout(() => {
+      this.renderer.resetAccumulation();
+      this.resetAccumulationTimer = null;
+    }, 100) as unknown as number;
   }
 
   // Helper functions
@@ -657,7 +796,7 @@ export class StreamingManager {
     const level = this.metadata.levels.find(l => l.lod === lod);
     if (!level) return { min: [0, 0, 0], max: [0, 0, 0] };
 
-    const normalizedSize = getNormalizedSize();
+    const normalizedSize = this.config.normalizedSize;
     const [gridX, gridY, gridZ] = level.brickGrid;
     const brickSize: [number, number, number] = [
       normalizedSize[0] / gridX,
@@ -702,7 +841,7 @@ export class StreamingManager {
    * At LOD N, each voxel represents 2^N original voxels
    */
   private getVoxelWorldSize(lod: number): number {
-    const normalizedSize = getNormalizedSize();
+    const normalizedSize = this.config.normalizedSize;
     const dims = this.metadata.dimensions;
 
     // Base voxel size in normalized space (LOD 0)

@@ -7,7 +7,7 @@
  * Each entry in the indirection table tells the shader where to find that brick in the atlas.
  */
 
-import { getDatasetGrid } from './config.js';
+import type { DatasetConfig } from './config.js';
 
 export interface BrickLocation {
   // Virtual position (which brick in the logical volume)
@@ -37,14 +37,12 @@ export class IndirectionTable {
   private gridY: number;
   private gridZ: number;
 
-  constructor(device: GPUDevice) {
+  constructor(device: GPUDevice, config: DatasetConfig) {
     this.device = device;
 
-    // Get current dataset grid dimensions
-    const datasetGrid = getDatasetGrid();
-    this.gridX = datasetGrid[0];
-    this.gridY = datasetGrid[1];
-    this.gridZ = datasetGrid[2];
+    this.gridX = config.datasetGrid[0];
+    this.gridY = config.datasetGrid[1];
+    this.gridZ = config.datasetGrid[2];
 
     // Dataset grid, 4 bytes per entry (RGBA)
     this.data = new Uint8Array(this.gridX * this.gridY * this.gridZ * 4);
@@ -111,7 +109,7 @@ export class IndirectionTable {
           this.data[idx + 0] = atlasX;
           this.data[idx + 1] = atlasY;
           this.data[idx + 2] = atlasZ;
-          // Store LOD level + 1 (0 = not loaded, 1-4 = lod 0-3)
+          // Store LOD level + 1 (0 = not loaded, 1+ = lod level, 255 = empty)
           this.data[idx + 3] = lod + 1;
         }
       }
@@ -151,9 +149,11 @@ export class IndirectionTable {
 
           const idx = (x + y * this.gridX + z * this.gridX * this.gridY) * 4;
 
-          // Only overwrite if this LOD is finer or equal (same logic as setBrick)
+          // Never overwrite loaded data with the empty marker.
+          // Any cell with a real brick (w in 1..254) must keep its data —
+          // even coarser LOD fallback is better than marking the cell empty.
           const existingLod = this.data[idx + 3] ?? 0;
-          if (existingLod > 0 && existingLod < 255 && existingLod <= lod + 1) {
+          if (existingLod > 0 && existingLod < 255) {
             continue;
           }
 
@@ -215,7 +215,8 @@ export class IndirectionTable {
             this.data[idx + 2] = fallbackAtlas[2];
             this.data[idx + 3] = fallbackLod + 1;
           } else {
-            // Clear completely
+            // Clear completely — cell reverts to "unloaded" state.
+            // Streaming manager will re-request it if still desired.
             this.data[idx + 0] = 0;
             this.data[idx + 1] = 0;
             this.data[idx + 2] = 0;

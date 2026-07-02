@@ -32,6 +32,7 @@ import wireframeWGSL from './wireframe.wgsl?raw';
 import axisWGSL from './axis.wgsl?raw';
 import blitWGSL from './blit.wgsl?raw';
 import accumulateWGSL from './accumulate.wgsl?raw';
+import slicePlanesWGSL from './slice-planes.wgsl?raw';
 
 // Inject all rendering constants from config into shader source
 function injectConfig(shader: string): string {
@@ -47,8 +48,11 @@ const sharedBindings = /* wgsl */ `
 @group(0) @binding(1) var volumeSampler: sampler;
 @group(0) @binding(2) var volumeTexture: texture_3d<f32>;
 @group(0) @binding(3) var tfSampler: sampler;
-@group(0) @binding(4) var tfTexture: texture_1d<f32>;
+@group(0) @binding(4) var tfTexture: texture_2d<f32>;
 @group(0) @binding(6) var indirectionTexture: texture_3d<u32>;
+@group(0) @binding(8) var volumeTexture1: texture_3d<f32>;
+@group(0) @binding(9) var volumeTexture2: texture_3d<f32>;
+@group(0) @binding(10) var volumeTexture3: texture_3d<f32>;
 `;
 
 // Assemble the common shader code
@@ -100,9 +104,20 @@ struct Uniforms {
     normalizedSize: vec3f,
     isoValue: f32,
     frameIndex: u32,
-    _pad1: u32,
+    numChannels: u32,
     windowCenter: f32,
     windowWidth: f32,
+    floatMin: f32,
+    floatMax: f32,
+    clipMin: vec3f,
+    _pad3: f32,
+    clipMax: vec3f,
+    densityScale: f32,
+    jitter: u32,
+    _pad5: u32,
+    channelColors: array<vec4f, 4>,
+    channelWindowCenter: vec4f,
+    channelWindowWidth: vec4f,
 }
 
 ${sharedCode}
@@ -136,9 +151,16 @@ fn fs(@location(0) modelPos: vec3f) -> @location(0) vec4f {
 
     if (hit.x > hit.y || hit.y <= 0.0) { discard; }
 
-    let tStart = max(hit.x, 0.0);
+    // Apply clipping planes
+    let clipped = applyClippingPlanes(
+        rayOrigin, rayDir, max(hit.x, 0.0), hit.y,
+        uniforms.normalizedSize, uniforms.clipMin, uniforms.clipMax
+    );
+
+    if (clipped.x > clipped.y) { discard; }
+
     let useIndirection = uniforms.useIndirection > 0.5;
-    return rayMarchMode(rayOrigin, rayDir, tStart, hit.y, uniforms.normalizedSize, uniforms.datasetSize, uniforms.renderMode, uniforms.isoValue, useIndirection);
+    return rayMarchMode(rayOrigin, rayDir, clipped.x, clipped.y, uniforms.normalizedSize, uniforms.datasetSize, uniforms.renderMode, uniforms.isoValue, useIndirection);
 }
 `;
 
@@ -154,9 +176,18 @@ struct Uniforms {
     isoValue: f32,
     screenSize: vec2f,
     frameIndex: u32,
-    _pad3: f32,
+    _pad3: u32,
     windowCenter: f32,
     windowWidth: f32,
+    floatMin: f32,
+    floatMax: f32,
+    clipMin: vec3f,
+    densityScale: f32,
+    clipMax: vec3f,
+    numChannels: u32,
+    channelColors: array<vec4f, 4>,
+    channelWindowCenter: vec4f,
+    channelWindowWidth: vec4f,
 }
 
 ${sharedCode}
@@ -197,9 +228,19 @@ fn main(@builtin(global_invocation_id) globalId: vec3u) {
         return;
     }
 
-    let tStart = max(hit.x, 0.0);
+    // Apply clipping planes
+    let clipped = applyClippingPlanes(
+        rayOrigin, rayDir, max(hit.x, 0.0), hit.y,
+        uniforms.normalizedSize, uniforms.clipMin, uniforms.clipMax
+    );
+
+    if (clipped.x > clipped.y) {
+        textureStore(outputTexture, pixelCoord, vec4f(bgColor, 1.0));
+        return;
+    }
+
     let useIndirection = uniforms.useIndirection > 0.5;
-    let result = rayMarchMode(rayOrigin, rayDir, tStart, hit.y, uniforms.normalizedSize, uniforms.datasetSize, uniforms.renderMode, uniforms.isoValue, useIndirection);
+    let result = rayMarchMode(rayOrigin, rayDir, clipped.x, clipped.y, uniforms.normalizedSize, uniforms.datasetSize, uniforms.renderMode, uniforms.isoValue, useIndirection);
 
     let finalColor = result.rgb + bgColor * (1.0 - result.a);
     textureStore(outputTexture, pixelCoord, vec4f(finalColor, 1.0));
@@ -211,3 +252,10 @@ export const wireframeShader = wireframeWGSL;
 export const axisShader = axisWGSL;
 export const blitShader = blitWGSL;
 export const accumulateShader = accumulateWGSL;
+
+// Slice planes shader: axis-aligned cross-sections through the volume
+export const slicePlanesShader = [
+  injectConfig(commonWGSL),
+  samplingWGSL,
+  slicePlanesWGSL,
+].join('\n');

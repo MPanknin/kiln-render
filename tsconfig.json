@@ -19,8 +19,15 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedIndexedAccess": true
+    "noUncheckedIndexedAccess": true,
+
+    /* Path aliases (mirrors vite.config.ts resolve.alias) */
+    "baseUrl": ".",
+    "paths": {
+      "kiln-render": ["./src/index.ts"],
+      "@kiln/*": ["./src/*"]
+    }
   },
-  "include": ["src"]
+  "include": ["src", "examples"]
 }
 

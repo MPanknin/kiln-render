@@ -111,6 +111,7 @@ The `lodScale` factor handles coarse LOD sampling: a LOD 2 brick covers 256³ lo
 | **MIP** | Maximum intensity along ray | Angiography, vessel detection |
 | **ISO** | First surface at threshold + Phong shading | Surface extraction |
 | **LOD** | Color-coded by resolution level | Debug LOD distribution |
+| **Slice** | Three orthogonal planes sampling the atlas directly | Anatomical navigation |
 
 DVR compositing uses the optical model with extinction:
 
@@ -134,7 +135,7 @@ The compute shader can render at a reduced resolution to decrease the number of 
 
 ```
 Canvas: 1920 × 1080
-renderScale: 0.75
+renderScale: 0.5
 Compute texture: 1440 × 810  (56% fewer pixels)
 Blit: bilinear upscale back to 1920 × 1080
 ```

@@ -18,7 +18,7 @@ export type {
 } from './data-provider.js';
 
 // Sharded format implementation (Kiln's native format)
-export { ShardedDataProvider, createShardedProvider } from './sharded-provider.js';
+export { ShardedDataProvider } from './sharded-provider.js';
 
 // OME-Zarr format implementation
 export { ZarrDataProvider } from './zarr-provider.js';

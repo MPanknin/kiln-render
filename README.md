@@ -1,113 +1,105 @@
-> [!NOTE]
-> Kiln is a research-grade prototype. Some rendering artifacts and incomplete features are expected.
-> 
-> [Read the full write-up on dev.to](https://dev.to/mpanknin/building-kiln-streaming-multi-gb-volumes-in-the-browser-48hl-temp-slug-9894239?preview=3c3a3ca6a809141c4972dd2ea8f9190e6ddc292079a4920991ecdf65c5071ed0db1c31219330eb9e4b9ec30a8a7cd920c90977395c57b6c01c660bb4)
-
 # Kiln
 
-A WebGPU-native out-of-core volume rendering system for large virtualized volumetric datasets. 
+A WebGPU-native out-of-core volume rendering system for large virtualized volumetric datasets.
 
 Kiln streams multi-gigabyte volumes over HTTP, rendering them at interactive framerates using a fixed-size VRAM page cache and virtual texture indirection.
 
+**Documentation:** [Usage Guide](docs/usage-guide.md) · [Architecture](docs/architecture.md) · [Rendering Pipeline](docs/rendering.md) · [Data Guide](docs/data-guide.md) · [WebGPU Notes](docs/webgpu.md) · [References](docs/references.md)
+
+---
+
 ## Chameleon CT Scan
 #### 2160.0 MB - 1024 × 1024 × 1080 @ 16-bit
-<a href="https://mpanknin.github.io/kiln/?mode=dvr&wc=0.5&ww=1.0&iso=0.20&tf=coolwarm&up=-y&scale=0.5&cam=0.070%2C3.630%2C3.930%2C0.108%2C0.001%2C-0.066" target="_blank">Live Demo</a>
+<a href="https://mpanknin.github.io/kiln-render/?mode=dvr&wc=0.35&ww=0.55&iso=0.20&tf=grayscale&up=-y&scale=0.5&cam=0.070%2C3.630%2C3.930%2C0.108%2C0.001%2C-0.066" target="_blank">Live Demo</a>
 
-<img width="1725" height="907" alt="image" src="https://github.com/user-attachments/assets/25ae5fa5-7fe6-49d1-b3b1-51784c6220a2" />
+<img width="1725" height="907" alt="553008107-25ae5fa5-7fe6-49d1-b3b1-51784c6220a2" src="https://github.com/user-attachments/assets/f5da8ea1-a924-4ba6-9f29-6f6c18369405" />
 
-## Beechnut micro CT Scan (experimental OME-Zarr)
+## Beechnut micro CT Scan (OME-Zarr 0.5)
 #### 3092.0 MB - 1024 × 1024 × 1546 @ 16-bit
-<a href="https://mpanknin.github.io/kiln/?dataset=https%3A%2F%2Fd39zu0xtgv0613.cloudfront.net%2Fbeechnut.ome.zarr&mode=dvr&wc=0.22&ww=0.14&iso=0.20&tf=grayscale&up=-y&scale=0.5&cam=-0.090%2C2.130%2C3.171%2C-0.072%2C-0.025%2C-0.013" target="_blank">Live Demo</a>
+<a href="https://mpanknin.github.io/kiln-render/?dataset=https%3A%2F%2Fd39zu0xtgv0613.cloudfront.net%2Fbeechnut.ome.zarr&mode=dvr&wc=0.22&ww=0.14&iso=0.20&tf=grayscale&up=-y&scale=0.5&cam=-0.090%2C2.130%2C3.171%2C-0.072%2C-0.025%2C-0.013" target="_blank">Live Demo</a>
 
-<img width="1722" height="905" alt="image" src="https://github.com/user-attachments/assets/17268259-5977-4a9b-b4c0-a1756a024857" />
+<img width="1722" height="905" alt="553008573-17268259-5977-4a9b-b4c0-a1756a024857" src="https://github.com/user-attachments/assets/02cffc17-bf44-422b-8752-9bf4edc96d89" />
 
-## Overview
+## Vibrio cholerae Cryo-ET (OME-Zarr 0.4)
+#### 1123.9 MB - 1023 × 1440 × 400 @ 16-bit · CryoET Data Portal · sma2022-08-05-1
+<a href="https://mpanknin.github.io/kiln-render/?dataset=https%3A%2F%2Fd39zu0xtgv0613.cloudfront.net%2Fsma2022-07-13-10.zarr&mode=dvr&wc=0.50&ww=1.00&iso=0.20&tf=grayscale-inverted&tfpts=0.00%2C1.00%2C1.00%2C1.00&up=-z&scale=0.50&cam=0.550%2C12.050%2C1.203%2C0.046%2C0.017%2C0.146&clipMin=0.00%2C0.00%2C0.37&wireframe=1" target="_blank">Live Demo</a>
 
-Kiln implements **virtual texturing for volumetric data** in the browser using WebGPU:
+<img width="1722" height="902" alt="Vibrio cholerae cryo-ET tomogram" src="https://github.com/user-attachments/assets/8e661338-ed45-4024-b818-c3162c11aa04" />
 
-- **Fixed memory footprint** - Uses constant and minimal VRAM regardless of dataset size
-- **Stream on demand** - Fetches only the bricks visible in the current view
-- **Multi-resolution** - Coarse LODs far away, fine LODs up close via screen-space error
-- **Network-native** - Streams from S3, CDN, or any HTTP server with Range request support
+## Install
+
+```bash
+npm install kiln-render
+```
+
+```typescript
+import { KilnViewer } from 'kiln-render';
+
+const canvas = document.querySelector('canvas')!;
+const viewer = await KilnViewer.create(canvas, 'https://your-dataset.ome.zarr');
+```
+
+Requires a browser with [WebGPU support](#browser-requirements). See the [Usage Guide](docs/usage-guide.md) for the full API.
+
+---
 
 ## Features
 
-- **Out-of-core streaming** - SSE-based LOD selection, LRU eviction, 512-slot brick cache
-- **Input formats** - Kiln sharded binary (with preprocessing script) and OME-Zarr (experimental)
-- **8-bit and 16-bit volumes** - Native `r16unorm` with windowing/leveling controls
-- **Compute shader raycasting** - Brick-aware raymarching with early ray termination
-- **Gzip compression** - Parallel Web Worker decompression pipeline
-- **Empty brick skipping** - Pre-indexed per-brick statistics for culling
-- **Render modes** - DVR, MIP, Isosurface, LOD debug visualization
-- **HTTP Range requests** - Byte-range fetches from S3, CDN, or any static file server
+- **Out-of-core streaming** — Fixed VRAM footprint, SSE-based LOD selection, LRU brick cache
+- **OME-Zarr & Kiln binary** — Stream from S3, CDN, or load local files (OME-Zarr v0.5, single-channel, uint8/uint16/float32)
+- **Local filesystem** — Load local `.zarr` / `.ome.zarr` directories via the File System Access API (Chrome/Edge)
+- **16-bit & float32 support** — Native 16-bit textures with window/level controls; float32 stored internally as r16float
+- **Compute shader raymarching** — Brick-aware DVR (with density scale), MIP, isosurface, and slice plane rendering
+- **Slice planes** — Orthogonal slice views (X/Y/Z) as a dedicated render mode
+- **Transfer functions** — Interactive curve editor with colour/opacity presets
+- **Clipping planes** — Per-axis min/max clip in normalised 0–1 space
+- **Worker-based pipeline** — Parallel decompression and brick assembly off the main thread
 
-## Quick Start
+## Development
 
 ```bash
 # Install dependencies
-bun install
+npm install
 
-# Start development server
-bun run dev
+# Start development server (loads the bundled demo)
+npm run dev
 
-# Build for production
-bun run build
+# Build demo for production
+npm run build
 
-# Run tests
-bun run test
+# Build the library (outputs to lib/)
+npm run build:lib
 ```
 
-The demo loads a sample dataset from S3. To use your own data, see the [Data Guide](docs/data-guide.md).
+The demo loads a sample dataset from S3. To load custom datasets, see the [Usage Guide](docs/usage-guide.md).
 
-## Documentation
+## Browser Requirements
 
-- **[Architecture](docs/architecture.md)** - Virtual texturing, streaming manager, and design decisions
-- **[Rendering Pipeline](docs/rendering.md)** - Raymarching, compositing modes, resolution scaling, and temporal accumulation
-- **[Data Guide](docs/data-guide.md)** - Supported formats (OME-Zarr, Kiln sharded binary) and data preparation
-- **[WebGPU Notes](docs/webgpu.md)** - WebGPU vs WebGL comparison and future GPU optimizations
+Kiln requires **WebGPU** support:
+- Chrome/Edge 113+
+- Safari 26+
+- Firefox 141+
 
-## UI Controls
+Make sure hardware acceleration is enabled in your browser settings.
 
-| Control | Description |
-|---------|-------------|
-| **Mode** | DVR, MIP, ISO, or LOD visualization |
-| **Up Axis** | Camera orientation (X, Y, Z, -X, -Y, -Z) |
-| **Indirection** | Toggle virtual texturing on/off |
-| **Wireframe** | Show volume bounding box |
-| **Transfer Function** | Color/opacity presets and interactive curve editing |
-| **Window/Level** | Contrast adjustment for 16-bit data (center and width) |
+## Sample Datasets
 
-## Why WebGPU?
+From the [Open SciVis Datasets](https://github.com/sci-visus/open-scivis-datasets) collection:
+- **[Chameleon](https://github.com/InsightSoftwareConsortium/OMEZarrOpenSciVisDatasets#chameleon)** - CT scan of *Chamaeleo calyptratus*. Digital Morphology, 2003.
+- **[Beechnut](https://github.com/InsightSoftwareConsortium/OMEZarrOpenSciVisDatasets#beechnut)** - MicroCT scan of a dried beechnut. Computer-Assisted Paleoanthropology, University of Zurich.
+- **[Stag Beetle](https://github.com/InsightSoftwareConsortium/OMEZarrOpenSciVisDatasets#stag_beetle)** - Industrial CT scan. Meister Eduard Gröller, Georg Glaeser, Johannes Kastner, 2005.
 
-Kiln requires WebGPU (not WebGL) for native `r16unorm` textures, compute shader raymarching, and asynchronous texture uploads during streaming. See the [WebGPU Notes](docs/webgpu.md) for a detailed comparison.
-
-## FAQ
-
-**Which browsers are supported?**
-Kiln requires WebGPU. Chrome/Edge 113+ and Safari 26+ support it out of the box. Firefox ships WebGPU by default in recent versions (141+), though support may be partial on some platforms — check `dom.webgpu.enabled` if needed. Make sure hardware acceleration is enabled in your browser settings.
-
-**How much VRAM does Kiln use?**
-The atlas is a fixed-size 3D texture. With the default 512 brick slots it uses roughly ~150 MB for 8-bit data and ~300 MB for 16-bit data. You can increase the atlas size in `config.ts` for higher quality at the cost of more VRAM, but usage always stays constant regardless of dataset size.
-
-**Can I load my own data?**
-Yes. Kiln supports its own sharded binary format as well as an experimantal integration for OME-Zarr datasets. See the [Data Guide](docs/data-guide.md) for details on how to prepare and serve your data.
-
-**What are the known rendering issues?**
-Brick boundary seams are still visible in some cases, especially in isosurface (ISO) mode where normal estimation samples across brick edges. LOD transitions can also produce brief visual discontinuities while bricks stream in. These are known issues and will be addressed in the future.
-
-**Can I use Kiln in my own application?**
-Kiln is MIT licensed, so you are free to use, modify, and integrate it. We plan to provide an installable npm package in the future, but for now Kiln is a standalone viewer. There is no stable public API yet and the internals may change, so if you build on top of it, pinning to a specific commit is recommended.
-
-## Credits
-
-Sample datasets from the [Open SciVis Datasets](https://klacansky.com/open-scivis-datasets/) collection:
-
-- **Chameleon** - CT scan of *Chamaeleo calyptratus*. Digital Morphology, 2003.
-- **Beechnut** - MicroCT scan of a dried beechnut. Computer-Assisted Paleoanthropology group and Visualization and MultiMedia Lab, University of Zurich.
-- **Stag Beetle** - Industrial CT scan. Meister Eduard Gröller, Georg Glaeser, Johannes Kastner, 2005.
-
-Some of the concepts in Kiln build upon my earlier work on volume rendering: [volume-occlusion-editor](https://github.com/MPanknin/volume-occlusion-editor).
+From the [CryoET Data Portal](https://cryoetdataportal.czscience.com/):
+- **[Vibrio cholerae](https://cryoetdataportal.czscience.com/runs/33757?table-tab=Tomograms)** - Cryo-ET tomogram, competence pilus study (*V. cholerae* PilQ GFP / PilT deletion). 
 
 ## License
 
-MIT
+Apache 2.0
+
+---
+
+## Note
+
+> [Read the full write-up on dev.to](https://dev.to/mpanknin/kiln-webgpu-native-out-of-core-volume-rendering-for-multi-gb-datasets-2alb)
+>
+> [Partly Kiln builds upon my earlier work on volume rendering](https://github.com/MPanknin/volume-occlusion-editor)

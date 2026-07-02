@@ -14,44 +14,36 @@
 import { open, root, Array as ZarrArray } from 'zarrita';
 import type { DataType, Readable } from 'zarrita';
 import { TolerantFetchStore } from './tolerant-fetch-store.js';
-import { LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE } from '../core/config.js';
 import { ZarrWorkerPool } from './zarr-worker-pool.js';
-import type {
-  DataProvider,
-  VolumeMetadata,
-  LodLevel,
-  BrickData,
-  BrickStats,
-  BitDepth,
-  NetworkStats,
-} from './data-provider.js';
-
-/** OME-NGFF multiscales metadata (from group attributes) */
-interface OmeMultiscales {
-  axes: { name: string; type: string; unit?: string }[];
-  datasets: { path: string; coordinateTransformations?: { type: string; scale?: number[] }[] }[];
-  name?: string;
-  version?: string;
-}
+import { BaseZarrProvider, detectCompression } from './base-zarr-provider.js';
+import type { VolumeMetadata, BrickData, PipelineTimings } from './data-provider.js';
+import { UnsupportedDatasetError } from './data-provider.js';
+import { extractMultiscales } from './zarr-validator.js';
 
 /**
- * DataProvider implementation for OME-Zarr (NGFF v0.5) volumes
+ * DataProvider implementation for OME-Zarr (NGFF v0.5) volumes over HTTP
  */
-export class ZarrDataProvider implements DataProvider {
+export class ZarrDataProvider extends BaseZarrProvider {
   private url: string;
-  private metadata: VolumeMetadata | null = null;
-  private brickStatsCache = new Map<string, BrickStats>();
 
   /** Worker pool for off-main-thread brick loading */
   private workerPool: ZarrWorkerPool | null = null;
-
-  // Network tracking (approximate — workers do the actual fetching)
-  private totalBytesDownloaded = 0;
-  private requestCount = 0;
-  private recentDownloads: { timestamp: number; bytes: number }[] = [];
+  private targetFormat?: 'r8unorm' | 'r16unorm' | 'r16float';
 
   constructor(url: string) {
+    super();
     this.url = url.replace(/\/$/, '');
+  }
+
+  /**
+   * Set target texture format for worker output
+   * Format determines output format: r8unorm (8-bit), r16unorm (16-bit uint), r16float (16-bit float)
+   */
+  async setTargetFormat(format: 'r8unorm' | 'r16unorm' | 'r16float'): Promise<void> {
+    this.targetFormat = format;
+    if (this.workerPool) {
+      await this.workerPool.setTargetFormat(format);
+    }
   }
 
   async initialize(): Promise<VolumeMetadata> {
@@ -61,150 +53,87 @@ export class ZarrDataProvider implements DataProvider {
     const store = new TolerantFetchStore(this.url);
     const rootGroup = await open(root(store), { kind: 'group' });
 
-    // Parse OME multiscales from group attributes
-    const attrs = rootGroup.attrs as Record<string, unknown>;
-    const omeAttr = attrs['ome'] as { multiscales?: OmeMultiscales[] } | undefined;
-    const multiscales: OmeMultiscales[] =
-      omeAttr?.multiscales ??
-      (attrs['multiscales'] as OmeMultiscales[] | undefined) ??
-      [];
-
-    if (multiscales.length === 0) {
-      throw new Error('No OME multiscales metadata found in Zarr group attributes');
+    // Parse OME multiscales — try root attrs first, then bioformats2raw sub-group "0"
+    let attrs = rootGroup.attrs as Record<string, unknown>;
+    let ms = extractMultiscales(attrs);
+    let baseGroup: typeof rootGroup = rootGroup;
+    let subGroupPath = '';
+    if (!ms) {
+      try {
+        const subGroup = await open(rootGroup.resolve('0'), { kind: 'group' });
+        const subAttrs = subGroup.attrs as Record<string, unknown>;
+        const subMs = extractMultiscales(subAttrs);
+        if (subMs) {
+          baseGroup = subGroup as typeof rootGroup;
+          attrs = subAttrs;
+          ms = subMs;
+          subGroupPath = '0/';
+        }
+      } catch {
+        // sub-group doesn't exist
+      }
+    }
+    if (!ms) {
+      throw new UnsupportedDatasetError(['No OME-NGFF multiscales metadata found']);
     }
 
-    const ms = multiscales[0]!;
-    const numScales = ms.datasets.length;
-    const arrayPaths = ms.datasets.map(ds => ds.path);
+    const arrayPaths = ms.datasets.map((ds: any) => `${subGroupPath}${ds.path}`);
 
     // Open arrays on main thread to read metadata (shape, chunks, dtype)
     const arrays: ZarrArray<DataType, Readable>[] = [];
     for (const ds of ms.datasets) {
-      const arr = await open(rootGroup.resolve(ds.path), { kind: 'array' });
+      const arr = await open(baseGroup.resolve(ds.path), { kind: 'array' });
       arrays.push(arr);
     }
 
-    // Determine bit depth
-    const dtype = arrays[0]!.dtype;
-    let bitDepth: BitDepth;
-    if (dtype === 'uint8' || dtype === 'int8') {
-      bitDepth = 8;
-    } else if (dtype === 'uint16' || dtype === 'int16') {
-      bitDepth = 16;
-    } else {
-      console.warn(`Unsupported dtype "${dtype}", falling back to 8-bit`);
-      bitDepth = 8;
-    }
-
-    // Compute voxel spacing from coordinateTransformations if available
-    let voxelSpacing: [number, number, number] | undefined;
-    const transforms = ms.datasets[0]?.coordinateTransformations;
-    if (transforms) {
-      const scaleTransform = transforms.find(t => t.type === 'scale');
-      if (scaleTransform?.scale) {
-        const s = scaleTransform.scale;
-        voxelSpacing = [s[s.length - 1]!, s[s.length - 2]!, s[s.length - 3]!];
-      }
-    }
-
-    // Build LOD levels with virtual dimensions for uniform 2:1 downsampling.
-    // The renderer assumes lodScale = 2^lod (uniform). OME-Zarr may not
-    // downsample uniformly, so we compute virtual dims and per-axis scale factors.
-    const lod0Shape = arrays[0]!.shape; // [z, y, x]
-    const lod0Dims: [number, number, number] = [
-      lod0Shape[lod0Shape.length - 1]!,
-      lod0Shape[lod0Shape.length - 2]!,
-      lod0Shape[lod0Shape.length - 3]!,
-    ];
-
-    // Build lodParams for the workers (per-axis scale + chunk info)
-    const lodParams: {
-      scaleX: number; scaleY: number; scaleZ: number;
-      actualDimX: number; actualDimY: number; actualDimZ: number;
-      csx: number; csy: number; csz: number;
-    }[] = [];
-
-    const levels: LodLevel[] = arrays.map((arr, i) => {
-      const shape = arr.shape;
-      const actualDimX = shape[shape.length - 1]!;
-      const actualDimY = shape[shape.length - 2]!;
-      const actualDimZ = shape[shape.length - 3]!;
-
-      const virtualDimX = Math.ceil(lod0Dims[0] / (1 << i));
-      const virtualDimY = Math.ceil(lod0Dims[1] / (1 << i));
-      const virtualDimZ = Math.ceil(lod0Dims[2] / (1 << i));
-
-      const chunkShape = arr.chunks;
-      lodParams.push({
-        scaleX: actualDimX / virtualDimX,
-        scaleY: actualDimY / virtualDimY,
-        scaleZ: actualDimZ / virtualDimZ,
-        actualDimX, actualDimY, actualDimZ,
-        csx: chunkShape[chunkShape.length - 1]!,
-        csy: chunkShape[chunkShape.length - 2]!,
-        csz: chunkShape[chunkShape.length - 3]!,
-      });
-
-      const brickGrid: [number, number, number] = [
-        Math.ceil(virtualDimX / LOGICAL_BRICK_SIZE),
-        Math.ceil(virtualDimY / LOGICAL_BRICK_SIZE),
-        Math.ceil(virtualDimZ / LOGICAL_BRICK_SIZE),
-      ];
-      return {
-        lod: i,
-        dimensions: [virtualDimX, virtualDimY, virtualDimZ] as [number, number, number],
-        brickGrid,
-        brickCount: brickGrid[0] * brickGrid[1] * brickGrid[2],
-      };
-    });
-
+    // Parse metadata using base class helper
     const urlParts = this.url.split('/');
     const name = urlParts[urlParts.length - 1]?.replace(/\.ome\.zarr|\.zarr/, '') ?? 'zarr-volume';
+    const { metadata, lodParams } = this.parseOmeMetadata(attrs, arrays, name);
 
-    this.metadata = {
-      name,
-      dimensions: levels[0]!.dimensions,
-      voxelSpacing,
-      brickSize: LOGICAL_BRICK_SIZE,
-      physicalBrickSize: PHYSICAL_BRICK_SIZE,
-      maxLod: numScales - 1,
-      levels,
-      bitDepth,
-    };
+    // Scan coarsest LOD for float range if no OMERO window provided it
+    if (metadata.isFloat && !metadata.dataRange) {
+      console.log('[Kiln] Float dataset — scanning coarsest LOD for data range…');
+      metadata.dataRange = await this.scanFloatRange(arrays[arrays.length - 1]!, lodParams[lodParams.length - 1]!);
+      console.log(`[Kiln] Float data range: [${metadata.dataRange[0]}, ${metadata.dataRange[1]}]`);
+    }
 
+    // Auto-level multichannel: scan coarsest LOD per-channel when no OMERO windows
+    if (metadata.numChannels > 1 && !metadata.channelWindows) {
+      console.log('[Kiln] Multichannel — scanning coarsest LOD for per-channel ranges…');
+      const ranges = await this.scanChannelRanges(arrays[arrays.length - 1]!, lodParams[lodParams.length - 1]!, metadata.numChannels);
+      const dtypeMax = metadata.bitDepth === 16 ? 65535 : 255;
+      metadata.channelWindows = ranges.map(r => ({ start: r.min, end: r.max, min: 0, max: dtypeMax }));
+      console.log('[Kiln] Per-channel ranges:', ranges.map((r, i) => `ch${i}: [${r.min}, ${r.max}]`).join(', '));
+    }
+
+    metadata.compression = await detectCompression(store, arrayPaths[0] ?? '');
+
+    this.metadata = metadata;
 
     // Initialize worker pool — all heavy lifting happens there
     this.workerPool = new ZarrWorkerPool();
     await this.workerPool.init(
-      this.url, arrayPaths, lodParams,
-      LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE,
-      bitDepth === 16,
+      this.url,
+      arrayPaths,
+      lodParams,
+      metadata.brickSize,
+      metadata.physicalBrickSize,
+      metadata.bitDepth === 16,
+      this.targetFormat,
+      metadata.isFloat ?? false,
+      metadata.dataRange,
     );
 
     return this.metadata;
   }
 
-  getMetadata(): VolumeMetadata {
-    if (!this.metadata) throw new Error('Metadata not loaded. Call initialize() first.');
-    return this.metadata;
-  }
-
-  getBitDepth(): BitDepth {
-    return this.metadata?.bitDepth ?? 8;
-  }
-
-  getBrickGrid(lod: number): [number, number, number] {
-    const meta = this.getMetadata();
-    const level = meta.levels.find(l => l.lod === lod);
-    if (!level) throw new Error(`LOD level ${lod} not found`);
-    return level.brickGrid;
-  }
 
   /**
    * Load a fully assembled 66³ brick via the worker pool.
    * The entire pipeline (fetch + decompress + re-chunk + stats) runs off main thread.
    */
-  async loadBrick(lod: number, bx: number, by: number, bz: number): Promise<BrickData | null> {
+  async loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0): Promise<BrickData | null> {
     const meta = this.getMetadata();
     const level = meta.levels.find(l => l.lod === lod);
     if (!level) return null;
@@ -216,11 +145,10 @@ export class ZarrDataProvider implements DataProvider {
     }
 
     try {
-      const result = await this.workerPool!.loadBrick(lod, bx, by, bz);
+      const result = await this.workerPool!.loadBrick(lod, bx, by, bz, channelIndex);
 
       // Cache stats for isBrickEmpty checks
-      const statsKey = `${lod}:${bx}/${by}/${bz}`;
-      this.brickStatsCache.set(statsKey, {
+      this.cacheBrickStats(lod, bx, by, bz, {
         min: result.min,
         max: result.max,
         avg: result.avg,
@@ -236,34 +164,9 @@ export class ZarrDataProvider implements DataProvider {
     }
   }
 
-  async isBrickEmpty(lod: number, bx: number, by: number, bz: number, maxThreshold?: number): Promise<boolean> {
-    const stats = await this.getBrickStats(lod, bx, by, bz);
-    if (!stats) return false;
-    const threshold = maxThreshold ?? 1;
-    return stats.max < threshold;
-  }
-
-  async getBrickStats(lod: number, bx: number, by: number, bz: number): Promise<BrickStats | null> {
-    const key = `${lod}:${bx}/${by}/${bz}`;
-    return this.brickStatsCache.get(key) ?? null;
-  }
-
-  private recordDownload(bytes: number): void {
-    this.totalBytesDownloaded += bytes;
-    this.requestCount++;
-    this.recentDownloads.push({ timestamp: performance.now(), bytes });
-  }
-
-  getNetworkStats(): NetworkStats {
-    const now = performance.now();
-    const windowMs = 2000;
-    const cutoff = now - windowMs;
-    this.recentDownloads = this.recentDownloads.filter(d => d.timestamp > cutoff);
-    const recentBytes = this.recentDownloads.reduce((sum, d) => sum + d.bytes, 0);
-    return {
-      totalBytesDownloaded: this.totalBytesDownloaded,
-      recentBytesPerSecond: (recentBytes / windowMs) * 1000,
-      requestCount: this.requestCount,
+  getPipelineTimings(): PipelineTimings {
+    return this.workerPool?.getPipelineTimings() ?? {
+      avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0,
     };
   }
 

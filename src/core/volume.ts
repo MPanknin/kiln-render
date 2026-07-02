@@ -9,22 +9,54 @@ export interface VolumeCanvas {
   texture: GPUTexture;
   size: number;
   bitDepth: BitDepth;
+  format: GPUTextureFormat;
+}
+
+/**
+ * Detect best supported texture format for 16-bit data.
+ * Tries r16float first (filterable, works on Chrome/Firefox/Safari),
+ * falls back to r8unorm. r16unorm is skipped for now — Chrome 147+ enforces
+ * its UnfilterableFloat sample type which breaks the current shader setup.
+ * TODO: proper r16unorm support via runtime filterability probe.
+ */
+export function detectBest16BitFormat(device: GPUDevice): GPUTextureFormat {
+  const formats: GPUTextureFormat[] = ['r16float'];
+
+  for (const format of formats) {
+    try {
+      const testTexture = device.createTexture({
+        size: [1, 1, 1],
+        format,
+        dimension: '3d',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      });
+      testTexture.destroy();
+      console.log(`[Kiln] Using ${format} for 16-bit atlas texture`);
+      return format;
+    } catch (_) {
+      console.warn(`[Kiln] Format ${format} not supported, trying next...`);
+    }
+  }
+
+  console.warn('[Kiln] No 16-bit formats supported, falling back to r8unorm (quality loss)');
+  return 'r8unorm';
 }
 
 /**
  * Create empty volume canvas (atlas texture)
  * @param device - WebGPU device
- * @param bitDepth - 8 for uint8/r8unorm, 16 for uint16/r16unorm
+ * @param bitDepth - Effective bit depth (8 or 16) 
+ * @param format - Texture format to use (r8unorm, r16unorm, or r16float)
  */
-export function createVolumeCanvas(device: GPUDevice, bitDepth: BitDepth = 8): VolumeCanvas {
-  const format: GPUTextureFormat = bitDepth === 16 ? 'r16unorm' : 'r8unorm';
+export function createVolumeCanvas(device: GPUDevice, bitDepth: BitDepth, format: GPUTextureFormat): VolumeCanvas {
   const texture = device.createTexture({
     size: [ATLAS_SIZE, ATLAS_SIZE, ATLAS_SIZE],
     format,
     dimension: '3d',
     usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
   });
-  return { texture, size: ATLAS_SIZE, bitDepth };
+
+  return { texture, size: ATLAS_SIZE, bitDepth, format };
 }
 
 /**

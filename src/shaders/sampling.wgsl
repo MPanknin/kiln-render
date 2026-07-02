@@ -7,7 +7,7 @@ fn lookupIndirection(brickIndex: vec3f) -> vec4u {
 
 // Get the scale factor for a LOD level
 fn getLodScale(indirection: vec4u) -> f32 {
-    // w channel stores lod+1 (0 = not loaded, 1-4 = lod 0-3)
+    // w channel stores lod+1 (0 = not loaded, 1+ = lod level, 255 = empty)
     let lodLevel = f32(indirection.w) - 1.0;
     return exp2(lodLevel);
 }
@@ -21,6 +21,19 @@ fn sampleAtlas(voxelPos: vec3f, indirection: vec4u, lodScale: f32) -> f32 {
     // Offset by BORDER to skip the border voxel, add 0.5 to sample voxel centers
     let atlasPos = atlasBase + ((posInBrick + BORDER + 0.5) / ATLAS_SIZE);
     return textureSampleLevel(volumeTexture, volumeSampler, atlasPos, 0.0).r;
+}
+
+// Sample from a specific channel atlas using the shared indirection mapping
+fn sampleAtlasCh(ch: u32, voxelPos: vec3f, indirection: vec4u, lodScale: f32) -> f32 {
+    let posInBrick = (voxelPos % (LOGICAL_BRICK_SIZE * lodScale)) / lodScale;
+    let atlasBase = vec3f(indirection.xyz) * PHYSICAL_BRICK_SIZE / ATLAS_SIZE;
+    let atlasPos = atlasBase + ((posInBrick + BORDER + 0.5) / ATLAS_SIZE);
+    switch (ch) {
+        case 0u: { return textureSampleLevel(volumeTexture,  volumeSampler, atlasPos, 0.0).r; }
+        case 1u: { return textureSampleLevel(volumeTexture1, volumeSampler, atlasPos, 0.0).r; }
+        case 2u: { return textureSampleLevel(volumeTexture2, volumeSampler, atlasPos, 0.0).r; }
+        default: { return textureSampleLevel(volumeTexture3, volumeSampler, atlasPos, 0.0).r; }
+    }
 }
 
 // Direct atlas sampling without indirection (for debugging)

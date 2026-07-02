@@ -107,6 +107,7 @@ export class KilnViewer {
    *  0.25 during camera interaction. */
   private userRenderScale: number;
   private disposed = false;
+  private dirty = true;
 
   private constructor(
     device: GPUDevice,
@@ -130,6 +131,8 @@ export class KilnViewer {
     this.dataProvider = dataProvider;
     this.metadata = metadata;
     this.userRenderScale = userRenderScale;
+
+    this.renderer.onDirty = () => { this.dirty = true; };
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(canvas);
@@ -442,25 +445,34 @@ export class KilnViewer {
       this.canvas.width = width;
       this.canvas.height = height;
       this.renderer.resize(width, height);
+      this.dirty = true;
     }
   }
 
   private frame(): void {
     if (this.disposed) return;
 
-    this.onBeforeFrame?.();
-
     // Drop to 0.25 during camera interaction; restore to user scale afterward
-    const targetScale = this.camera.isInteracting() ? 0.25 : this.userRenderScale;
+    const interacting = this.camera.isInteracting();
+    const targetScale = interacting ? 0.25 : this.userRenderScale;
     if (this.renderer.renderScale !== targetScale) {
       this.renderer.renderScale = targetScale;
       this.renderer.resizeComputeTexture();
+      this.dirty = true;
     }
 
-    this.streamingManager.update(this.camera, this.canvas);
+    // Always run streaming (may trigger onDirty via resetAccumulation)
+    const streamingActive = this.streamingManager.update(this.camera, this.canvas);
 
-    const view = this.context.getCurrentTexture().createView();
-    this.renderer.render(view, this.camera);
+    // Determine if we need to render
+    const needsRender = this.dirty || interacting || streamingActive || !this.renderer.isConverged;
+
+    if (needsRender) {
+      this.dirty = false;
+      this.onBeforeFrame?.();
+      const view = this.context.getCurrentTexture().createView();
+      this.renderer.render(view, this.camera);
+    }
 
     this.rafHandle = requestAnimationFrame(() => this.frame());
   }

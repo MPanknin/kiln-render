@@ -419,7 +419,7 @@ export class Renderer {
     // Output texture (will be resized)
     this.computeOutputTexture = device.createTexture({
       size: [1, 1],
-      format: 'rgba8unorm',
+      format: 'rgba16float',
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
     });
     this.computeOutputView = this.computeOutputTexture.createView();
@@ -469,7 +469,7 @@ export class Renderer {
     // Accumulation textures (ping-pong, will be resized)
     const dummyTex = () => device.createTexture({
       size: [1, 1],
-      format: 'rgba8unorm',
+      format: 'rgba16float',
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
     });
     this.accumTextures = [dummyTex(), dummyTex()];
@@ -536,9 +536,25 @@ export class Renderer {
     this.allocator.reset();
   }
 
+  /** Callback invoked when the scene needs a re-render (parameter change, brick arrival, etc.) */
+  onDirty?: () => void;
+
+  /** Signal that the scene changed and needs a re-render (without resetting accumulation) */
+  markDirty(): void {
+    this.onDirty?.();
+  }
+
   /** Reset temporal accumulation (call when rendering parameters change) */
   resetAccumulation(): void {
     this.accumFrameCount = 0;
+    this.onDirty?.();
+  }
+
+  /** Whether the image is stable (no further rendering will change the output) */
+  get isConverged(): boolean {
+    // TAA off: every frame is identical (no jitter), converged after 1 frame
+    // TAA on: converged once accumulation reaches the 64-frame cap
+    return !this.enableTAA || this.accumFrameCount >= 64;
   }
 
   /** Set the display color and intensity weight for a channel (0–3). Resets accumulation. */
@@ -649,7 +665,7 @@ export class Renderer {
     this.computeOutputTexture.destroy();
     this.computeOutputTexture = this.device.createTexture({
       size: [this.computeWidth, this.computeHeight],
-      format: 'rgba8unorm',
+      format: 'rgba16float',
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
     });
     this.computeOutputView = this.computeOutputTexture.createView();
@@ -659,8 +675,8 @@ export class Renderer {
     const size: [number, number] = [this.computeWidth, this.computeHeight];
     const accumUsage = GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING;
     this.accumTextures = [
-      this.device.createTexture({ size, format: 'rgba8unorm', usage: accumUsage }),
-      this.device.createTexture({ size, format: 'rgba8unorm', usage: accumUsage }),
+      this.device.createTexture({ size, format: 'rgba16float', usage: accumUsage }),
+      this.device.createTexture({ size, format: 'rgba16float', usage: accumUsage }),
     ];
     this.accumViews = [this.accumTextures[0].createView(), this.accumTextures[1].createView()];
     this.accumFrameCount = 0;
@@ -934,8 +950,8 @@ export class Renderer {
     d[27] = this.isoValue;                     // 27: isoValue
     d[28] = this.computeWidth;                 // 28: screenSize.x
     d[29] = this.computeHeight;                // 29: screenSize.y
-    dv.setUint32(30 * 4, this.enableJitter ? this.frameIndex : 0, true);  // 30: frameIndex (u32)
-    // 31: _pad3
+    dv.setUint32(30 * 4, this.frameIndex, true);                          // 30: frameIndex (u32)
+    dv.setUint32(31 * 4, this.enableJitter ? 1 : 0, true);              // 31: jitter (u32)
     d[32] = this.windowCenter;                 // 32: windowCenter
     d[33] = this.windowWidth;                  // 33: windowWidth
     d[34] = this.floatMin;                     // 34: floatMin

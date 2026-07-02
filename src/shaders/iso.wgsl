@@ -31,7 +31,8 @@ fn rayMarchISO(
         // Apply jitter once for the whole ray on the first valid brick
         if (tSample < 0.0) {
             rayStepSize = brick.stepSize;
-            tSample = t + rand(rayToSeed(rayDir) + uniforms.frameIndex) * rayStepSize;
+            let jitterOffset = select(0.0, rand(rayToSeed(rayDir) + uniforms.frameIndex), uniforms.jitter != 0u);
+            tSample = t + jitterOffset * rayStepSize;
         }
 
         for (var i = 0u; i < brick.numSteps; i++) {

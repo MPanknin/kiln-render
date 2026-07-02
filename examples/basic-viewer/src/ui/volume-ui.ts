@@ -367,10 +367,12 @@ export class VolumeUI {
       const posBinding = folder.addBinding(this.params, posKey as string, { label, min: 0, max: dim, step: 1 });
       posBinding.on('change', (ev: { value: unknown }) => {
         (this.renderer as unknown as Record<string, number>)[posKey as string] = (ev.value as number) / dim;
+        this.renderer.markDirty();
       });
       const visBinding = folder.addBinding(this.params, visKey as string, { label: '' });
       visBinding.on('change', (ev: { value: unknown }) => {
         (this.renderer as unknown as Record<string, boolean>)[visKey as string] = ev.value as boolean;
+        this.renderer.markDirty();
       });
 
       // Combine into a single flex row
@@ -421,12 +423,14 @@ export class VolumeUI {
       label: 'Wireframe',
     }).on('change', (ev: { value: unknown }) => {
       this.renderer.showWireframe = ev.value as boolean;
+      this.renderer.markDirty();
     });
 
     debugFolder.addBinding(this.params, 'showAxis', {
       label: 'Axis',
     }).on('change', (ev: { value: unknown }) => {
       this.renderer.showAxis = ev.value as boolean;
+      this.renderer.markDirty();
     });
   }
 

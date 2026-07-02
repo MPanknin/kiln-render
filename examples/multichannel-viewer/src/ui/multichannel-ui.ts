@@ -302,10 +302,12 @@ export class MultichannelUI {
       const posBinding = folder.addBinding(this.params, posKey, { label, min: 0, max: dim, step: 1 });
       posBinding.on('change', (ev: { value: unknown }) => {
         this.renderer[rendererPosKey] = (ev.value as number) / dim;
+        this.renderer.markDirty();
       });
       const visBinding = folder.addBinding(this.params, visKey, { label: '' });
       visBinding.on('change', (ev: { value: unknown }) => {
         this.renderer[rendererVisKey] = ev.value as boolean;
+        this.renderer.markDirty();
       });
 
       // Combine into a single flex row
@@ -334,12 +336,14 @@ export class MultichannelUI {
       label: 'Wireframe',
     }).on('change', (ev: { value: unknown }) => {
       this.renderer.showWireframe = ev.value as boolean;
+      this.renderer.markDirty();
     });
 
     debugFolder.addBinding(this.params, 'showAxis', {
       label: 'Axes',
     }).on('change', (ev: { value: unknown }) => {
       this.renderer.showAxis = ev.value as boolean;
+      this.renderer.markDirty();
     });
   }
 

@@ -72,24 +72,40 @@ export class TolerantFetchStore implements AsyncReadable<RequestInit> {
       const href = resolveUrl(this.baseUrl, key);
       const init: RequestInit = { ...this.overrides, ...options };
 
-      let response: Response;
-      try {
-        response = await fetch(href, init);
-      } catch {
-        return undefined; // network error
+      const MAX_RETRIES = 3;
+      const RETRY_DELAYS = [250, 1000, 4000];
+
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        let response: Response;
+        try {
+          response = await fetch(href, init);
+        } catch {
+          // Network error — retry with backoff
+          if (attempt < MAX_RETRIES) {
+            await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt]!));
+            continue;
+          }
+          throw new Error(`Network error fetching ${key} after ${MAX_RETRIES + 1} attempts`);
+        }
+
+        // 403/404 are intentional "not found" (CloudFront OAI, missing chunks)
+        if (response.status === 404 || response.status === 403) return undefined;
+
+        if (response.status === 200 || response.status === 206) {
+          const ct = response.headers.get('content-type') ?? '';
+          if (ct.includes('text/html')) return undefined;
+          return new Uint8Array(await response.arrayBuffer());
+        }
+
+        // 5xx or unexpected status — retry with backoff
+        if (attempt < MAX_RETRIES) {
+          await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt]!));
+          continue;
+        }
+        throw new Error(`HTTP ${response.status} fetching ${key} after ${MAX_RETRIES + 1} attempts`);
       }
 
-      // 403/404 are intentional "not found" (CloudFront OAI, missing chunks)
-      if (response.status === 404 || response.status === 403) return undefined;
-
-      if (response.status === 200 || response.status === 206) {
-        const ct = response.headers.get('content-type') ?? '';
-        if (ct.includes('text/html')) return undefined;
-        return new Uint8Array(await response.arrayBuffer());
-      }
-
-      // 5xx or unexpected status — treat as missing (don't throw, don't retry)
-      return undefined;
+      return undefined; // unreachable, satisfies TS
     } finally {
       this.releaseFetchSlot();
     }

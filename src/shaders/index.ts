@@ -176,7 +176,7 @@ struct Uniforms {
     isoValue: f32,
     screenSize: vec2f,
     frameIndex: u32,
-    _pad3: u32,
+    jitter: u32,
     windowCenter: f32,
     windowWidth: f32,
     floatMin: f32,
@@ -194,7 +194,7 @@ ${sharedCode}
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 ${sharedBindings}
-@group(0) @binding(7) var outputTexture: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(7) var outputTexture: texture_storage_2d<rgba16float, write>;
 
 ${modeDispatch}
 

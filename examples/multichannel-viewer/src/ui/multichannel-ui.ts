@@ -465,10 +465,8 @@ export class MultichannelUI {
     for (let i = 0; i < this.channelParams.length; i++) {
       const w = windows[i];
       if (!w || w.max <= w.min) continue;
-      // Slider [0, 1] maps to the data range — auto-level to full range
-      this.channelParams[i]!.level.min = 0;
-      this.channelParams[i]!.level.max = 1;
-      this.setChannelWindowFromSlider(i, 0, 1);
+      const { min, max } = this.channelParams[i]!.level;
+      this.setChannelWindowFromSlider(i, min, max);
     }
     (this.pane as unknown as ExtendedPane).refresh();
   }

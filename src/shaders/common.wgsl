@@ -7,6 +7,7 @@ const BORDER: f32 = 1.0;
 const STEPS_PER_BRICK: f32 = 64.0;
 const MAX_BRICK_TRAVERSALS: u32 = 512u;
 const EARLY_EXIT_ALPHA: f32 = 0.95;
+const LOG2E: f32 = 1.4426950408889634; // pre computed LOG2E
 
 const RENDER_MODE_DVR: i32 = 0;
 const RENDER_MODE_MIP: i32 = 1;

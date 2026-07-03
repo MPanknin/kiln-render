@@ -7,11 +7,13 @@ fn rayMarchLOD(
     let maxDim = max(datasetSize.x, max(datasetSize.y, datasetSize.z));
     let invDir = 1.0 / rayDir;
 
+    // compute jitter fraction once for the whole ray
+    let jitterFrac = select(0.0, rand(rayToSeed(rayDir) + uniforms.frameIndex), uniforms.jitter != 0u);
+
     var color = vec3f(0.0);
     var alpha = 0.0;
     var t = tStart;
     var tSample = -1.0;
-    var rayStepSize = 0.0;
 
     for (var brickIter = 0u; brickIter < MAX_BRICK_TRAVERSALS; brickIter++) {
         if (t >= tEnd) { break; }
@@ -20,15 +22,19 @@ fn rayMarchLOD(
         let brick = setupBrick(rayOrigin, rayDir, invDir, t, tEnd, normalizedSize, datasetSize);
 
         if (!brick.valid) {
-            t = brick.tEnd + 0.0001;
-            if (tSample >= 0.0 && tSample < t) { tSample = t; }
+            // scale-sensitive epsilon
+            t = brick.tEnd + max(0.0001, brick.tEnd * 1e-6);
             continue;
         }
 
+        // per-brick extinction scale (no densityScale for LOD debug)
+        let extinctionScale = brick.stepSize * maxDim * 0.5 * LOG2E;
+
         if (tSample < 0.0) {
-            rayStepSize = brick.stepSize;
-            let jitterOffset = select(0.0, rand(rayToSeed(rayDir) + uniforms.frameIndex), uniforms.jitter != 0u);
-            tSample = t + jitterOffset * rayStepSize;
+            tSample = t + jitterFrac * brick.stepSize;
+        } else if (tSample < t) {
+            let steps = ceil((t - tSample) / brick.stepSize);
+            tSample += steps * brick.stepSize;
         }
 
         for (var i = 0u; i < brick.numSteps; i++) {
@@ -36,18 +42,19 @@ fn rayMarchLOD(
 
             let pos = rayOrigin + rayDir * tSample;
             let voxel = normalizedToVoxel(pos, normalizedSize, datasetSize);
-            let density = sampleAtlas(voxel, brick.indirection, brick.lodScale);
+            let density = sampleAtlasAffine(voxel, brick.atlasOffset, brick.atlasScale);
 
             // Use LOD color with TF opacity
             let tfColor = textureSampleLevel(tfTexture, tfSampler, vec2f(density, 0.5), 0.0);
             let lodColor = getLodColor(brick.indirection.w);
-            composeSampleWithColor(density, rayStepSize, maxDim, vec4f(lodColor, tfColor.a), &color, &alpha);
+            composeSampleWithColor(density, extinctionScale, vec4f(lodColor, tfColor.a), &color, &alpha);
 
             if (alpha > EARLY_EXIT_ALPHA) { break; }
-            tSample += rayStepSize;
+            tSample += brick.stepSize;
         }
 
-        t = brick.tEnd + 0.0001;
+        // scale-sensitive epsilon
+        t = brick.tEnd + max(0.0001, brick.tEnd * 1e-6);
     }
 
     return vec4f(color, alpha);

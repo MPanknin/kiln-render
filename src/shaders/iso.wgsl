@@ -10,11 +10,16 @@ fn rayMarchISO(
     let windowCenter = uniforms.windowCenter;
     let windowWidth = uniforms.windowWidth;
 
+    // precompute float normalisation
+    let floatInvRange = 1.0 / max(uniforms.floatMax - uniforms.floatMin, 0.0001);
+
+    // compute jitter fraction once for the whole ray
+    let jitterFrac = select(0.0, rand(rayToSeed(rayDir) + uniforms.frameIndex), uniforms.jitter != 0u);
+
     var prevDensity = 0.0;
     var prevT = tStart;
     var t = tStart;
     var tSample = -1.0;  // sentinel: not yet initialized
-    var rayStepSize = 0.0;
 
     for (var brickIter = 0u; brickIter < MAX_BRICK_TRAVERSALS; brickIter++) {
         if (t >= tEnd) { break; }
@@ -22,17 +27,17 @@ fn rayMarchISO(
         let brick = setupBrick(rayOrigin, rayDir, invDir, t, tEnd, normalizedSize, datasetSize);
 
         if (!brick.valid) {
-            t = brick.tEnd + 0.0001;
-            if (tSample >= 0.0 && tSample < t) { tSample = t; }
+            // scale-sensitive epsilon
+            t = brick.tEnd + max(0.0001, brick.tEnd * 1e-6);
             prevDensity = 0.0;  // Reset across empty space to avoid false crossings
             continue;
         }
 
-        // Apply jitter once for the whole ray on the first valid brick
         if (tSample < 0.0) {
-            rayStepSize = brick.stepSize;
-            let jitterOffset = select(0.0, rand(rayToSeed(rayDir) + uniforms.frameIndex), uniforms.jitter != 0u);
-            tSample = t + jitterOffset * rayStepSize;
+            tSample = t + jitterFrac * brick.stepSize;
+        } else if (tSample < t) {
+            let steps = ceil((t - tSample) / brick.stepSize);
+            tSample += steps * brick.stepSize;
         }
 
         for (var i = 0u; i < brick.numSteps; i++) {
@@ -40,9 +45,9 @@ fn rayMarchISO(
 
             let pos = rayOrigin + rayDir * tSample;
             let voxel = normalizedToVoxel(pos, normalizedSize, datasetSize);
-            let rawDensity = sampleAtlas(voxel, brick.indirection, brick.lodScale);
+            let rawDensity = sampleAtlasAffine(voxel, brick.atlasOffset, brick.atlasScale);
             // Normalize from raw float range to [0, 1] (no-op for uint data where floatMin=0, floatMax=1)
-            let normalizedDensity = clamp((rawDensity - uniforms.floatMin) / max(uniforms.floatMax - uniforms.floatMin, 0.0001), 0.0, 1.0);
+            let normalizedDensity = clamp((rawDensity - uniforms.floatMin) * floatInvRange, 0.0, 1.0);
             // Apply windowing to density for isosurface comparison
             let density = applyWindow(normalizedDensity, windowCenter, windowWidth);
 
@@ -71,10 +76,11 @@ fn rayMarchISO(
 
             prevDensity = density;
             prevT = tSample;
-            tSample += rayStepSize;
+            tSample += brick.stepSize;
         }
 
-        t = brick.tEnd + 0.0001;
+        // scale-sensitive epsilon
+        t = brick.tEnd + max(0.0001, brick.tEnd * 1e-6);
     }
 
     // No isosurface found

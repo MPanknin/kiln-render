@@ -342,6 +342,7 @@ export class Renderer {
       vertex: { module: blitModule, entryPoint: 'vs' },
       fragment: { module: blitModule, entryPoint: 'fs', targets: [{ format }] },
       primitive: { topology: 'triangle-list' },
+      depthStencil: { depthWriteEnabled: false, depthCompare: 'always', format: 'depth24plus' },
     });
 
     this.blitBindGroup = device.createBindGroup({
@@ -710,20 +711,8 @@ export class Renderer {
         accumPass.end();
       }
 
-      // Blit result to screen
+      // Select blit source for the merged overlay pass below
       this.blitBindGroup = this.enableTAA ? this.blitBindGroups[this.accumIndex]! : this.directBlitBindGroup;
-      const blitPass = encoder.beginRenderPass({
-        colorAttachments: [{
-          view: colorView,
-          clearValue: [0.05, 0.05, 0.05, 1],
-          loadOp: 'clear',
-          storeOp: 'store',
-        }],
-      });
-      blitPass.setPipeline(this.blitPipeline);
-      blitPass.setBindGroup(0, this.blitBindGroup);
-      blitPass.draw(3);
-      blitPass.end();
 
       // Advance accumulation state (cap at 64 — diminishing returns beyond that)
       if (this.enableTAA) {
@@ -740,21 +729,30 @@ export class Renderer {
       this.updateSliceUniforms(vp);
     }
 
-    // In slice mode the overlay pass clears to background; otherwise it loads the blitted volume
+    // Single merged pass: blit volume (if any) then draw overlays.
+    // Always clears — avoids a tile flush+reload on TBDR GPUs (P8a).
+    // Depth is never read back, so discard saves a full-screen write (P8b).
     const overlayPass = encoder.beginRenderPass({
       colorAttachments: [{
         view: colorView,
         clearValue: [0.05, 0.05, 0.05, 1],
-        loadOp: this.volumeRenderMode === 'slice' ? 'clear' : 'load',
+        loadOp: 'clear',
         storeOp: 'store',
       }],
       depthStencilAttachment: {
         view: this.depthView,
         depthClearValue: 1,
         depthLoadOp: 'clear',
-        depthStoreOp: 'store',
+        depthStoreOp: 'discard',
       },
     });
+
+    // Blit volume compute result as first draw (depthCompare: 'always', no depth write)
+    if (this.volumeRenderMode !== 'slice') {
+      overlayPass.setPipeline(this.blitPipeline);
+      overlayPass.setBindGroup(0, this.blitBindGroup);
+      overlayPass.draw(3);
+    }
 
     // Draw slice planes
     if (this.volumeRenderMode === 'slice' && this.sliceBindGroup) {

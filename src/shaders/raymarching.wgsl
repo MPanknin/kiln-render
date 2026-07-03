@@ -8,6 +8,10 @@ struct BrickInfo {
     numSteps: u32,
     stepSize: f32,
     valid: bool,
+    // affine atlas transform: atlasPos = atlasOffset + voxelPos * atlasScale
+    // precomputed per brick to replace fmod + divides in the hot loop
+    atlasOffset: vec3f,
+    atlasScale: f32,
 }
 
 // Set up brick traversal parameters
@@ -39,10 +43,21 @@ fn setupBrick(
 
     if (info.valid) {
         info.lodScale = getLodScale(info.indirection);
+
+        // LOD-adaptive step size — coarse bricks use larger steps
+        // compositing uses exact Beer-Lambert (1 - exp2)
         let brickWorldSize = length(brickMaxWorld - brickMinWorld);
         let brickLength = info.tEnd - t;
-        info.stepSize = brickWorldSize / STEPS_PER_BRICK;
+        let lodStepMul = min(info.lodScale, 4.0);
+        info.stepSize = (brickWorldSize / STEPS_PER_BRICK) * lodStepMul;
         info.numSteps = max(1u, u32(ceil(brickLength / info.stepSize)) + 1u);
+
+        // precompute affine atlas transform for the hot loop
+        let coarseBrickOrigin = floor(brickIndex / info.lodScale) * info.lodScale * LOGICAL_BRICK_SIZE;
+        info.atlasScale = 1.0 / (info.lodScale * ATLAS_SIZE);
+        info.atlasOffset = vec3f(info.indirection.xyz) * PHYSICAL_BRICK_SIZE / ATLAS_SIZE
+                         + (BORDER + 0.5) / ATLAS_SIZE
+                         - coarseBrickOrigin * info.atlasScale;
     }
 
     return info;
@@ -97,6 +112,7 @@ fn rayMarchSimple(
     let rayLength = tEnd - tStart;
     let numSteps = 512u;  // More steps for full atlas
     let stepSize = rayLength / f32(numSteps);
+    let extinctionScale = stepSize * atlasSize * 0.5 * LOG2E;
 
     var color = vec3f(0.0);
     var alpha = 0.0;
@@ -107,7 +123,7 @@ fn rayMarchSimple(
         // Convert normalized position [-0.5, 0.5] to UV [0, 1] for atlas sampling
         let atlasUV = (pos / normalizedSize) + 0.5;
         let density = textureSampleLevel(volumeTexture, volumeSampler, atlasUV, 0.0).r;
-        composeSampleWindowed(density, stepSize, atlasSize, uniforms.windowCenter, uniforms.windowWidth, &color, &alpha);
+        composeSampleWindowed(density, extinctionScale, uniforms.windowCenter, uniforms.windowWidth, &color, &alpha);
         if (alpha > EARLY_EXIT_ALPHA) { break; }
     }
 

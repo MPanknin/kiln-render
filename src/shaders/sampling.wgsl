@@ -36,6 +36,24 @@ fn sampleAtlasCh(ch: u32, voxelPos: vec3f, indirection: vec4u, lodScale: f32) ->
     }
 }
 
+// hot-path atlas sampling using precomputed affine transform
+// atlasOffset and atlasScale are computed once per brick in setupBrick
+fn sampleAtlasAffine(voxelPos: vec3f, atlasOffset: vec3f, atlasScale: f32) -> f32 {
+    let atlasPos = atlasOffset + voxelPos * atlasScale;
+    return textureSampleLevel(volumeTexture, volumeSampler, atlasPos, 0.0).r;
+}
+
+// multi-channel variant of the affine hot-path sampler.
+fn sampleAtlasChAffine(ch: u32, voxelPos: vec3f, atlasOffset: vec3f, atlasScale: f32) -> f32 {
+    let atlasPos = atlasOffset + voxelPos * atlasScale;
+    switch (ch) {
+        case 0u: { return textureSampleLevel(volumeTexture,  volumeSampler, atlasPos, 0.0).r; }
+        case 1u: { return textureSampleLevel(volumeTexture1, volumeSampler, atlasPos, 0.0).r; }
+        case 2u: { return textureSampleLevel(volumeTexture2, volumeSampler, atlasPos, 0.0).r; }
+        default: { return textureSampleLevel(volumeTexture3, volumeSampler, atlasPos, 0.0).r; }
+    }
+}
+
 // Direct atlas sampling without indirection (for debugging)
 fn sampleDirect(voxelPos: vec3f, datasetSize: vec3f) -> f32 {
     let atlasPos = voxelPos / ATLAS_SIZE;

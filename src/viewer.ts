@@ -104,6 +104,7 @@ export class KilnViewer {
   private readonly canvas: HTMLCanvasElement;
   private readonly resizeObserver: ResizeObserver;
   private rafHandle = 0;
+  private resizeTimer = 0;
   /** User-intended render scale; the frame loop may temporarily override it to
    *  0.25 during camera interaction. */
   private userRenderScale: number;
@@ -135,7 +136,10 @@ export class KilnViewer {
 
     this.renderer.onDirty = () => { this.dirty = true; };
 
-    this.resizeObserver = new ResizeObserver(() => this.resize());
+    this.resizeObserver = new ResizeObserver(() => {
+      clearTimeout(this.resizeTimer);
+      this.resizeTimer = setTimeout(() => this.resize(), 100) as unknown as number;
+    });
     this.resizeObserver.observe(canvas);
     this.resize(); // Ensure correct dimensions before first frame
 
@@ -157,7 +161,7 @@ export class KilnViewer {
   ): Promise<KilnViewer> {
 
     // WebGPU init 
-    const adapter = await navigator.gpu?.requestAdapter();
+    const adapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
     if (!adapter) throw new Error('WebGPU not supported');
 
     const adapterLimits = adapter.limits;
@@ -436,6 +440,7 @@ export class KilnViewer {
     if (this.disposed) return;
     this.disposed = true;
     cancelAnimationFrame(this.rafHandle);
+    clearTimeout(this.resizeTimer);
     this.resizeObserver.disconnect();
     this.dataProvider.dispose();
   }

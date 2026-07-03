@@ -721,8 +721,10 @@ export class Renderer {
       }
     }
 
-    // Update uniforms for overlay pass
-    this.device.queue.writeBuffer(this.wireframeUniformBuffer, 0, vp as Float32Array<ArrayBuffer>);
+    // update uniforms for overlay pass
+    if (this.showWireframe) {
+      this.device.queue.writeBuffer(this.wireframeUniformBuffer, 0, vp as Float32Array<ArrayBuffer>);
+    }
     if (this.volumeRenderMode === 'slice') {
       this.updateSliceUniforms(vp);
     }

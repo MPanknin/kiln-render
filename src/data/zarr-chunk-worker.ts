@@ -240,6 +240,9 @@ async function assembleBrick(
         const key = cacheKey(lod, cz, cy, cx, channelIndex);
         const cached = chunkCache.get(key);
         if (cached) {
+          // refresh recency: delete+re-set moves to end of map iteration order (LRU)
+          chunkCache.delete(key);
+          chunkCache.set(key, cached);
           localChunks.set(key, cached);
         } else {
           // In-flight dedup: if another assembleBrick is already fetching this

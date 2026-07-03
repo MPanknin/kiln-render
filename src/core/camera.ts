@@ -21,6 +21,9 @@ export class Camera {
   private lastX = 0;
   private lastY = 0;
 
+  private readonly viewScratch = new Float32Array(16);
+  private readonly projScratch = new Float32Array(16);
+
   // Touch state tracking
   private activeTouches: Map<number, { x: number; y: number }> = new Map();
   private lastPinchDistance = 0;
@@ -338,14 +341,11 @@ export class Camera {
   }
 
   getViewMatrix(): Float32Array {
-    return mat4.lookAt(this.position, this.target, this.upVector) as Float32Array;
+    return mat4.lookAt(this.position, this.target, this.upVector, this.viewScratch) as Float32Array;
   }
 
   getProjectionMatrix(aspect: number): Float32Array {
-    // Near/far planes for normalized space
-    const near = 0.01;
-    const far = 100;
-    return mat4.perspective(Math.PI / 4, aspect, near, far) as Float32Array;
+    return mat4.perspective(Math.PI / 4, aspect, 0.01, 100, this.projScratch) as Float32Array;
   }
 }
 

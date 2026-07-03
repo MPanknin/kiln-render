@@ -127,6 +127,7 @@ async function main() {
 
   const ui = new MultichannelUI(viewer, urlParams.channels, urlParams.slice);
   viewer.onBeforeFrame = () => ui.recordFrame();
+  viewer.onChannelWindowsChanged = () => ui.refreshChannelWindows();
 
   // ── Share button ───────────────────────────────────────────────────────────
 

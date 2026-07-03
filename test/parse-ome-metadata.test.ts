@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { BaseZarrProvider } from '../src/data/base-zarr-provider.js';
 import { UnsupportedDatasetError } from '../src/data/data-provider.js';
-import type { VolumeMetadata, BrickData } from '../src/data/data-provider.js';
+import type { VolumeMetadata, BrickLoadResult } from '../src/data/data-provider.js';
 
 // ---------------------------------------------------------------------------
 // Minimal concrete subclass so we can call the protected method under test
@@ -9,7 +9,7 @@ import type { VolumeMetadata, BrickData } from '../src/data/data-provider.js';
 
 class TestProvider extends BaseZarrProvider {
   async initialize(): Promise<VolumeMetadata> { throw new Error('not used'); }
-  async loadBrick(): Promise<BrickData | null> { return null; }
+  async loadBrick(): Promise<BrickLoadResult | null> { return null; }
   dispose(): void {}
 
   // Expose protected method for tests
@@ -124,8 +124,10 @@ describe('parseOmeMetadata — bit depth', () => {
     expect(() => provider.parse(attrs, [arr(shape, chunks, 'int16')])).toThrow(UnsupportedDatasetError);
   });
 
-  it('throws UnsupportedDatasetError for float32', () => {
-    expect(() => provider.parse(attrs, [arr(shape, chunks, 'float32')])).toThrow(UnsupportedDatasetError);
+  it('accepts float32 as 16-bit with isFloat flag', () => {
+    const { metadata } = provider.parse(attrs, [arr(shape, chunks, 'float32')]);
+    expect(metadata.bitDepth).toBe(16);
+    expect(metadata.isFloat).toBe(true);
   });
 });
 

@@ -33,6 +33,10 @@ export interface BrickResult {
   min: number;
   max: number;
   avg: number;
+  /** Raw-space min (float datasets only) */
+  rawMin?: number;
+  /** Raw-space max (float datasets only) */
+  rawMax?: number;
 }
 
 interface PendingRequest {
@@ -96,7 +100,7 @@ export class ZarrWorkerPool {
       const worker = createWorker();
 
       worker.onmessage = (event: MessageEvent<ZarrWorkerResponse>) => {
-        const { type: msgType, id, error, data, min, max, avg, fetchMs, assemblyMs } = event.data;
+        const { type: msgType, id, error, data, min, max, avg, rawMin, rawMax, fetchMs, assemblyMs } = event.data;
         const pending = this.pendingRequests.get(id);
         if (!pending) return;
         this.pendingRequests.delete(id);
@@ -117,7 +121,7 @@ export class ZarrWorkerPool {
 
         if (error) {
           pending.reject(new Error(error));
-        } else if (msgType === 'init' || msgType === 'setTargetFormat') {
+        } else if (msgType === 'init' || msgType === 'setTargetFormat' || msgType === 'setFloatRange') {
           pending.resolve(undefined);
         } else if (msgType === 'loadBrick' && data) {
           if (fetchMs !== undefined) this.fetchAvg.add(fetchMs);
@@ -130,6 +134,8 @@ export class ZarrWorkerPool {
             min: min ?? 0,
             max: max ?? 0,
             avg: avg ?? 0,
+            rawMin,
+            rawMax,
           } as BrickResult);
         } else {
           pending.reject(new Error('Empty brick response'));
@@ -273,6 +279,32 @@ export class ZarrWorkerPool {
         }
       }
     });
+  }
+
+  /**
+   * Update the float normalisation range on all workers.
+   * Called after base LOD loading derives the actual data range.
+   */
+  async setFloatRange(min: number, max: number): Promise<void> {
+    const promises: Promise<void>[] = [];
+    for (const worker of this.workers) {
+      const promise = new Promise<void>((resolve, reject) => {
+        const id = this.requestId++;
+        this.pendingRequests.set(id, {
+          resolve: () => resolve(),
+          reject: (e) => reject(e),
+        });
+        const req: ZarrWorkerRequest = {
+          type: 'setFloatRange',
+          id,
+          floatMin: min,
+          floatMax: max,
+        };
+        worker.postMessage(req);
+      });
+      promises.push(promise);
+    }
+    await Promise.all(promises);
   }
 
   getPipelineTimings(): PipelineTimings {

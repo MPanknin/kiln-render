@@ -21,6 +21,7 @@ export type {
   VolumeMetadata,
   LodLevel,
   BrickData,
+  BrickLoadResult,
   BrickStats,
   BitDepth,
   NetworkStats,

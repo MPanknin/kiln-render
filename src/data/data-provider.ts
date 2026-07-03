@@ -26,6 +26,22 @@ export interface BrickStats {
 }
 
 /**
+ * Result of loading a single brick: voxel data + inline statistics.
+ * Returned by DataProvider.loadBrick so consumers get stats without a
+ * second async round-trip through isBrickEmpty / getBrickStats.
+ */
+export interface BrickLoadResult {
+  data: BrickData;
+  min: number;
+  max: number;
+  avg: number;
+  /** Raw-space min (float datasets only — before normalisation to [0, 65535]) */
+  rawMin?: number;
+  /** Raw-space max (float datasets only — before normalisation to [0, 65535]) */
+  rawMax?: number;
+}
+
+/**
  * Information about a single LOD level
  */
 export interface LodLevel {
@@ -145,7 +161,7 @@ export interface DataProvider {
   getBrickGrid(lod: number): [number, number, number];
 
   /**
-   * Load a single brick's voxel data
+   * Load a single brick's voxel data with inline statistics.
    *
    * @param lod - LOD level (0 = finest)
    * @param bx - Brick X coordinate
@@ -153,9 +169,9 @@ export interface DataProvider {
    * @param bz - Brick Z coordinate
    * @param channelIndex - Channel to load (default 0)
    * @param signal - Optional AbortSignal to cancel the in-flight fetch
-   * @returns Brick data as Uint8Array or Uint16Array, or null if not found/aborted
+   * @returns Brick data + stats, or null if not found/aborted
    */
-  loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex?: number, signal?: AbortSignal): Promise<BrickData | null>;
+  loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex?: number, signal?: AbortSignal): Promise<BrickLoadResult | null>;
 
   /**
    * Check if a brick is empty (below threshold)
@@ -185,6 +201,12 @@ export interface DataProvider {
    * Get per-stage pipeline timing averages (optional — returns zeros if not implemented)
    */
   getPipelineTimings?(): PipelineTimings;
+
+  /**
+   * Update the float normalisation range after base LOD range derivation.
+   * Only relevant for float zarr datasets with worker pools.
+   */
+  setFloatRange?(min: number, max: number): Promise<void>;
 
   /**
    * Clean up resources (workers, caches, etc.)

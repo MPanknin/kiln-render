@@ -11,7 +11,7 @@ import type { DataType } from 'zarrita';
 import { FileSystemStore } from './filesystem-store.js';
 import { BaseZarrProvider, detectCompression, type LodParams } from './base-zarr-provider.js';
 import { float32ToFloat16Bits } from '../utils/float16.js';
-import type { VolumeMetadata, BrickData, BrickStats, PipelineTimings } from './data-provider.js';
+import type { VolumeMetadata, BrickData, BrickLoadResult, BrickStats, PipelineTimings } from './data-provider.js';
 import { UnsupportedDatasetError } from './data-provider.js';
 import { extractMultiscales } from './zarr-validator.js';
 import { RollingAvg } from './network-tracker.js';
@@ -71,20 +71,9 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     const name = this.dirHandle.name.replace(/\.ome\.zarr|\.zarr/, '');
     const { metadata, lodParams } = this.parseOmeMetadata(attrs, this.arrays, name);
 
-    // Scan coarsest LOD for float range if no OMERO window provided it
+    // B5: startup scans removed — ranges derived during base LOD loading
     if (metadata.isFloat && !metadata.dataRange) {
-      console.log('[Kiln] Float dataset — scanning coarsest LOD for data range…');
-      metadata.dataRange = await this.scanFloatRange(this.arrays[this.arrays.length - 1]!, lodParams[lodParams.length - 1]!);
-      console.log(`[Kiln] Float data range: [${metadata.dataRange[0]}, ${metadata.dataRange[1]}]`);
-    }
-
-    // Auto-level multichannel: scan coarsest LOD per-channel when no OMERO windows
-    if (metadata.numChannels > 1 && !metadata.channelWindows) {
-      console.log('[Kiln] Multichannel — scanning coarsest LOD for per-channel ranges…');
-      const ranges = await this.scanChannelRanges(this.arrays[this.arrays.length - 1]!, lodParams[lodParams.length - 1]!, metadata.numChannels);
-      const dtypeMax = metadata.bitDepth === 16 ? 65535 : 255;
-      metadata.channelWindows = ranges.map(r => ({ start: r.min, end: r.max, min: 0, max: dtypeMax }));
-      console.log('[Kiln] Per-channel ranges:', ranges.map((r, i) => `ch${i}: [${r.min}, ${r.max}]`).join(', '));
+      metadata.dataRange = [0, 1];
     }
 
     metadata.compression = await detectCompression(store, `${subGroupPath}${ms.datasets[0]!.path}`);
@@ -95,7 +84,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     return this.metadata;
   }
 
-  async loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0): Promise<BrickData | null> {
+  async loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0): Promise<BrickLoadResult | null> {
     const meta = this.metadata;
     if (!meta) return null;
 
@@ -113,7 +102,14 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
       this.cacheBrickStats(lod, bx, by, bz, result.stats);
       this.recordDownload(result.data.byteLength);
 
-      return result.data;
+      return {
+        data: result.data,
+        min: result.stats.min,
+        max: result.stats.max,
+        avg: result.stats.avg,
+        rawMin: result.rawMin,
+        rawMax: result.rawMax,
+      };
     } catch (e) {
       console.warn(`Failed to load brick lod${lod}:${bx}-${by}-${bz}:`, e);
       return null;
@@ -130,7 +126,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
   }
 
 
-  private async assembleBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0): Promise<{ data: BrickData; stats: BrickStats }> {
+  private async assembleBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0): Promise<{ data: BrickData; stats: BrickStats; rawMin?: number; rawMax?: number }> {
     const arr = this.arrays[lod]!;
     const params = this.lodParams[lod]!;
     const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx } = params;
@@ -194,6 +190,8 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     let min = Infinity;
     let max = -Infinity;
     let sum = 0;
+    let rawMinVal = Infinity;
+    let rawMaxVal = -Infinity;
 
     for (let lz = 0; lz < physSize; lz++) {
       for (let ly = 0; ly < physSize; ly++) {
@@ -235,6 +233,10 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
                 statVal = Math.round(normalizedVal * 65535);
                 // Store raw float value as float16 bits — shader normalises using uniforms
                 brickVal = float32ToFloat16Bits(Math.max(-65504, Math.min(65504, raw)));
+                if (isFinite(raw)) {
+                  if (raw < rawMinVal) rawMinVal = raw;
+                  if (raw > rawMaxVal) rawMaxVal = raw;
+                }
               } else {
                 brickVal = raw;
                 statVal = raw;
@@ -260,6 +262,8 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
         max: max === -Infinity ? 0 : max,
         avg: sum / voxelCount,
       },
+      rawMin: isFloat && isFinite(rawMinVal) ? rawMinVal : undefined,
+      rawMax: isFloat && isFinite(rawMaxVal) ? rawMaxVal : undefined,
     };
   }
 

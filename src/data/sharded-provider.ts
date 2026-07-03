@@ -19,6 +19,7 @@ import type {
   VolumeMetadata,
   LodLevel,
   BrickData,
+  BrickLoadResult,
   BrickStats,
   NetworkStats,
 } from './data-provider.js';
@@ -215,12 +216,14 @@ export class ShardedDataProvider implements DataProvider {
   /**
    * Load a single brick
    */
-  async loadBrick(lod: number, bx: number, by: number, bz: number, _channelIndex?: number, _signal?: AbortSignal): Promise<BrickData | null> {
+  async loadBrick(lod: number, bx: number, by: number, bz: number, _channelIndex?: number, _signal?: AbortSignal): Promise<BrickLoadResult | null> {
     const key = `lod${lod}:${bx}-${by}-${bz}`;
 
     // Check cache first
     if (this.cache.has(key)) {
-      return this.cache.get(key)!;
+      const data = this.cache.get(key)!;
+      const stats = await this.getBrickStats(lod, bx, by, bz);
+      return { data, min: stats?.min ?? 0, max: stats?.max ?? 0, avg: stats?.avg ?? 0 };
     }
 
     if (!this.rawMetadata) {
@@ -283,7 +286,7 @@ export class ShardedDataProvider implements DataProvider {
       }
 
       this.cache.set(key, data);
-      return data;
+      return { data, min: entry.min, max: entry.max, avg: entry.avg };
     } catch (e) {
       console.warn(`Error loading brick lod${lod}:${bx}-${by}-${bz}:`, e);
       return null;

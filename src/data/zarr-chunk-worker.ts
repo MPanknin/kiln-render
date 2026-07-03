@@ -33,7 +33,7 @@ registry.set('zstd', async () => zstd as any);
 
 /** Messages from main thread to worker */
 export interface ZarrWorkerRequest {
-  type: 'init' | 'loadBrick' | 'setTargetFormat' | 'cancel';
+  type: 'init' | 'loadBrick' | 'setTargetFormat' | 'setFloatRange' | 'cancel';
   id: number;
   /** For 'init': dataset URL and array paths */
   url?: string;
@@ -68,7 +68,7 @@ export interface ZarrWorkerRequest {
 
 /** Messages from worker to main thread */
 export interface ZarrWorkerResponse {
-  type: 'init' | 'loadBrick' | 'setTargetFormat';
+  type: 'init' | 'loadBrick' | 'setTargetFormat' | 'setFloatRange';
   id: number;
   error?: string;
   /** For 'loadBrick': assembled brick data (transferable) */
@@ -77,6 +77,9 @@ export interface ZarrWorkerResponse {
   min?: number;
   max?: number;
   avg?: number;
+  /** Raw-space min/max for float data (before normalisation) — used for range derivation */
+  rawMin?: number;
+  rawMax?: number;
   /** Per-stage timing (ms) — for pipeline telemetry */
   fetchMs?: number;
   assemblyMs?: number;
@@ -160,6 +163,14 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
     return;
   }
 
+  if (type === 'setFloatRange') {
+    floatMin = event.data.floatMin ?? 0;
+    floatMax = event.data.floatMax ?? 1;
+    const resp: ZarrWorkerResponse = { type: 'setFloatRange', id };
+    (self as unknown as Worker).postMessage(resp);
+    return;
+  }
+
   if (type === 'init') {
     // Init is called once at startup before any loadBrick — safe to handle directly
     (async () => {
@@ -232,6 +243,8 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
           min: result.min,
           max: result.max,
           avg: result.avg,
+          rawMin: result.rawMin,
+          rawMax: result.rawMax,
           fetchMs: result.fetchMs,
           assemblyMs: result.assemblyMs,
         };
@@ -260,7 +273,7 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
  */
 async function assembleBrick(
   lod: number, bx: number, by: number, bz: number, channelIndex: number, signal?: AbortSignal
-): Promise<{ buffer: ArrayBuffer; min: number; max: number; avg: number; fetchMs: number; assemblyMs: number }> {
+): Promise<{ buffer: ArrayBuffer; min: number; max: number; avg: number; rawMin?: number; rawMax?: number; fetchMs: number; assemblyMs: number }> {
   const arr = arrays[lod]!;
   const params = lodParams![lod]!;
   const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx } = params;
@@ -346,6 +359,10 @@ async function assembleBrick(
   let min = Infinity;
   let max = -Infinity;
   let sum = 0;
+  // Raw-space min/max for float data — used by StreamingManager to derive
+  // the actual data range during base LOD loading (B5 deferred scan).
+  let rawMinVal = Infinity;
+  let rawMaxVal = -Infinity;
 
   for (let lz = 0; lz < physSize; lz++) {
     for (let ly = 0; ly < physSize; ly++) {
@@ -387,6 +404,11 @@ async function assembleBrick(
             // Store raw float value as float16 bits — shader normalises using floatMin/floatMax uniforms.
             // Clamp to r16float representable range (±65504) before encoding.
             brickVal = float32ToFloat16Bits(Math.max(-65504, Math.min(65504, raw)));
+            // Track raw-space extremes for range derivation
+            if (isFinite(raw)) {
+              if (raw < rawMinVal) rawMinVal = raw;
+              if (raw > rawMaxVal) rawMaxVal = raw;
+            }
           } else {
             brickVal = raw;
             statVal = raw;
@@ -449,6 +471,8 @@ async function assembleBrick(
     min: min === Infinity ? 0 : min,
     max: max === -Infinity ? 0 : max,
     avg: sum / voxelCount,
+    rawMin: isFloat32 && isFinite(rawMinVal) ? rawMinVal : undefined,
+    rawMax: isFloat32 && isFinite(rawMaxVal) ? rawMaxVal : undefined,
     fetchMs,
     assemblyMs,
   };

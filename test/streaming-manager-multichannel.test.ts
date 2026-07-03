@@ -53,7 +53,7 @@ function makeProvider(numChannels: number, isEmpty = false): DataProvider {
     initialize: vi.fn().mockResolvedValue(makeMetadata(numChannels)),
     getMetadata: vi.fn().mockReturnValue(makeMetadata(numChannels)),
     getBrickGrid: vi.fn().mockReturnValue([1, 1, 1] as [number, number, number]),
-    loadBrick: vi.fn().mockResolvedValue(brickData),
+    loadBrick: vi.fn().mockResolvedValue({ data: brickData, min: 0, max: 128, avg: 64 }),
     isBrickEmpty: vi.fn().mockResolvedValue(isEmpty),
     getBrickStats: vi.fn().mockResolvedValue(null),
     getNetworkStats: vi.fn().mockReturnValue({

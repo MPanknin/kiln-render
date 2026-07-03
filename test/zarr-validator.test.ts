@@ -177,17 +177,14 @@ describe('validateZarrSupport', () => {
     expect(validateZarrSupport(ms, shape3d, 'uint16')).toEqual([]);
   });
 
-  it('rejects float32', () => {
+  it('accepts float32', () => {
     const ms = { datasets: [{ path: '0' }], axes: spatialAxes };
-    const reasons = validateZarrSupport(ms, shape3d, 'float32');
-    expect(reasons.length).toBeGreaterThan(0);
-    expect(reasons[0]).toMatch(/float32/);
+    expect(validateZarrSupport(ms, shape3d, 'float32')).toEqual([]);
   });
 
-  it('rejects float64', () => {
+  it('accepts float64 (read as float32)', () => {
     const ms = { datasets: [{ path: '0' }], axes: spatialAxes };
-    const reasons = validateZarrSupport(ms, shape3d, 'float64');
-    expect(reasons.length).toBeGreaterThan(0);
+    expect(validateZarrSupport(ms, shape3d, 'float64')).toEqual([]);
   });
 
   it('rejects int32', () => {

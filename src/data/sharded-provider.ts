@@ -215,7 +215,7 @@ export class ShardedDataProvider implements DataProvider {
   /**
    * Load a single brick
    */
-  async loadBrick(lod: number, bx: number, by: number, bz: number, _channelIndex?: number): Promise<BrickData | null> {
+  async loadBrick(lod: number, bx: number, by: number, bz: number, _channelIndex?: number, _signal?: AbortSignal): Promise<BrickData | null> {
     const key = `lod${lod}:${bx}-${by}-${bz}`;
 
     // Check cache first

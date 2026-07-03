@@ -53,6 +53,15 @@ export class TolerantFetchStore implements AsyncReadable<RequestInit> {
   private fetchQueue: (() => void)[] = [];
   private readonly maxConcurrentFetches: number;
 
+  /**
+   * Per-request abort signal — set by the worker before each brick assembly,
+   * cleared after. With serialized brick processing (one brick at a time per
+   * worker), this is safe: only one signal is active at any moment.
+   * When set, every fetch() call in get()/getRange() includes this signal,
+   * allowing in-flight HTTP requests to be aborted when the brick is cancelled.
+   */
+  currentSignal: AbortSignal | null = null;
+
   constructor(url: string | URL, options?: { overrides?: RequestInit; maxConcurrentFetches?: number }) {
     this.inner = new FetchStore(url, options);
     this.baseUrl = url;
@@ -82,13 +91,16 @@ export class TolerantFetchStore implements AsyncReadable<RequestInit> {
     await this.acquireFetchSlot();
     try {
       const href = resolveUrl(this.baseUrl, key);
-      const init: RequestInit = { ...this.overrides, ...options };
+      const signal = this.currentSignal;
+      const init: RequestInit = { ...this.overrides, ...options, ...(signal ? { signal } : {}) };
 
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         let response: Response;
         try {
           response = await fetch(href, init);
-        } catch {
+        } catch (e) {
+          // AbortError — don't retry, rethrow immediately
+          if (e instanceof DOMException && e.name === 'AbortError') throw e;
           // Network error — retry with backoff
           if (attempt < MAX_RETRIES) {
             await delay(RETRY_DELAYS[attempt]!);
@@ -123,10 +135,15 @@ export class TolerantFetchStore implements AsyncReadable<RequestInit> {
   async getRange(key: AbsolutePath, range: RangeQuery, options?: RequestInit): Promise<Uint8Array | undefined> {
     await this.acquireFetchSlot();
     try {
+      const signal = this.currentSignal;
+      const mergedOptions = signal ? { ...options, signal } : options;
+
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
-          return await this.inner.getRange!(key, range, options);
+          return await this.inner.getRange!(key, range, mergedOptions);
         } catch (e) {
+          // AbortError — don't retry, rethrow immediately
+          if (e instanceof DOMException && e.name === 'AbortError') throw e;
           // Intentional "not found" semantics (CloudFront OAI) — not an error
           if (e instanceof Error && e.message.includes('403')) {
             return undefined;

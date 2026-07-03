@@ -33,7 +33,7 @@ registry.set('zstd', async () => zstd as any);
 
 /** Messages from main thread to worker */
 export interface ZarrWorkerRequest {
-  type: 'init' | 'loadBrick' | 'setTargetFormat';
+  type: 'init' | 'loadBrick' | 'setTargetFormat' | 'cancel';
   id: number;
   /** For 'init': dataset URL and array paths */
   url?: string;
@@ -102,6 +102,18 @@ const MAX_CACHE_BYTES = 128 * 1024 * 1024; // 128 MB per worker
 // so multiple assembleBrick calls that need the same chunk share one fetch+decompress
 const inflightFetches = new Map<string, Promise<{ data: ArrayLike<number>; shape: number[] }>>();
 
+// Store reference — needed to set currentSignal for per-request abort
+let workerStore: TolerantFetchStore | null = null;
+
+// Cancellation state
+const cancelledRequests = new Set<number>();
+const activeControllers = new Map<number, AbortController>();
+
+// Serialization chain — only one loadBrick runs at a time per worker.
+// This makes the store's `currentSignal` safe (no concurrent signal overlap)
+// while still allowing parallel chunk fetches within a single brick.
+let processingChain: Promise<void> = Promise.resolve();
+
 function cacheKey(lod: number, cz: number, cy: number, cx: number, channelIndex: number): string {
   return `${lod}:ch${channelIndex}:${cz}/${cy}/${cx}`;
 }
@@ -129,8 +141,17 @@ function cacheSet(key: string, data: ArrayLike<number>, shape: number[]): void {
   cacheBytes += bytes;
 }
 
-self.onmessage = async (event: MessageEvent<ZarrWorkerRequest>) => {
+self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
   const { type, id } = event.data;
+
+  // Cancel messages are handled immediately — not queued.
+  // They must arrive and take effect even while a loadBrick is in progress.
+  if (type === 'cancel') {
+    cancelledRequests.add(id);
+    const controller = activeControllers.get(id);
+    if (controller) controller.abort();
+    return;
+  }
 
   if (type === 'setTargetFormat') {
     targetFormat = event.data.targetFormat ?? 'r16unorm';
@@ -140,61 +161,97 @@ self.onmessage = async (event: MessageEvent<ZarrWorkerRequest>) => {
   }
 
   if (type === 'init') {
-    try {
-      const { url, paths } = event.data;
-      LOGICAL_SIZE = event.data.logicalBrickSize ?? 64;
-      PHYSICAL_SIZE = event.data.physicalBrickSize ?? 66;
-      lodParams = event.data.lodParams ?? [];
-      is16bit = event.data.is16bit ?? false;
-      targetFormat = event.data.targetFormat ?? 'r16unorm';
-      isFloat32 = event.data.isFloat32 ?? false;
-      floatMin = event.data.floatMin ?? 0;
-      floatMax = event.data.floatMax ?? 1;
-      if (isFloat32) {
-        console.log(`[ZarrWorker] Float32 normalization range: [${floatMin}, ${floatMax}]`);
+    // Init is called once at startup before any loadBrick — safe to handle directly
+    (async () => {
+      try {
+        const { url, paths } = event.data;
+        LOGICAL_SIZE = event.data.logicalBrickSize ?? 64;
+        PHYSICAL_SIZE = event.data.physicalBrickSize ?? 66;
+        lodParams = event.data.lodParams ?? [];
+        is16bit = event.data.is16bit ?? false;
+        targetFormat = event.data.targetFormat ?? 'r16unorm';
+        isFloat32 = event.data.isFloat32 ?? false;
+        floatMin = event.data.floatMin ?? 0;
+        floatMax = event.data.floatMax ?? 1;
+        if (isFloat32) {
+          console.log(`[ZarrWorker] Float32 normalization range: [${floatMin}, ${floatMax}]`);
+        }
+
+        workerStore = new TolerantFetchStore(url!);
+        const rootGroup = await open(root(workerStore), { kind: 'group' });
+
+        arrays = [];
+        for (const path of paths!) {
+          const arr = await open(rootGroup.resolve(path), { kind: 'array' });
+          arrays.push(arr);
+        }
+
+        const resp: ZarrWorkerResponse = { type: 'init', id };
+        (self as unknown as Worker).postMessage(resp);
+      } catch (e) {
+        const resp: ZarrWorkerResponse = {
+          type: 'init', id,
+          error: e instanceof Error ? e.message : 'Init failed',
+        };
+        (self as unknown as Worker).postMessage(resp);
+      }
+    })();
+    return;
+  }
+
+  if (type === 'loadBrick') {
+    const { lod, bx, by, bz } = event.data;
+    const channelIndex = event.data.channelIndex ?? 0;
+
+    // Serialize brick processing — one at a time per worker.
+    // This makes store.currentSignal safe (no concurrent overlap).
+    processingChain = processingChain.then(async () => {
+      // Already cancelled before we started? Skip entirely.
+      if (cancelledRequests.has(id)) {
+        cancelledRequests.delete(id);
+        return;
       }
 
-      const store = new TolerantFetchStore(url!);
-      const rootGroup = await open(root(store), { kind: 'group' });
+      const controller = new AbortController();
+      activeControllers.set(id, controller);
+      if (workerStore) workerStore.currentSignal = controller.signal;
 
-      arrays = [];
-      for (const path of paths!) {
-        const arr = await open(rootGroup.resolve(path), { kind: 'array' });
-        arrays.push(arr);
+      try {
+        const result = await assembleBrick(lod!, bx!, by!, bz!, channelIndex, controller.signal);
+
+        // Clean up — check abort before responding
+        activeControllers.delete(id);
+        cancelledRequests.delete(id);
+        if (workerStore) workerStore.currentSignal = null;
+
+        if (controller.signal.aborted) return; // cancelled mid-flight
+
+        const resp: ZarrWorkerResponse = {
+          type: 'loadBrick', id,
+          data: result.buffer,
+          min: result.min,
+          max: result.max,
+          avg: result.avg,
+          fetchMs: result.fetchMs,
+          assemblyMs: result.assemblyMs,
+        };
+        (self as unknown as Worker).postMessage(resp, [result.buffer]);
+      } catch (e) {
+        activeControllers.delete(id);
+        cancelledRequests.delete(id);
+        if (workerStore) workerStore.currentSignal = null;
+
+        // Aborted requests don't send error responses — the main thread
+        // already rejected the promise when it sent the cancel message.
+        if (e instanceof DOMException && e.name === 'AbortError') return;
+
+        const resp: ZarrWorkerResponse = {
+          type: 'loadBrick', id,
+          error: e instanceof Error ? e.message : 'loadBrick failed',
+        };
+        (self as unknown as Worker).postMessage(resp);
       }
-
-      const resp: ZarrWorkerResponse = { type: 'init', id };
-      (self as unknown as Worker).postMessage(resp);
-    } catch (e) {
-      const resp: ZarrWorkerResponse = {
-        type: 'init', id,
-        error: e instanceof Error ? e.message : 'Init failed',
-      };
-      (self as unknown as Worker).postMessage(resp);
-    }
-  } else if (type === 'loadBrick') {
-    try {
-      const { lod, bx, by, bz } = event.data;
-      const channelIndex = event.data.channelIndex ?? 0;
-      const result = await assembleBrick(lod!, bx!, by!, bz!, channelIndex);
-
-      const resp: ZarrWorkerResponse = {
-        type: 'loadBrick', id,
-        data: result.buffer,
-        min: result.min,
-        max: result.max,
-        avg: result.avg,
-        fetchMs: result.fetchMs,
-        assemblyMs: result.assemblyMs,
-      };
-      (self as unknown as Worker).postMessage(resp, [result.buffer]);
-    } catch (e) {
-      const resp: ZarrWorkerResponse = {
-        type: 'loadBrick', id,
-        error: e instanceof Error ? e.message : 'loadBrick failed',
-      };
-      (self as unknown as Worker).postMessage(resp);
-    }
+    });
   }
 };
 
@@ -202,7 +259,7 @@ self.onmessage = async (event: MessageEvent<ZarrWorkerRequest>) => {
  * Full brick assembly: fetch overlapping chunks, decompress, re-chunk into 66³ brick
  */
 async function assembleBrick(
-  lod: number, bx: number, by: number, bz: number, channelIndex: number
+  lod: number, bx: number, by: number, bz: number, channelIndex: number, signal?: AbortSignal
 ): Promise<{ buffer: ArrayBuffer; min: number; max: number; avg: number; fetchMs: number; assemblyMs: number }> {
   const arr = arrays[lod]!;
   const params = lodParams![lod]!;
@@ -273,6 +330,12 @@ async function assembleBrick(
     await Promise.all(fetchPromises);
   }
   const fetchMs = performance.now() - t0;
+
+  // Abort check between fetch and assembly — the CPU-bound assembly loop
+  // can't yield, so this is the last interruptible point.
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
 
   // --- Stage 2: brick assembly (voxel scatter + format conversion) ---
   const t1 = performance.now();

@@ -21,7 +21,9 @@ Rendering (`Renderer` + WGSL modules assembled in `shaders/index.ts`): compute-s
 
 **New findings from this review:** A1.1–A1.4, A2.2, A3.1–A3.3, B7.1–B7.3 below.
 
-**Implemented last session, delivered as files, NOT yet verified in a running build:** A1.1, A1.2, A1.3, A1.4 (decision taken: jitter gated on TAA), A2.1, A2.2, A3.1, A3.2, A3.3, B1, B7.1, B7.2. The full specs remain in Parts A/B below as the verification reference. **First task on resume: confirm these were integrated (diff against the deliverables), compile, and run the 9-point verification checklist in `PATCHES.md`.**
+**Implemented last session, delivered as files, NOT yet verified in a running build:** A1.1, A1.2, A1.3, A1.4 (decision taken: jitter gated on TAA), A2.1, A2.2, A3.1, A3.2, A3.3, B7.1, B7.2. The full specs remain in Parts A/B below as the verification reference. **First task on resume: confirm these were integrated (diff against the deliverables), compile, and run the 9-point verification checklist in `PATCHES.md`.**
+
+**Delivered then reverted:** B1 (SSE × renderScale) — scaling `projectionFactor` by `renderScale` caused LOD to kick in too late at 0.25 (fine bricks not loading soon enough); reverted to plain `canvas.height`. D1 (GPU feedback buffer) will largely supersede this; if revisited before D1, investigate a non-linear or clamped scaling factor rather than the naive multiply.
 
 ---
 
@@ -119,11 +121,9 @@ Acceptance: block one channel's chunks in devtools: bricks render with remaining
 
 # Part B — Performance (carried forward + new)
 
-## B1 — [PERF] SSE LOD selection ignores render scale (P3 — DELIVERED last session, verify on resume)
+## B1 — [PERF] SSE LOD selection ignores render scale (P3 — DELIVERED then REVERTED; largely superseded by D1)
 File: `streaming-manager.ts` (computeDesiredSet)
-Still `this.projectionFactor = canvas.height / (2 * Math.tan(...))`. One line:
-`this.projectionFactor = (canvas.height * this.renderer.renderScale) / (2 * Math.tan(this.cameraFovRad / 2));`
-(Requires the streaming manager to see the renderer's current scale — pass the renderer or the scale into `update()`.) Now that P7 is implemented this *multiplies*: coarser bricks × larger steps during interaction. Acceptance: camera moving at renderScale 0.25 → streaming stats show substantially smaller `desiredCount` than at 1.0 for the same view; on stop, the camera-stopped path re-runs `computeDesiredSet` and fine bricks stream in.
+Formula: `this.projectionFactor = canvas.height / (2 * Math.tan(...))`. The naive fix (multiply by `renderScale`) was delivered and reverted — at `renderScale = 0.25` the scaled projection factor caused LOD to kick in too late (fine bricks not loading soon enough for the rendered resolution). D1 (GPU feedback buffer, now phase 4) largely supersedes this: ground-truth demand from the ray marcher replaces the heuristic SSE projection entirely. If revisited before D1: investigate a non-linear or clamped scaling factor (e.g. `Math.max(renderScale, 0.5)`) rather than the naive multiply, or decouple interaction-scale LOD selection from full-resolution LOD selection.
 
 ## B2 — [PERF] Worker request cancellation never reaches the network (new)
 Files: `zarr-worker-pool.ts`, `zarr-chunk-worker.ts`, `streaming-manager.ts`, `tolerant-fetch-store.ts`
@@ -259,18 +259,17 @@ One shadow ray (toward a directional light, jittered) or one short AO ray per co
 |---|---|---|
 | 0 | Verify last session's deliverables | Confirm integration, compile, run the 9-point checklist in `PATCHES.md`; request Category 1 + 2 files |
 | 1 | ~~A1.1–A1.4~~ DELIVERED | User-visible regressions from the render-on-demand round; small diffs |
-| 2 | ~~A2, A3~~ DELIVERED; C2, C3 remain | C2/C3 (unified commit path + stats plumbing) refactor the streaming manager the delivered fixes live in — do next, needs Category 2 files |
-| 3 | ~~B1~~ DELIVERED | One line, multiplies with shipped P7 |
-| 4 | B6 | Instrumentation before worker-side optimization |
-| 5 | B2, B3, B4 | Worker side: cancellation, assembly rewrite, affinity — measured against B6 counters |
+| 2 | ~~A2, A3~~ DELIVERED; C2, C3 remain | C2/C3 (unified commit path + stats plumbing) refactor the streaming manager — single `commitBrick` entry point, stats inline. Prerequisite for D1: clean consumption pipeline before adding a second demand source |
+| 3 | B6 | Instrumentation before optimization — measure D1's impact |
+| 4 | **D1** — GPU streaming feedback buffer | Largest structural win; pulled forward from phase 11. The streaming manager now has one clean commit path (C2) to feed from either CPU or GPU demand. Subsumes most of B1 (SSE × renderScale — reverted) and reduces B4 (affinity) to a nice-to-have. Keep CPU SSE path as prefetcher during camera motion |
+| 5 | B2, B3 | Worker side: cancellation + assembly rewrite — measured against B6 counters. B4 (affinity) deprioritized since D1 provides ground-truth demand; do opportunistically if duplicate-fetch counts (B6) remain high |
 | 6 | B5 | Startup scans deletion (trivial after C3) |
 | 7 | C1 | Packed atlas + active channel set — the big one; clean baseline from phases 1–6 first |
 | 8 | C4 | Uniform generation, gate for Part E |
 | 9 | E1, E2, E3 | First mode batch (shading + trivial projections) |
-| 10 | D2, D3, B7.6/P8c | Cheap GPU-side wins |
-| 11 | D1, D4 | Feedback-driven streaming + tile intervals |
-| 12 | E4, E5/P17f, E6 | Second mode batch |
-| 13 | D5, D6, E7 | f16, stochastic framework, shadows |
+| 10 | D2, D3, D4, B7.6/P8c | GPU-side wins: subgroup early exit, bounds prepass, tile intervals, accum fusion |
+| 11 | E4, E5/P17f, E6 | Second mode batch |
+| 12 | D5, D6, E7 | f16, stochastic framework, shadows |
 | — | B7.x, P14a/b/d as opportunistic hygiene alongside touched files | |
 
 # Measurement notes

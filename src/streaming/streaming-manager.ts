@@ -93,6 +93,13 @@ export class StreamingManager {
   // Currently in-flight requests with AbortControllers
   private inFlightRequests = new Map<string, AbortController>();
 
+  // Cancellation grace period — tracks when each in-flight request first left
+  // the desired set. Only abort after CANCEL_GRACE_MS, so requests that briefly
+  // leave the desired set (LOD oscillation during gestures) survive and warm
+  // the worker chunk cache instead of wasting bandwidth on aborted fetches.
+  private inFlightStaleTime = new Map<string, number>();
+  private readonly CANCEL_GRACE_MS = 200;
+
   // Max concurrent requests
   private maxConcurrentRequests = 8;
 
@@ -429,8 +436,12 @@ export class StreamingManager {
       this.computeDesiredSet(camera, canvas);
     }
 
-    // Always process some pending loads (non-blocking)
-    this.processLoadQueue();
+    // Gate new dispatches during interaction — keep recomputing the desired
+    // set (so cancellation stays fresh) but don't start new loads that will
+    // likely be stale in 100ms. Stream full detail when the camera settles.
+    if (!camera.isInteracting()) {
+      this.processLoadQueue();
+    }
 
     return this.inFlightRequests.size > 0 || this.loadQueue.length > 0;
   }
@@ -463,6 +474,7 @@ export class StreamingManager {
       controller.abort();
     }
     this.inFlightRequests.clear();
+    this.inFlightStaleTime.clear();
 
     // reset the allocator wholesale instead of freeing slot-by-slot.
     // The old per-slot free loop left every pinned base-LOD slot in the
@@ -527,8 +539,12 @@ export class StreamingManager {
     const viewProj = mat4.multiply(projMatrix, viewMatrix);
     const frustum = extractFrustumPlanes(viewProj);
 
-    // projectionFactor = screenHeight / (2 * tan(fov/2))
-    this.projectionFactor = canvas.height / (2 * Math.tan(this.cameraFovRad / 2));
+    // projectionFactor scales SSE by the rendered resolution. During interaction
+    // (renderScale 0.25), clamped to 0.5 so the desired set shrinks (fewer fine
+    // bricks) but doesn't collapse to the coarsest LOD. At rest (renderScale 1.0)
+    // the full canvas height is used.
+    const effectiveScale = Math.max(this.renderScale, 0.5);
+    this.projectionFactor = (canvas.height * effectiveScale) / (2 * Math.tan(this.cameraFovRad / 2));
 
     // Get LOD range from metadata
     const maxLod = Math.max(...this.metadata.levels.map(l => l.lod));
@@ -565,7 +581,19 @@ export class StreamingManager {
       const projectedError = (voxelWorldSize / Math.max(dist, 0.001)) * this.projectionFactor;
 
       // Decision: load this LOD or split to finer?
-      const shouldSplit = lod > 0 && projectedError > this.maxPixelError;
+      // SSE hysteresis: if children already exist at finer LOD, keep splitting
+      // until the error drops to 70% of maxPixelError. Prevents the oscillation
+      // where bricks near the threshold flip between LODs frame-to-frame,
+      // causing cancel → re-fetch churn during gestures.
+      let shouldSplit: boolean;
+      if (projectedError > this.maxPixelError) {
+        shouldSplit = lod > 0;
+      } else if (lod > 0 && projectedError > this.maxPixelError * 0.7) {
+        // In hysteresis band — only keep splitting if children are already resident
+        shouldSplit = this.hasResidentChildren(bx, by, bz, lod);
+      } else {
+        shouldSplit = false;
+      }
 
       if (shouldSplit) {
         // Check if finer LOD exists
@@ -632,13 +660,29 @@ export class StreamingManager {
       this.desiredKeys.add(brick.key);
     }
 
-    // Cancel in-flight requests that are no longer desired
+    // Cancel in-flight requests that are no longer desired (with grace period).
+    // Don't abort instantly — a request that briefly leaves the desired set
+    // (LOD oscillation near the SSE threshold) and returns within the grace
+    // window survives, completes, and warms the worker chunk cache. Without
+    // this, per-frame recompute + instant cancel = fetch thrash.
     let cancelledCount = 0;
+    const now = performance.now();
     for (const [key, controller] of this.inFlightRequests.entries()) {
-      if (!this.desiredKeys.has(key)) {
-        controller.abort();
-        this.inFlightRequests.delete(key);
-        cancelledCount++;
+      if (this.desiredKeys.has(key)) {
+        // Still desired — clear any stale timestamp
+        this.inFlightStaleTime.delete(key);
+      } else {
+        const staleTime = this.inFlightStaleTime.get(key);
+        if (staleTime === undefined) {
+          // First frame this request left the desired set — start grace period
+          this.inFlightStaleTime.set(key, now);
+        } else if (now - staleTime > this.CANCEL_GRACE_MS) {
+          // Grace period expired — this request is genuinely stale, abort it
+          controller.abort();
+          this.inFlightRequests.delete(key);
+          this.inFlightStaleTime.delete(key);
+          cancelledCount++;
+        }
       }
     }
 
@@ -774,7 +818,7 @@ export class StreamingManager {
           fromCache[ch] = true;
           return cached;
         }
-        return this.dataProvider.loadBrick(lod, bx, by, bz, ch);
+        return this.dataProvider.loadBrick(lod, bx, by, bz, ch, signal);
       })
     );
     if (signal.aborted) return;
@@ -1002,6 +1046,28 @@ export class StreamingManager {
     }
 
     return null;
+  }
+
+  /**
+   * Check if any child brick (one LOD finer) is already loaded or in-flight.
+   * Used for SSE hysteresis: if children exist, keep splitting even when the
+   * projected error dips into the hysteresis band (0.7×–1.0× maxPixelError),
+   * preventing LOD oscillation at the threshold boundary during gestures.
+   */
+  private hasResidentChildren(bx: number, by: number, bz: number, lod: number): boolean {
+    const finerLod = lod - 1;
+    if (finerLod < 0) return false;
+    for (let dz = 0; dz < 2; dz++) {
+      for (let dy = 0; dy < 2; dy++) {
+        for (let dx = 0; dx < 2; dx++) {
+          const childKey = `lod${finerLod}:${bz * 2 + dz}/${by * 2 + dy}/${bx * 2 + dx}`;
+          if (this.loadedBricks.has(childKey) || this.inFlightRequests.has(childKey)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 
   /**

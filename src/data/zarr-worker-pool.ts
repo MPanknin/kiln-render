@@ -48,6 +48,18 @@ export class ZarrWorkerPool {
   private fetchAvg = new RollingAvg();
   private assemblyAvg = new RollingAvg();
 
+  /** Maps request ID → worker index, for routing cancel messages */
+  private requestToWorker = new Map<number, number>();
+
+  /** Outstanding request count per worker, for load-balance spill */
+  private outstandingPerWorker: number[] = [];
+
+  /** Abort listeners to clean up on normal completion (prevents stale cancel messages) */
+  private abortListeners = new Map<number, { signal: AbortSignal; listener: () => void }>();
+
+  /** Max queue depth before spilling to least-loaded worker */
+  private readonly MAX_AFFINITY_QUEUE = 4;
+
   /** Per-LOD chunk layout, kept on main thread for spatial-affinity dispatch */
   private lodChunkInfo: { scaleX: number; scaleY: number; scaleZ: number; csx: number; csy: number; csz: number }[] = [];
   private logicalBrickSize = 64;
@@ -88,6 +100,20 @@ export class ZarrWorkerPool {
         const pending = this.pendingRequests.get(id);
         if (!pending) return;
         this.pendingRequests.delete(id);
+
+        // Decrement outstanding count for the worker that handled this request
+        const wi = this.requestToWorker.get(id);
+        if (wi !== undefined) {
+          this.outstandingPerWorker[wi]!--;
+          this.requestToWorker.delete(id);
+        }
+
+        // Remove abort listener so a later signal.abort() doesn't post a stale cancel
+        const entry = this.abortListeners.get(id);
+        if (entry) {
+          entry.signal.removeEventListener('abort', entry.listener);
+          this.abortListeners.delete(id);
+        }
 
         if (error) {
           pending.reject(new Error(error));
@@ -136,6 +162,7 @@ export class ZarrWorkerPool {
     }
 
     await Promise.all(initPromises);
+    this.outstandingPerWorker = new Array(this.workers.length).fill(0);
   }
 
   /**
@@ -166,6 +193,13 @@ export class ZarrWorkerPool {
   /**
    * Pick a worker by spatial affinity: bricks that overlap the same zarr chunks
    * land on the same worker, maximizing per-worker chunk-cache hits.
+   *
+   * Coarsened (>>1) so a 2×2×2 neighbourhood of chunk-indices maps to the same
+   * worker — prevents load imbalance when zoomed into a small region where all
+   * bricks fall into the same fine-grained chunk bucket.
+   *
+   * If the affinity worker's queue exceeds MAX_AFFINITY_QUEUE, spill to the
+   * least-loaded worker to prevent starvation.
    */
   private getAffinityWorker(lod: number, bx: number, by: number, bz: number): number {
     const info = this.lodChunkInfo[lod];
@@ -173,27 +207,71 @@ export class ZarrWorkerPool {
 
     // Brick center in virtual voxel coords → actual zarr coords → chunk index
     const half = this.logicalBrickSize >> 1;
-    const cx = Math.floor((bx * this.logicalBrickSize + half) * info.scaleX / info.csx);
-    const cy = Math.floor((by * this.logicalBrickSize + half) * info.scaleY / info.csy);
-    const cz = Math.floor((bz * this.logicalBrickSize + half) * info.scaleZ / info.csz);
+    const cx = Math.floor((bx * this.logicalBrickSize + half) * info.scaleX / info.csx) >> 1;
+    const cy = Math.floor((by * this.logicalBrickSize + half) * info.scaleY / info.csy) >> 1;
+    const cz = Math.floor((bz * this.logicalBrickSize + half) * info.scaleZ / info.csz) >> 1;
 
     // Spatial hash → worker index (constants are large coprime numbers for mixing)
     const h = ((lod * 73856093) ^ (cx * 19349663) ^ (cy * 83492791) ^ (cz * 4256233)) >>> 0;
-    return h % this.workers.length;
+    const affinityIdx = h % this.workers.length;
+
+    // Spill to least-loaded worker if affinity worker is overloaded
+    if (this.outstandingPerWorker[affinityIdx]! >= this.MAX_AFFINITY_QUEUE) {
+      let minIdx = 0;
+      let minLoad = this.outstandingPerWorker[0]!;
+      for (let i = 1; i < this.outstandingPerWorker.length; i++) {
+        if (this.outstandingPerWorker[i]! < minLoad) {
+          minLoad = this.outstandingPerWorker[i]!;
+          minIdx = i;
+        }
+      }
+      return minIdx;
+    }
+
+    return affinityIdx;
   }
 
   /**
-   * Load a fully assembled 66³ brick in a worker (off main thread)
+   * Load a fully assembled 66³ brick in a worker (off main thread).
+   * When an AbortSignal is provided and fires, a cancel message is sent to
+   * the worker (aborting the in-flight HTTP fetch) and the promise rejects
+   * with an AbortError.
    */
-  loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0): Promise<BrickResult> {
+  loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0, signal?: AbortSignal): Promise<BrickResult> {
     return new Promise((resolve, reject) => {
       const id = this.requestId++;
-      const worker = this.workers[this.getAffinityWorker(lod, bx, by, bz)]!;
+      const workerIdx = this.getAffinityWorker(lod, bx, by, bz);
+      const worker = this.workers[workerIdx]!;
 
+      this.outstandingPerWorker[workerIdx]!++;
       this.pendingRequests.set(id, { resolve, reject });
+      this.requestToWorker.set(id, workerIdx);
 
       const req: ZarrWorkerRequest = { type: 'loadBrick', id, lod, bx, by, bz, channelIndex };
       worker.postMessage(req);
+
+      if (signal) {
+        const onAbort = () => {
+          // Send cancel message to the worker so it aborts the HTTP fetch
+          worker.postMessage({ type: 'cancel', id });
+          // Reject immediately so the caller doesn't wait
+          const pending = this.pendingRequests.get(id);
+          if (pending) {
+            this.pendingRequests.delete(id);
+            this.requestToWorker.delete(id);
+            this.outstandingPerWorker[workerIdx]!--;
+            pending.reject(new DOMException('Aborted', 'AbortError'));
+          }
+        };
+
+        if (signal.aborted) {
+          onAbort();
+        } else {
+          signal.addEventListener('abort', onAbort, { once: true });
+          // Store the listener ref so we can remove it on normal completion
+          this.abortListeners.set(id, { signal, listener: onAbort });
+        }
+      }
     });
   }
 
@@ -212,5 +290,8 @@ export class ZarrWorkerPool {
     }
     this.workers = [];
     this.pendingRequests.clear();
+    this.requestToWorker.clear();
+    this.abortListeners.clear();
+    this.outstandingPerWorker = [];
   }
 }

@@ -151,9 +151,11 @@ export interface DataProvider {
    * @param bx - Brick X coordinate
    * @param by - Brick Y coordinate
    * @param bz - Brick Z coordinate
-   * @returns Brick data as Uint8Array or Uint16Array, or null if not found
+   * @param channelIndex - Channel to load (default 0)
+   * @param signal - Optional AbortSignal to cancel the in-flight fetch
+   * @returns Brick data as Uint8Array or Uint16Array, or null if not found/aborted
    */
-  loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex?: number): Promise<BrickData | null>;
+  loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex?: number, signal?: AbortSignal): Promise<BrickData | null>;
 
   /**
    * Check if a brick is empty (below threshold)

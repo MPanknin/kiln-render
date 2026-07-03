@@ -102,7 +102,7 @@ export abstract class BaseZarrProvider implements DataProvider {
 
   // Abstract methods that subclasses must implement
   abstract initialize(): Promise<VolumeMetadata>;
-  abstract loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex?: number): Promise<BrickData | null>;
+  abstract loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex?: number, signal?: AbortSignal): Promise<BrickData | null>;
   abstract dispose(): void;
 
   /**

@@ -132,8 +132,9 @@ export class ZarrDataProvider extends BaseZarrProvider {
   /**
    * Load a fully assembled 66³ brick via the worker pool.
    * The entire pipeline (fetch + decompress + re-chunk + stats) runs off main thread.
+   * When signal fires, the worker's in-flight HTTP requests are aborted.
    */
-  async loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0): Promise<BrickData | null> {
+  async loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0, signal?: AbortSignal): Promise<BrickData | null> {
     const meta = this.getMetadata();
     const level = meta.levels.find(l => l.lod === lod);
     if (!level) return null;
@@ -145,7 +146,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
     }
 
     try {
-      const result = await this.workerPool!.loadBrick(lod, bx, by, bz, channelIndex);
+      const result = await this.workerPool!.loadBrick(lod, bx, by, bz, channelIndex, signal);
 
       // Cache stats for isBrickEmpty checks
       this.cacheBrickStats(lod, bx, by, bz, {
@@ -159,6 +160,8 @@ export class ZarrDataProvider extends BaseZarrProvider {
 
       return result.data;
     } catch (e) {
+      // Aborted requests are expected — return null silently
+      if (e instanceof DOMException && e.name === 'AbortError') return null;
       console.warn(`Failed to load brick lod${lod}:${bx}-${by}-${bz}:`, e);
       return null;
     }

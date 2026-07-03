@@ -87,21 +87,6 @@ export class MultichannelUI {
     totalDownloaded: '',
   };
 
-  /** Map slider [0,1] (data-range-normalized) → texture-space window for the shader. */
-  private setChannelWindowFromSlider(ch: number, sliderMin: number, sliderMax: number): void {
-    const w = this.viewer.metadata.channelWindows?.[ch];
-    if (w && w.max > w.min) {
-      const dtypeMax = this.viewer.metadata.bitDepth === 16 ? 65535 : 255;
-      const absMin = w.min + sliderMin * (w.max - w.min);
-      const absMax = w.min + sliderMax * (w.max - w.min);
-      const shaderCenter = (absMin + absMax) / (2 * dtypeMax);
-      const shaderWidth = Math.max(0.001, (absMax - absMin) / dtypeMax);
-      this.renderer.setChannelWindow(ch, shaderCenter, shaderWidth);
-    } else {
-      this.renderer.setChannelWindow(ch, (sliderMin + sliderMax) / 2, Math.max(0.001, sliderMax - sliderMin));
-    }
-  }
-
   private sliceFolder: TweakpaneFolder | null = null;
   private initialSlice?: { x: number; y: number; z: number; showX: boolean; showY: boolean; showZ: boolean };
 
@@ -128,7 +113,7 @@ export class MultichannelUI {
       if (restored) {
         this.channelParams.push({ color: { r: restored.r, g: restored.g, b: restored.b, a: restored.a }, visible: restored.visible, level: { min: restored.min, max: restored.max } });
         this.renderer.setChannelColor(i, restored.r / 255, restored.g / 255, restored.b / 255, restored.visible ? restored.a : 0);
-        this.setChannelWindowFromSlider(i, restored.min, restored.max);
+        this.renderer.setChannelWindow(i, (restored.min + restored.max) / 2, Math.max(0.001, restored.max - restored.min));
       } else {
         const defaults = CHANNEL_COLOR_DEFAULTS[i] ?? { r: 255, g: 255, b: 255 };
         const base = i * 4;
@@ -149,7 +134,7 @@ export class MultichannelUI {
           visible: true,
           level: { min, max },
         });
-        this.setChannelWindowFromSlider(i, min, max);
+        this.renderer.setChannelWindow(i, (min + max) / 2, Math.max(0.001, max - min));
       }
     }
 
@@ -249,7 +234,7 @@ export class MultichannelUI {
         min: 0, max: 1, step: 0.01,
       }).on('change', (ev: { value: unknown }) => {
         const { min, max } = ev.value as { min: number; max: number };
-        this.setChannelWindowFromSlider(ch, min, max);
+        this.renderer.setChannelWindow(ch, (min + max) / 2, Math.max(0.001, max - min));
       });
 
       // 3. Color picker
@@ -465,8 +450,12 @@ export class MultichannelUI {
     for (let i = 0; i < this.channelParams.length; i++) {
       const w = windows[i];
       if (!w || w.max <= w.min) continue;
-      const { min, max } = this.channelParams[i]!.level;
-      this.setChannelWindowFromSlider(i, min, max);
+      const range = w.max - w.min;
+      const min = Math.max(0, Math.min(1, (w.start - w.min) / range));
+      const max = Math.max(0, Math.min(1, (w.end - w.min) / range));
+      this.channelParams[i]!.level.min = min;
+      this.channelParams[i]!.level.max = max;
+      this.renderer.setChannelWindow(i, (min + max) / 2, Math.max(0.001, max - min));
     }
     (this.pane as unknown as ExtendedPane).refresh();
   }

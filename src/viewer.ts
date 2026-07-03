@@ -253,18 +253,17 @@ export class KilnViewer {
       }
     }
 
-    // Apply per-channel window/level defaults from metadata (OMERO or auto-scanned).
-    // Normalize to texture space: [0, dtypeMax] → [0, 1].  channelWindows.min/max
-    // may be the dtype range (OMERO) or the data range (B5-derived); either way the
-    // shader needs absolute voxel positions divided by the dtype ceiling.
+    // Apply per-channel window/level defaults from metadata (OMERO or auto-scanned)
     if (metadata.channelWindows && metadata.numChannels > 1) {
-      const dtypeMax = metadata.bitDepth === 16 ? 65535 : 255;
       for (let ch = 0; ch < metadata.channelWindows.length; ch++) {
         const w = metadata.channelWindows[ch];
-        if (!w || w.end <= w.start) continue;
-        const center = Math.max(0, Math.min(1, ((w.start + w.end) / 2) / dtypeMax));
-        const width = Math.max(0.01, Math.min(1, (w.end - w.start) / dtypeMax));
-        renderer.setChannelWindow(ch, center, width);
+        if (!w) continue;
+        const range = w.max - w.min;
+        if (range > 0) {
+          const center = Math.max(0, Math.min(1, ((w.start + w.end) / 2 - w.min) / range));
+          const width = Math.max(0.01, Math.min(1, (w.end - w.start) / range));
+          renderer.setChannelWindow(ch, center, width);
+        }
       }
     }
 
@@ -374,13 +373,15 @@ export class KilnViewer {
         renderer.resetAccumulation();
       }
       if (opts.channelRanges && metadata.channelWindows) {
-        const dtypeMax = metadata.bitDepth === 16 ? 65535 : 255;
         for (let ch = 0; ch < opts.channelRanges.length; ch++) {
           const w = metadata.channelWindows[ch];
-          if (!w || w.end <= w.start) continue;
-          const center = Math.max(0, Math.min(1, ((w.start + w.end) / 2) / dtypeMax));
-          const width = Math.max(0.01, Math.min(1, (w.end - w.start) / dtypeMax));
-          renderer.setChannelWindow(ch, center, width);
+          if (!w) continue;
+          const range = w.max - w.min;
+          if (range > 0) {
+            const center = Math.max(0, Math.min(1, ((w.start + w.end) / 2 - w.min) / range));
+            const width = Math.max(0.01, Math.min(1, (w.end - w.start) / range));
+            renderer.setChannelWindow(ch, center, width);
+          }
         }
         renderer.resetAccumulation();
       }

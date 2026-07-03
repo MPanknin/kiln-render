@@ -337,18 +337,6 @@ export class StreamingManager {
         }
       }
 
-      // Post-fetch emptiness check using inline stats from BrickLoadResult.
-      // No second async round-trip through isBrickEmpty — the stats are
-      // already in the result. Check max across all channels: the brick is
-      // empty only if ALL channels are below threshold.
-      const threshold = this.config.emptyBrickThreshold ?? 1;
-      const maxAcrossChannels = Math.max(...channelResults.map(r => r?.max ?? 0));
-      if (maxAcrossChannels < threshold) {
-        this.emptyBricks.add(key);
-        this.resources.indirection.setEmpty(bx, by, bz, maxLod);
-        return;
-      }
-
       const result = this.resources.allocator.allocate(this.frameCount);
       if (!result) {
         console.warn('[Kiln] loadBaseLod: atlas allocation failed');
@@ -467,6 +455,7 @@ export class StreamingManager {
     }
 
     if (needsChannelRanges && channelMins.some(v => isFinite(v))) {
+      const dtypeMax = this.metadata.bitDepth === 16 ? 65535 : 255;
       const ranges: Array<{ min: number; max: number }> = [];
       for (let ch = 0; ch < numChannels; ch++) {
         const cMin = isFinite(channelMins[ch]!) ? channelMins[ch]! : 0;
@@ -474,7 +463,7 @@ export class StreamingManager {
         ranges.push({ min: cMin, max: cMax });
       }
       derivedRanges.channelRanges = ranges;
-      this.metadata.channelWindows = ranges.map(r => ({ start: r.min, end: r.max, min: r.min, max: r.max }));
+      this.metadata.channelWindows = ranges.map(r => ({ start: r.min, end: r.max, min: 0, max: dtypeMax }));
       console.log('[Kiln] B5: derived per-channel ranges:', ranges.map((r, i) => `ch${i}: [${r.min}, ${r.max}]`).join(', '));
     }
 

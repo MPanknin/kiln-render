@@ -20,8 +20,8 @@ import type { ChannelState } from './ui/multichannel-ui.js';
 // const DEFAULT_VOLUME_SOURCE = 'https://livingobjects.ebi.ac.uk/idr/zarr/v0.4/idr0062A/6001247.zarr';
 // const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/Fly-eFISH/NP01_1_1_SS00790_AstA546_CCHa1_647_1x_LOL.chunked.zarr';
 // const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/multichannel/13457537.zarr/13457537.zarr';
-// const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/multichannel/4496763.zarr/4496763.zarr';
-const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/multichannel/13457227.zarr/13457227.zarr';
+const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/multichannel/4496763.zarr/4496763.zarr';
+// const DEFAULT_VOLUME_SOURCE = 'https://d39zu0xtgv0613.cloudfront.net/multichannel/13457227.zarr/13457227.zarr';
 
 
 

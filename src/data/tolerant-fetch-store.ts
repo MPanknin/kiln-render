@@ -17,6 +17,11 @@
  *    Chrome's socket pool (ERR_INSUFFICIENT_RESOURCES) when many bricks are
  *    assembled concurrently — especially on HTTP/1.1 where ~6 connections
  *    per origin is the hard browser limit.
+ *
+ * 4. Transient failures (5xx, network errors) are retried with bounded
+ *    exponential backoff and THROW after exhaustion — they must never map to
+ *    undefined, because zarrita interprets undefined as "chunk does not exist"
+ *    and silently fills the region with zeros (permanent data holes).
  */
 
 import { FetchStore } from 'zarrita';
@@ -29,6 +34,13 @@ function resolveUrl(base: string | URL, key: AbsolutePath): string {
   const resolved = new URL(key.slice(1), url);
   resolved.search = url.search;
   return resolved.href;
+}
+
+const MAX_RETRIES = 3;
+const RETRY_DELAYS = [250, 1000, 4000];
+
+function delay(ms: number): Promise<void> {
+  return new Promise(r => setTimeout(r, ms));
 }
 
 export class TolerantFetchStore implements AsyncReadable<RequestInit> {
@@ -72,9 +84,6 @@ export class TolerantFetchStore implements AsyncReadable<RequestInit> {
       const href = resolveUrl(this.baseUrl, key);
       const init: RequestInit = { ...this.overrides, ...options };
 
-      const MAX_RETRIES = 3;
-      const RETRY_DELAYS = [250, 1000, 4000];
-
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         let response: Response;
         try {
@@ -82,7 +91,7 @@ export class TolerantFetchStore implements AsyncReadable<RequestInit> {
         } catch {
           // Network error — retry with backoff
           if (attempt < MAX_RETRIES) {
-            await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt]!));
+            await delay(RETRY_DELAYS[attempt]!);
             continue;
           }
           throw new Error(`Network error fetching ${key} after ${MAX_RETRIES + 1} attempts`);
@@ -99,7 +108,7 @@ export class TolerantFetchStore implements AsyncReadable<RequestInit> {
 
         // 5xx or unexpected status — retry with backoff
         if (attempt < MAX_RETRIES) {
-          await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt]!));
+          await delay(RETRY_DELAYS[attempt]!);
           continue;
         }
         throw new Error(`HTTP ${response.status} fetching ${key} after ${MAX_RETRIES + 1} attempts`);
@@ -112,13 +121,26 @@ export class TolerantFetchStore implements AsyncReadable<RequestInit> {
   }
 
   async getRange(key: AbsolutePath, range: RangeQuery, options?: RequestInit): Promise<Uint8Array | undefined> {
+    await this.acquireFetchSlot();
     try {
-      return await this.inner.getRange!(key, range, options);
-    } catch (e) {
-      if (e instanceof Error && e.message.includes('403')) {
-        return undefined;
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          return await this.inner.getRange!(key, range, options);
+        } catch (e) {
+          // Intentional "not found" semantics (CloudFront OAI) — not an error
+          if (e instanceof Error && e.message.includes('403')) {
+            return undefined;
+          }
+          if (attempt < MAX_RETRIES) {
+            await delay(RETRY_DELAYS[attempt]!);
+            continue;
+          }
+          throw e;
+        }
       }
-      throw e;
+      return undefined; // unreachable, satisfies TS
+    } finally {
+      this.releaseFetchSlot();
     }
   }
 }

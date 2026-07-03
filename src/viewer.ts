@@ -110,6 +110,7 @@ export class KilnViewer {
   private userRenderScale: number;
   private disposed = false;
   private dirty = true;
+  private lastCameraVersion = -1;
 
   private constructor(
     device: GPUDevice,
@@ -400,6 +401,9 @@ export class KilnViewer {
   get renderScale(): number { return this.userRenderScale; }
   set renderScale(value: number) {
     this.userRenderScale = value;
+    // build the scale set now (off the gesture path) and re-render
+    this.renderer.prepareScale(value);
+    this.dirty = true;
   }
 
   // State serialisation
@@ -454,6 +458,7 @@ export class KilnViewer {
       this.canvas.height = height;
       this.renderer.resize(width, height);
       this.renderer.prepareScale(0.25);
+      this.renderer.prepareScale(this.userRenderScale);
       this.dirty = true;
     }
   }
@@ -468,6 +473,12 @@ export class KilnViewer {
       this.renderer.activateScale(targetScale);
       this.dirty = true;
     }
+
+    if (this.camera.version !== this.lastCameraVersion) {
+      this.lastCameraVersion = this.camera.version;
+      this.dirty = true;
+    }
+
 
     // Always run streaming (may trigger onDirty via resetAccumulation)
     const streamingActive = this.streamingManager.update(this.camera, this.canvas);

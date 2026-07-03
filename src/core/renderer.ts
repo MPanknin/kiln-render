@@ -379,9 +379,9 @@ export class Renderer {
 
   /** Whether the image is stable (no further rendering will change the output) */
   get isConverged(): boolean {
-    // TAA off: every frame is identical (no jitter), converged after 1 frame
-    // TAA on: converged once accumulation reaches the 64-frame cap
-    return !this.enableTAA || this.active.accumFrameCount >= 64;
+    return this.volumeRenderMode === 'slice'
+      || !this.enableTAA
+      || this.active.accumFrameCount >= 64;
   }
 
   /** Set the display color and intensity weight for a channel (0–3). Resets accumulation. */
@@ -671,7 +671,7 @@ export class Renderer {
     d[o.screenSize / 4] = this.active.width;
     d[o.screenSize / 4 + 1] = this.active.height;
     dv.setUint32(o.frameIndex, this.frameIndex, true);
-    dv.setUint32(o.jitter, this.enableJitter ? 1 : 0, true);
+    dv.setUint32(o.jitter, (this.enableJitter && this.enableTAA) ? 1 : 0, true);
     d[o.windowCenter / 4] = this.windowCenter;
     d[o.windowWidth / 4] = this.windowWidth;
     d[o.floatMin / 4] = this.floatMin;

@@ -123,6 +123,12 @@ export class AtlasAllocator {
     return this.slotMetadata[slotIndex] ?? null;
   }
 
+  // cheap pre-dispatch check for the streaming manager's backpressure
+  hasEvictableSlot(currentFrame: number): boolean {
+    if (this.freeList.length > 0) return true;
+    return this.findLRUSlot(currentFrame) !== -1;
+  }
+
   /**
    * Allocate a slot in the atlas
    * If atlas is full, evicts the least recently used slot
@@ -147,7 +153,8 @@ export class AtlasAllocator {
     // Atlas is full - find LRU slot to evict
     const victim = this.findLRUSlot(frame);
     if (victim === -1) {
-      // This shouldn't happen if atlas has slots
+      // nothing evictable right now (all pinned or recently touched)
+      // bricks stay desired and retry
       return null;
     }
 
@@ -201,6 +208,8 @@ export class AtlasAllocator {
     }
 
     this.used.delete(idx);
+    // a freed slot must not stay pinned
+    this.pinned.delete(idx);
     this.slotMetadata[idx] = null;
     this.lastUsedFrame[idx] = 0;
     this.freeList.push(idx);

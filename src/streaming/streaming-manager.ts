@@ -52,6 +52,8 @@ export interface StreamingStats {
   timeToFirstRender: number | null; // ms, null if not yet loaded
   // Evictions since last stats reset
   evictedCount: number;
+  // Allocation refusals under atlas pressure 
+  allocationsRefused: number;
   // Per-stage pipeline timings (rolling avg over last ~32 bricks)
   pipelineTimings: PipelineTimings;
 }
@@ -112,6 +114,9 @@ export class StreamingManager {
   // Higher = lower quality, fewer bricks loaded
   public maxPixelError = 8.0;
 
+  // SSE is computed against the *rendered* resolution, not the canvas
+  public renderScale = 1.0;
+
   // Camera FOV in radians (must match camera.getProjectionMatrix)
   private readonly cameraFovRad = Math.PI / 4; // 45 degrees
 
@@ -120,6 +125,19 @@ export class StreamingManager {
 
   // Max bricks to request at once (prevents runaway loading)
   private maxDesiredBricks = 256;
+
+  // set when an allocation was refused 
+  // suspends load-queue draining until the next computeDesiredSet, so bricks that
+  // can't get a slot don't burn network/worker time. The refused bricks stay
+  // in the desired set and retry automatically; the shader falls back to the
+  // resident coarser parent via the indirection table in the meantime.
+  private allocationStalled = false;
+
+  // cached zero-filled bricks per bit depth, used to clear stale slot
+  // contents when a channel's fetch failed
+  // reused slots may contain a previous brick's data 
+  // without this a failed channel would show ghosts.
+  private zeroBricks = new Map<number, Uint8Array | Uint16Array>();
 
   // Stats from last update
   private lastStats: StreamingStats = {
@@ -134,6 +152,7 @@ export class StreamingManager {
     requestCount: 0,
     timeToFirstRender: null,
     evictedCount: 0,
+    allocationsRefused: 0,
     pipelineTimings: { avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0 },
   };
 
@@ -178,6 +197,17 @@ export class StreamingManager {
   /** Set callback to be invoked when base LOD is loaded with brick data */
   setBaseLodLoadedCallback(callback: (brickData: (Uint8Array | Uint16Array)[]) => void): void {
     this.onBaseLodLoaded = callback;
+  }
+
+  /** Lazily create (and cache) a zero-filled physical brick for a bit depth */
+  private getZeroBrick(bitDepth: number): Uint8Array | Uint16Array {
+    let brick = this.zeroBricks.get(bitDepth);
+    if (!brick) {
+      const voxels = PHYSICAL_BRICK_SIZE * PHYSICAL_BRICK_SIZE * PHYSICAL_BRICK_SIZE;
+      brick = bitDepth === 16 ? new Uint16Array(voxels) : new Uint8Array(voxels);
+      this.zeroBricks.set(bitDepth, brick);
+    }
+    return brick;
   }
 
   /**
@@ -240,6 +270,18 @@ export class StreamingManager {
 
       if (!channelData[0]) return; // ch0 mandatory; skip brick entirely if it failed
 
+      // Post-fetch emptiness re-check. The pre-fetch check above always
+      // returns false on cold load (no stats yet); now the worker's min/max are
+      // cached and the check is accurate. Without this, empty bricks on sparse
+      // datasets are uploaded, allocated, AND PINNED — permanently wasting
+      // atlas capacity on bricks that render nothing.
+      const isEmptyNow = await this.dataProvider.isBrickEmpty(maxLod, bx, by, bz, this.config.emptyBrickThreshold);
+      if (isEmptyNow) {
+        this.emptyBricks.add(key);
+        this.resources.indirection.setEmpty(bx, by, bz, maxLod);
+        return;
+      }
+
       const result = this.resources.allocator.allocate(this.frameCount);
       if (!result) {
         console.warn('[Kiln] loadBaseLod: atlas allocation failed');
@@ -254,7 +296,7 @@ export class StreamingManager {
       const tUpload = performance.now();
       for (let ch = 0; ch < numChannels; ch++) {
         const data = channelData[ch];
-        if (!data) continue; // skip failed channels — slot position is shared, missing ch shows as zero
+        if (!data) continue; // base-load slots come fresh from the free list (zero-initialised textures) — safe to skip
         writeToCanvas(
           this.device,
           this.resources.canvases[ch]!,
@@ -279,6 +321,11 @@ export class StreamingManager {
       if (firstBrickMs === null) {
         firstBrickMs = performance.now() - this.loadStartTime;
       }
+
+      // arriving base bricks must trigger a re-render — otherwise the
+      // viewer converges on a near-empty scene and freezes while the base LOD
+      // silently streams in. The 100 ms debounce coalesces the burst.
+      this.scheduleAccumulationReset();
     };
 
     // Spawn `concurrency` runners that drain the shared queue
@@ -317,6 +364,11 @@ export class StreamingManager {
     const firstBrickStr = firstBrickMsValue !== null ? firstBrickMsValue.toFixed(0) : 'n/a';
     this.baseLodLoaded = true;
     this.timeToFirstRender = firstBrickMsValue ?? totalMs;
+
+    // guarantee the completed base LOD is displayed even if the camera
+    // never moves again (the debounced per-brick resets may have already
+    // fired before the last bricks arrived). Direct call, not debounced.
+    this.onResetAccumulation();
 
     console.log(
       `[Kiln] loadBaseLod done: ${brickCount}/${bricks.length} bricks loaded in ${totalMs.toFixed(0)}ms` +
@@ -412,16 +464,18 @@ export class StreamingManager {
     }
     this.inFlightRequests.clear();
 
-    // Free all atlas slots
-    for (const entry of this.loadedBricks.values()) {
-      this.resources.allocator.free(entry.slot);
-    }
+    // reset the allocator wholesale instead of freeing slot-by-slot.
+    // The old per-slot free loop left every pinned base-LOD slot in the
+    // allocator's pinned set; after reload those indices were permanently
+    // unevictable. reset() clears used, pinned, metadata, and the free list.
+    this.resources.allocator.reset();
     this.loadedBricks.clear();
     this.pinnedBricks.clear();
     this.emptyBricks.clear();
     this.brickCache.clear();
     this.desiredKeys.clear();
     this.loadQueue = [];
+    this.allocationStalled = false;
     this.baseLodLoaded = false;
     this.resources.indirection.clearAll();
 
@@ -463,6 +517,9 @@ export class StreamingManager {
       camera.position[2]!,
     ];
 
+    // a fresh desired set is the retry point for refused allocations.
+    this.allocationStalled = false;
+
     // Get frustum planes
     const aspect = canvas.width / canvas.height;
     const viewMatrix = camera.getViewMatrix();
@@ -470,7 +527,6 @@ export class StreamingManager {
     const viewProj = mat4.multiply(projMatrix, viewMatrix);
     const frustum = extractFrustumPlanes(viewProj);
 
-    // Compute projection factor for SSE calculation
     // projectionFactor = screenHeight / (2 * tan(fov/2))
     this.projectionFactor = canvas.height / (2 * Math.tan(this.cameraFovRad / 2));
 
@@ -630,6 +686,7 @@ export class StreamingManager {
       requestCount: 0,
       timeToFirstRender: null, // Actual value comes from getStats()
       evictedCount: this.lastStats.evictedCount,
+      allocationsRefused: this.lastStats.allocationsRefused,
       pipelineTimings: { avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0 },
     };
   }
@@ -641,11 +698,23 @@ export class StreamingManager {
    * Process pending load requests (non-blocking)
    */
   private processLoadQueue(): void {
+    // an allocation was refused since the last desired-set
+    // recompute — don't burn network/worker time on bricks that can't get a
+    // slot. computeDesiredSet clears the flag (retry point).
+    if (this.allocationStalled) return;
+
     // Start new requests up to max concurrent
     while (
       this.inFlightRequests.size < this.maxConcurrentRequests &&
       this.loadQueue.length > 0
     ) {
+      // pre-dispatch check: if the atlas is full and nothing is
+      // evictable, stop dispatching *before* paying the fetch cost.
+      if (!this.resources.allocator.hasEvictableSlot(this.frameCount)) {
+        this.allocationStalled = true;
+        break;
+      }
+
       const request = this.loadQueue.shift()!;
 
       // Skip if already loaded (race condition check)
@@ -690,20 +759,32 @@ export class StreamingManager {
       return;
     }
 
-    // Try CPU cache first, fall back to network — load all channels in parallel
-    // Capped to renderer.numChannels (≤ 4) so we never write to a non-existent atlas
+    // Try CPU cache first, fall back to network — load all channels in parallel.
+    // Capped to renderer.numChannels (≤ 4) so we never write to a non-existent atlas.
+    // fetched data is NOT put into the brick cache here — caching
+    // happens below, after the brick is known to be non-empty, so empty bricks
+    // don't evict useful entries from the cache budget.
     const numChannels = this.resources.numChannels;
+    const fromCache: boolean[] = new Array(numChannels).fill(false);
     const channelData = await Promise.all(
       Array.from({ length: numChannels }, async (_, ch) => {
         const cacheKey = `ch${ch}:${key}`;
         const cached = this.brickCache.get(cacheKey);
-        if (cached) return cached;
-        const data = await this.dataProvider.loadBrick(lod, bx, by, bz, ch);
-        if (data) this.brickCache.put(cacheKey, data);
-        return data;
+        if (cached) {
+          fromCache[ch] = true;
+          return cached;
+        }
+        return this.dataProvider.loadBrick(lod, bx, by, bz, ch);
       })
     );
-    if (signal.aborted || channelData.some(d => !d)) return;
+    if (signal.aborted) return;
+
+    // ch0 is mandatory (matches loadBaseLod's policy); other channels
+    // degrade gracefully — a transient failure on ch3 must not discard the
+    // three channels that succeeded. The brick stays desired and a full
+    // version is fetched on a later pass if needed (failed channels aren't
+    // cached, so the retry re-fetches only what's missing).
+    if (!channelData[0]) return;
 
     // Re-check emptiness — stats are now cached from the fetch/decompress step.
     // On first encounter isBrickEmpty() returned false (no stats), but after
@@ -715,13 +796,27 @@ export class StreamingManager {
       return;
     }
 
+    // brick is known non-empty — now it's worth caching. (Done before the
+    // desired-set check: a brick fetched but no longer desired is still likely
+    // to be desired again soon.)
+    for (let ch = 0; ch < numChannels; ch++) {
+      const data = channelData[ch];
+      if (data && !fromCache[ch]) {
+        this.brickCache.put(`ch${ch}:${key}`, data);
+      }
+    }
+
     // Camera may have moved while the fetch was in flight — skip if no longer desired
     if (!this.desiredKeys.has(key)) return;
 
     // Allocate one slot (shared atlas position across all channels)
     const result = this.resources.allocator.allocate(this.frameCount);
     if (!result) {
-      console.warn('StreamingManager: allocation failed (all slots pinned?)');
+      // silent backpressure — the brick stays desired and retries after
+      // the next computeDesiredSet; the shader keeps rendering the coarser
+      // parent via indirection, so a refusal costs nothing visually.
+      this.allocationStalled = true;
+      this.lastStats.allocationsRefused++;
       return;
     }
 
@@ -766,7 +861,9 @@ export class StreamingManager {
 
     }
 
-    // Upload each channel to its atlas at the same slot coordinates (timed for pipeline telemetry)
+    // Upload each channel to its atlas at the same slot coordinates (timed for pipeline telemetry).
+    // failed channels are zero-filled — the slot may be a reused
+    // (evicted) slot still holding a previous brick's data for that channel.
     const offset: [number, number, number] = [
       result.slot.x * PHYSICAL_BRICK_SIZE,
       result.slot.y * PHYSICAL_BRICK_SIZE,
@@ -774,10 +871,11 @@ export class StreamingManager {
     ];
     const tUpload = performance.now();
     for (let ch = 0; ch < numChannels; ch++) {
+      const data = channelData[ch] ?? this.getZeroBrick(this.resources.canvases[ch]!.bitDepth);
       writeToCanvas(
         this.device,
         this.resources.canvases[ch]!,
-        channelData[ch]!,
+        data,
         [PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE],
         offset
       );

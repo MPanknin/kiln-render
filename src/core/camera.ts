@@ -37,6 +37,13 @@ export class Camera {
   // Clamp away from poles to avoid degenerate view matrix
   private poleEpsilon = 0.001;
 
+  // monotonic counter to capture state changes
+  private version_ = 0;
+
+  get version(): number {
+    return this.version_;
+  }
+
   constructor(canvas: HTMLCanvasElement) {
     this.position = new Float32Array(3);
     this.updatePosition();
@@ -232,6 +239,7 @@ export class Camera {
   }
 
   private updatePosition() {
+    this.version_++;
     const cosX = Math.cos(this.rotationX);
     const sinX = Math.sin(this.rotationX);
     const cosY = Math.cos(this.rotationY);

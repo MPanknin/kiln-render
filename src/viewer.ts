@@ -479,6 +479,10 @@ export class KilnViewer {
       this.dirty = true;
     }
 
+    // Keep SSE LOD selection in sync with the rendered resolution.
+    // The clamp in computeDesiredSet (max(renderScale, 0.5)) prevents the
+    // LOD-collapse that caused the original B1 revert.
+    this.streamingManager.renderScale = this.renderer.renderScale;
 
     // Always run streaming (may trigger onDirty via resetAccumulation)
     const streamingActive = this.streamingManager.update(this.camera, this.canvas);

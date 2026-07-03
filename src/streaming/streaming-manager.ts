@@ -106,6 +106,12 @@ export class StreamingManager {
   // Callback for when base LOD is loaded with brick data
   private onBaseLodLoaded: ((brickData: (Uint8Array | Uint16Array)[]) => void) | null = null;
 
+  // Bricks remaining in the base-LOD load. Included in pendingCount so the
+  // UI spinner is visible from the first frame — previously the base load
+  // bypassed loadQueue/inFlightRequests entirely and pending read 0 for the
+  // whole initial download.
+  private baseLodPending = 0;
+
   // Frame counter for LRU
   private frameCount = 0;
 
@@ -242,6 +248,17 @@ export class StreamingManager {
       }
     }
 
+    this.baseLodPending = bricks.length;
+
+    // Center-out ordering: the volume's central content appears first instead
+    // of a bottom-up z-slab wipe. Cheap and dramatically better perceived load.
+    const ccx = (gridX - 1) / 2, ccy = (gridY - 1) / 2, ccz = (gridZ - 1) / 2;
+    bricks.sort((a, b) => {
+      const da = (a.bx - ccx) ** 2 + (a.by - ccy) ** 2 + (a.bz - ccz) ** 2;
+      const db = (b.bx - ccx) ** 2 + (b.by - ccy) ** 2 + (b.bz - ccz) ** 2;
+      return da - db;
+    });
+
     const concurrency = Math.min(bricks.length, this.maxConcurrentRequests);
     console.log(`[Kiln] loadBaseLod: ${bricks.length} bricks × ${numChannels} channels (concurrency: ${concurrency})`);
 
@@ -256,6 +273,7 @@ export class StreamingManager {
     const queue = [...bricks];
 
     const processBrick = async ({ bx, by, bz, key }: typeof bricks[0]) => {
+      try {
       const tIsEmpty = performance.now();
       const isEmpty = await this.dataProvider.isBrickEmpty(maxLod, bx, by, bz, this.config.emptyBrickThreshold);
       sumIsEmptyMs += performance.now() - tIsEmpty;
@@ -302,8 +320,11 @@ export class StreamingManager {
       ];
       const tUpload = performance.now();
       for (let ch = 0; ch < numChannels; ch++) {
-        const data = channelData[ch];
-        if (!data) continue; // base-load slots come fresh from the free list (zero-initialised textures) — safe to skip
+        // Zero-fill failed channels. The "fresh from free list" assumption is
+        // only true on cold load — after clear() the allocator recycles slots
+        // without re-zeroing texture memory, so skipping would show the
+        // previous dataset's data in that channel.
+        const data = channelData[ch] ?? this.getZeroBrick(this.resources.canvases[ch]!.bitDepth);
         writeToCanvas(
           this.device,
           this.resources.canvases[ch]!,
@@ -333,6 +354,9 @@ export class StreamingManager {
       // viewer converges on a near-empty scene and freezes while the base LOD
       // silently streams in. The 100 ms debounce coalesces the burst.
       this.scheduleAccumulationReset();
+      } finally {
+        this.baseLodPending = Math.max(0, this.baseLodPending - 1);
+      }
     };
 
     // Spawn `concurrency` runners that drain the shared queue
@@ -369,6 +393,7 @@ export class StreamingManager {
     const totalMs = performance.now() - t0;
     const firstBrickMsValue = firstBrickMs as number | null;
     const firstBrickStr = firstBrickMsValue !== null ? firstBrickMsValue.toFixed(0) : 'n/a';
+    this.baseLodPending = 0;
     this.baseLodLoaded = true;
     this.timeToFirstRender = firstBrickMsValue ?? totalMs;
 
@@ -488,6 +513,7 @@ export class StreamingManager {
     this.desiredKeys.clear();
     this.loadQueue = [];
     this.allocationStalled = false;
+    this.baseLodPending = 0;
     this.baseLodLoaded = false;
     this.resources.indirection.clearAll();
 
@@ -505,6 +531,7 @@ export class StreamingManager {
     };
     return {
       ...this.lastStats,
+      pendingCount: this.lastStats.pendingCount + this.baseLodPending,
       totalBytesDownloaded: networkStats.totalBytesDownloaded,
       bytesPerSecond: networkStats.recentBytesPerSecond,
       requestCount: networkStats.requestCount,

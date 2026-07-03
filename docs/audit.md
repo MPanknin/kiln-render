@@ -23,7 +23,7 @@ Rendering (`Renderer` + WGSL modules assembled in `shaders/index.ts`): compute-s
 
 **Implemented last session, delivered as files, NOT yet verified in a running build:** A1.1, A1.2, A1.3, A1.4 (decision taken: jitter gated on TAA), A2.1, A2.2, A3.1, A3.2, A3.3, B7.1, B7.2. The full specs remain in Parts A/B below as the verification reference. **First task on resume: confirm these were integrated (diff against the deliverables), compile, and run the 9-point verification checklist in `PATCHES.md`.**
 
-**Delivered then reverted:** B1 (SSE × renderScale) — scaling `projectionFactor` by `renderScale` caused LOD to kick in too late at 0.25 (fine bricks not loading soon enough); reverted to plain `canvas.height`. D1 (GPU feedback buffer) will largely supersede this; if revisited before D1, investigate a non-linear or clamped scaling factor rather than the naive multiply.
+**Delivered this session:** B1 (SSE × renderScale — re-delivered with `Math.max(renderScale, 0.5)` clamp + frame() wiring), B2 (end-to-end request cancellation with 200ms grace period, SSE hysteresis, dispatch gating), B4 (affinity hash >>1 coarsening + per-worker queue-depth spill to least-loaded), B5-UX (spinner during create(), baseLodPending in pendingCount, center-out base ordering, zero-fill recycled slots).
 
 ---
 
@@ -121,29 +121,36 @@ Acceptance: block one channel's chunks in devtools: bricks render with remaining
 
 # Part B — Performance (carried forward + new)
 
-## B1 — [PERF] SSE LOD selection ignores render scale (P3 — DELIVERED then REVERTED; largely superseded by D1)
-File: `streaming-manager.ts` (computeDesiredSet)
-Formula: `this.projectionFactor = canvas.height / (2 * Math.tan(...))`. The naive fix (multiply by `renderScale`) was delivered and reverted — at `renderScale = 0.25` the scaled projection factor caused LOD to kick in too late (fine bricks not loading soon enough for the rendered resolution). D1 (GPU feedback buffer, now phase 4) largely supersedes this: ground-truth demand from the ray marcher replaces the heuristic SSE projection entirely. If revisited before D1: investigate a non-linear or clamped scaling factor (e.g. `Math.max(renderScale, 0.5)`) rather than the naive multiply, or decouple interaction-scale LOD selection from full-resolution LOD selection.
+## B1 — [PERF] SSE LOD selection ignores render scale (P3 — RE-DELIVERED with clamp)
+File: `streaming-manager.ts` (computeDesiredSet), `kiln-viewer.ts` (frame)
+Previously reverted: the naive `projectionFactor *= renderScale` collapsed LOD at 0.25. Re-delivered with a clamped approach: `Math.max(renderScale, 0.5)` in computeDesiredSet prevents LOD collapse during interaction while still tracking the rendered resolution at rest. Wired in kiln-viewer.ts frame() via `streamingManager.renderScale = renderer.renderScale`. D1 (GPU feedback buffer) will supersede this entirely with ground-truth demand.
 
-## B2 — [PERF] Worker request cancellation never reaches the network (new)
-Files: `zarr-worker-pool.ts`, `zarr-chunk-worker.ts`, `streaming-manager.ts`, `tolerant-fetch-store.ts`
-`controller.abort()` in the streaming manager only gates post-arrival handling; `workerPool.loadBrick` has no cancellation, so every brick requested mid-gesture is fully fetched, decompressed, and assembled regardless. With B1 fixed the volume of stale requests drops, but gestures still waste bandwidth and worker slots on cancelled bricks.
-Fix, in increasing depth: (1) `cancelBrick(id)` message → worker checks a cancelled-set before starting assembly and between pipeline stages; (2) plumb an `AbortSignal` into `TolerantFetchStore.get`'s `fetch(href, init)` (init already accepts `signal`) so in-flight HTTP aborts — but beware the in-flight dedup map: a shared chunk promise must only abort when *all* interested bricks cancelled (reference-count the inflight entry). Stage (1) alone captures most of the win.
-Acceptance: rapid orbit gesture on a cold view, then stop: wire bytes (B6) for the gesture drop substantially vs. before; no errors from shared-chunk aborts.
+## B2 — [PERF] Worker request cancellation — DELIVERED
+Files: `zarr-worker-pool.ts`, `zarr-chunk-worker.ts`, `streaming-manager.ts`, `tolerant-fetch-store.ts`, `data-provider.ts`, `base-zarr-provider.ts`, `zarr-provider.ts`, `sharded-provider.ts`
+End-to-end cancellation chain: StreamingManager creates per-request AbortController → signal threaded through DataProvider.loadBrick → WorkerPool posts cancel message + rejects promise on abort → Worker checks cancelledRequests set before/during assembly, creates per-brick AbortController, sets `workerStore.currentSignal` → TolerantFetchStore passes signal to fetch() calls + AbortError short-circuits retry logic. Worker processes bricks serially (processingChain) to make the store-level currentSignal safe. Anti-thrash measures: 200ms cancellation grace period, SSE hysteresis (0.7× band with hasResidentChildren), dispatch gating during camera interaction, clamped renderScale (max 0.5). Abort listener cleanup on normal completion prevents stale cancel messages.
 
 ## B3 — [PERF] Worker brick-assembly inner loop (P11 — unchanged)
 File: `zarr-chunk-worker.ts` (assembleBrick)
 Verified still present: 287k iterations × (string cacheKey + Map lookup + 3 divisions + Math.round/min/max ×3 + `Number()`), per brick per channel; per-voxel `float32ToFloat16Bits` on the float path. Fix exactly as v2 P11: three per-axis lookup tables (length 66) for `gx/cxi/lcx`; dense ≤3×3×3 chunk array resolved once; optional run-length inner loop with contiguous copy when `scaleX === 1`; float16 conversion as a flat post-pass (or native `Float16Array` with fallback). Instrument first (B6) so the ≥3–5× `avgAssemblyMs` claim is measured.
 Acceptance: as v2 P11 — byte-identical bricks, integer-factor `avgAssemblyMs` drop.
 
-## B4 — [PERF] Affinity hash coarsening + load-balance spill (P12 — unchanged)
+## B4 — [PERF] Affinity hash coarsening + load-balance spill (P12 — DELIVERED)
 File: `zarr-worker-pool.ts` (getAffinityWorker)
-Verified still hashing the brick's center chunk. Fix as v2 P12: hash `(cx>>1, cy>>1, cz>>1, lod)`; add per-worker outstanding-request counters and spill to least-loaded when the affinity worker's queue exceeds a threshold. Do after B6 instrumentation so the duplicate-fetch reduction is measurable. Longer-term alternatives (server-side ghost borders P17g, SharedArrayBuffer cache) remain documented-not-scheduled.
+Chunk indices coarsened with >>1 so a 2×2×2 neighbourhood maps to the same worker, preventing load imbalance on zoomed-in views. Per-worker `outstandingPerWorker` counters track queue depth; when the affinity worker's queue exceeds MAX_AFFINITY_QUEUE (4), the request spills to the least-loaded worker. Counters decremented on normal completion and on abort.
 
-## B5 — [PERF] Startup: coarsest LOD downloaded 1 + N_channels times (P15 — unchanged)
+## B5 — [PERF][UX] Startup: coarsest LOD downloaded 1 + N_channels times (P15 — PROMOTED to phase 3)
 Files: `base-zarr-provider.ts`, `zarr-provider.ts`, `streaming-manager.ts`
-Verified: `initialize()` still runs `scanFloatRange` and per-channel `scanChannelRanges` on the main thread before the workers re-fetch the same chunks in `loadBaseLod`. Fix as v2 P15: derive ranges from per-brick min/max the workers already compute (C3 makes this trivial — stats arrive with every brick); set preliminary windows from first arrivals, finalize when base LOD completes; keep scans only as fallback. Sequencing note: do after C3.
-Acceptance: cold multichannel float load: bytes before first render ≈ 1× coarsest LOD.
+**UX-critical promotion:** For float32/multichannel datasets without OMERO windows, `initialize()` runs `scanFloatRange` / `scanChannelRanges` on the main thread — downloading the entire coarsest LOD once or more before KilnViewer.create() even returns. The app appears to hang (no canvas, no spinner, no camera) for the duration of a full-LOD download. Interim mitigations delivered (see B5-UX below); the root fix deletes the scans entirely.
+Fix: delete `scanFloatRange`/`scanChannelRanges` from the initialize() critical path. Init workers with a provisional range (OMERO if present, else [0,1] — atlas encoding is range-independent). Accumulate global/per-channel min/max from C3's per-brick stats as base bricks stream; when baseLodLoaded fires, set renderer.floatMin/floatMax + per-channel windows, push the finalized range to workers (new worker message, same shape as setTargetFormat) for stat normalization, and reset accumulation. Percentile clipping (p0.1/p99.9) recovers via the histogram onBaseLodLoaded already builds from in-memory base bricks. Sequencing: do after C3 (needs per-brick stats return).
+Acceptance: cold multichannel float load: bytes before first render ≈ metadata + a handful of bricks (not 1 + N_channels × full coarsest LOD). Time-to-first-pixel = metadata fetch + first brick, for every dataset type.
+
+### B5-UX — Base-LOD loading UX patches (DELIVERED)
+Files: `streaming-manager.ts`, `kiln-viewer.ts`, `examples/*/src/main.ts`
+Interim mitigations for the startup hang, orthogonal to the B5 root fix:
+1. **Spinner during create()**: both examples show the spinner (`.active` class) around `await KilnViewer.create()` so the user sees feedback from the first frame, not a blank page.
+2. **baseLodPending in pendingCount**: new `baseLodPending` counter decremented per-brick (try/finally), zeroed before `baseLodLoaded = true`, added to `getStats().pendingCount`. The UI spinner (driven by `pendingCount > 0`) stays visible through the entire base-LOD download — previously it was guaranteed off because loadBaseLod bypasses loadQueue/inFlightRequests.
+3. **Center-out base ordering**: bricks sorted by distance from grid center before processing. Central content appears first instead of a bottom-up z-slab wipe.
+4. **Zero-fill recycled slots**: `channelData[ch] ?? getZeroBrick(bitDepth)` in loadBaseLod. After `clear()`, recycled atlas slots may still hold previous dataset data; skipping a failed channel would show ghosts.
 
 ## B6 — [PERF][INSTRUMENTATION] Wire-byte accounting and worker counters (P16d, expanded — prerequisite for B2/B3/B4)
 Files: `tolerant-fetch-store.ts`, `zarr-chunk-worker.ts`, `zarr-worker-pool.ts`, `zarr-provider.ts`
@@ -259,11 +266,11 @@ One shadow ray (toward a directional light, jittered) or one short AO ray per co
 |---|---|---|
 | 0 | Verify last session's deliverables | Confirm integration, compile, run the 9-point checklist in `PATCHES.md`; request Category 1 + 2 files |
 | 1 | ~~A1.1–A1.4~~ DELIVERED | User-visible regressions from the render-on-demand round; small diffs |
-| 2 | ~~A2, A3~~ DELIVERED; C2, C3 remain | C2/C3 (unified commit path + stats plumbing) refactor the streaming manager — single `commitBrick` entry point, stats inline. Prerequisite for D1: clean consumption pipeline before adding a second demand source |
-| 3 | B6 | Instrumentation before optimization — measure D1's impact |
-| 4 | **D1** — GPU streaming feedback buffer | Largest structural win; pulled forward from phase 11. The streaming manager now has one clean commit path (C2) to feed from either CPU or GPU demand. Subsumes most of B1 (SSE × renderScale — reverted) and reduces B4 (affinity) to a nice-to-have. Keep CPU SSE path as prefetcher during camera motion |
-| 5 | B2, B3 | Worker side: cancellation + assembly rewrite — measured against B6 counters. B4 (affinity) deprioritized since D1 provides ground-truth demand; do opportunistically if duplicate-fetch counts (B6) remain high |
-| 6 | B5 | Startup scans deletion (trivial after C3) |
+| 2 | ~~A2, A3~~ DELIVERED; C2, C3 remain | C2/C3 (unified commit path + stats plumbing) refactor the streaming manager — single `commitBrick` entry point, stats inline. Prerequisite for D1 and B5 |
+| 3 | **B5** — Kill startup scans (PROMOTED) | UX-critical: eliminates the main-thread full-LOD pre-scan that freezes the app. Needs C3's per-brick stats return. B5-UX mitigations (spinner, baseLodPending, center-out) already delivered as interim |
+| 4 | B6 | Instrumentation before optimization — measure D1's impact |
+| 5 | **D1** — GPU streaming feedback buffer | Largest structural win. The streaming manager now has one clean commit path (C2) to feed from either CPU or GPU demand. Subsumes B1 entirely. Keep CPU SSE path as prefetcher during camera motion |
+| 6 | B3 | Worker assembly rewrite — measured against B6 counters. ~~B2~~ DELIVERED, ~~B4~~ DELIVERED |
 | 7 | C1 | Packed atlas + active channel set — the big one; clean baseline from phases 1–6 first |
 | 8 | C4 | Uniform generation, gate for Part E |
 | 9 | E1, E2, E3 | First mode batch (shading + trivial projections) |
@@ -275,7 +282,7 @@ One shadow ray (toward a directional light, jittered) or one short AO ray per co
 # Measurement notes
 GPU: timestamp queries (`timestamp-query` feature) around compute/accum/render passes; Chrome `--enable-dawn-features=allow_unsafe_apis` for deeper paths; Xcode/PIX captures through Chrome for TBDR verification of pass-structure changes. Worker pipeline telemetry (`avgFetchMs`, `avgAssemblyMs`) is already in place — record before/after for B3.
 
-Baseline scenarios to capture before each optimization phase: (a) static camera, converged, single-channel; (b) static, 4-channel; (c) orbiting at each renderScale; (d) zoom gesture into a dense region on a cold atlas; (e) idle for 60 s with a static camera (GPU utilization — the render-on-demand metric); (f) cold load of a sparse dataset and of a multichannel float dataset (empty-brick and startup-scan metrics). New scenarios from this cycle: (g) dataset-clear → reload cycle ×3 with pinned-count assertion (A2.1); (h) one channel's chunks blocked in devtools during a multichannel load (A3.3); (i) rapid-gesture wire-byte totals before/after B2; (j) channel-toggle streaming delta on an 8-channel dataset (C1); (k) slice-mode idle GPU utilization (A1.3).
+Baseline scenarios to capture before each optimization phase: (a) static camera, converged, single-channel; (b) static, 4-channel; (c) orbiting at each renderScale; (d) zoom gesture into a dense region on a cold atlas; (e) idle for 60 s with a static camera (GPU utilization — the render-on-demand metric); (f) cold load of a sparse dataset and of a multichannel float dataset (empty-brick and startup-scan metrics). New scenarios from this cycle: (g) dataset-clear → reload cycle ×3 with pinned-count assertion (A2.1); (h) one channel's chunks blocked in devtools during a multichannel load (A3.3); (i) rapid-gesture wire-byte totals before/after B2; (j) channel-toggle streaming delta on an 8-channel dataset (C1); (k) slice-mode idle GPU utilization (A1.3); (l) cold load of a float32 multichannel dataset with no OMERO metadata — spinner visible within ~1 frame of page load, first central bricks visible without waiting for any full-LOD scan, wire bytes before first pixel ≈ metadata + a handful of bricks (currently: 1 + N_channels × full coarsest LOD).
 
 Counters to add to streaming stats: `allocationsRefused` (delivered), cancelled-but-completed worker requests (B2), chunk-cache hit rate + duplicate-fetch count + wire bytes (B6), indirection flushes + dirty-region size (P14a), samples-per-ray debug toggle (validates P7/LOD stepping).
 

@@ -187,7 +187,12 @@ async function main() {
 
   // ── Create viewer ──────────────────────────────────────────────────────────
 
+  // Show spinner during metadata fetch + any pre-scans (cause 1: main-thread
+  // scanFloatRange/scanChannelRanges can block for seconds on large base LODs).
+  // The UI stats interval takes over once the viewer exists.
+  document.getElementById('spinner')?.classList.add('active');
   const viewer = await KilnViewer.create(canvas, dataset, options);
+  document.getElementById('spinner')?.classList.remove('active');
 
   window.goatcounter?.count({ path: '/event/webgpu-ok', title: 'WebGPU initialized', event: true });
 

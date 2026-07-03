@@ -566,12 +566,12 @@ export class StreamingManager {
     const viewProj = mat4.multiply(projMatrix, viewMatrix);
     const frustum = extractFrustumPlanes(viewProj);
 
-    // projectionFactor scales SSE by the rendered resolution. During interaction
-    // (renderScale 0.25), clamped to 0.5 so the desired set shrinks (fewer fine
-    // bricks) but doesn't collapse to the coarsest LOD. At rest (renderScale 1.0)
-    // the full canvas height is used.
-    const effectiveScale = Math.max(this.renderScale, 0.5);
-    this.projectionFactor = (canvas.height * effectiveScale) / (2 * Math.tan(this.cameraFovRad / 2));
+    // projectionFactor always targets full canvas resolution — LOD selection
+    // should pre-load fine bricks even during interaction so they're ready when
+    // the camera stops. Dispatch gating (processLoadQueue skipped while
+    // interacting) prevents wasted loads; scaling projectionFactor by renderScale
+    // was tried twice and reverted both times because it delays LOD too much.
+    this.projectionFactor = canvas.height / (2 * Math.tan(this.cameraFovRad / 2));
 
     // Get LOD range from metadata
     const maxLod = Math.max(...this.metadata.levels.map(l => l.lod));

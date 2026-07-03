@@ -41,8 +41,11 @@ export function computeHistogram(
         histogram[bin] = (histogram[bin] ?? 0) + 1;
       }
     } else {
-      // Standard uint8/uint16 path
-      const maxValue = bitDepth === 16 ? 65535 : 255;
+      // Standard integer path — derive the value range from the ACTUAL array
+      // type, not the nominal bitDepth: on the r8unorm fallback a 16-bit
+      // source arrives as Uint8Array in 0-255 space, and using 65535 crushed
+      // the entire histogram into the bottom bins.
+      const maxValue = data instanceof Uint8Array ? 255 : 65535;
       for (let i = 0; i < data.length; i++) {
         const bin = Math.floor((data[i]! / maxValue) * (bins - 1));
         if (bin >= 0 && bin < bins) {

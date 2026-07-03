@@ -253,14 +253,21 @@ export class KilnViewer {
       }
     }
 
-    // Apply per-channel window/level defaults from metadata (OMERO or auto-scanned)
+    // Apply per-channel window/level defaults from metadata (OMERO or auto-scanned).
+    // For FLOAT data the shader normalises every sample with the *global*
+    // dataRange before per-channel windowing, so windows must be expressed
+    // relative to that global range — not each channel's own OMERO min/max
+    // (which can differ between channels and would mis-level them).
     if (metadata.channelWindows && metadata.numChannels > 1) {
+      const useGlobalRange = (metadata.isFloat ?? false) && !!metadata.dataRange;
       for (let ch = 0; ch < metadata.channelWindows.length; ch++) {
         const w = metadata.channelWindows[ch];
         if (!w) continue;
-        const range = w.max - w.min;
+        const lo = useGlobalRange ? metadata.dataRange![0] : w.min;
+        const hi = useGlobalRange ? metadata.dataRange![1] : w.max;
+        const range = hi - lo;
         if (range > 0) {
-          const center = Math.max(0, Math.min(1, ((w.start + w.end) / 2 - w.min) / range));
+          const center = Math.max(0, Math.min(1, ((w.start + w.end) / 2 - lo) / range));
           const width = Math.max(0.01, Math.min(1, (w.end - w.start) / range));
           renderer.setChannelWindow(ch, center, width);
         }

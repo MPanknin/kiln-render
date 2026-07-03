@@ -79,8 +79,12 @@ fn fs(@location(0) voxelPos: vec3f) -> @location(0) vec4f {
         // without being too dim (additive) or too sensitive (maxDensity norm).
         var weightedColor = vec3f(0.0);
         var totalWeight: f32 = 0.0;
+        // Normalise raw float samples to [0,1] before per-channel windowing
+        // (identity for uint data where floatMin=0 / floatMax=1)
+        let floatInvRange = 1.0 / max(uniforms.floatMax - uniforms.floatMin, 0.0001);
         for (var ch = 0u; ch < uniforms.numChannels; ch++) {
-            let raw = sampleAtlasCh(ch, voxelPos, indirection, lodScale);
+            let rawSample = sampleAtlasCh(ch, voxelPos, indirection, lodScale);
+            let raw = clamp((rawSample - uniforms.floatMin) * floatInvRange, 0.0, 1.0);
             let wc = uniforms.channelWindowCenter[ch];
             let ww = max(uniforms.channelWindowWidth[ch], 0.0001);
             let intensity = clamp((raw - (wc - ww * 0.5)) / ww, 0.0, 1.0);

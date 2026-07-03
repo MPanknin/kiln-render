@@ -55,10 +55,8 @@ fn setupBrick(
         // precompute affine atlas transform for the hot loop
         let coarseBrickOrigin = floor(brickIndex / info.lodScale) * info.lodScale * LOGICAL_BRICK_SIZE;
         info.atlasScale = 1.0 / (info.lodScale * ATLAS_SIZE);
-        // BORDER only — must match the corrected sampleAtlas / sampleAtlasCh
-        // (no extra half-texel; see sampling.wgsl for the derivation).
         info.atlasOffset = vec3f(info.indirection.xyz) * PHYSICAL_BRICK_SIZE / ATLAS_SIZE
-                         + BORDER / ATLAS_SIZE
+                         + (BORDER + 0.5) / ATLAS_SIZE
                          - coarseBrickOrigin * info.atlasScale;
     }
 

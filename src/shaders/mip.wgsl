@@ -57,5 +57,9 @@ fn rayMarchMIP(
     // Apply windowing to final max density before TF lookup
     let windowedDensity = applyWindow(maxDensity, windowCenter, windowWidth);
     let tfColor = textureSampleLevel(tfTexture, tfSampler, vec2f(windowedDensity, 0.5), 0.0);
-    return vec4f(tfColor.rgb * windowedDensity, 1.0);
+    // Premultiplied output: alpha = windowed max density so the compute
+    // entry point composites the background correctly. alpha=1.0 made MIP
+    // misses/zero-signal rays render pure black instead of bgColor and made
+    // the whole image opaque regardless of signal.
+    return vec4f(tfColor.rgb * windowedDensity, windowedDensity);
 }

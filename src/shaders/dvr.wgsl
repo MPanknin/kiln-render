@@ -22,7 +22,8 @@ fn rayMarchDVR(
         }
     }
 
-    // precompute single-channel float normalisation
+    // precompute float normalisation — shared by single- and multi-channel
+    // paths (identity for uint data where floatMin=0, floatMax=1)
     let floatInvRange = 1.0 / max(uniforms.floatMax - uniforms.floatMin, 0.0001);
 
     // compute jitter fraction once for the whole ray
@@ -68,9 +69,19 @@ fn rayMarchDVR(
                 var weightedColor = vec3f(0.0);
                 var maxDensity = 0.0;
                 for (var ch = 0u; ch < numCh; ch++) {
-                    let raw = sampleAtlasChAffine(ch, voxel, brick.atlasOffset, brick.atlasScale);
-                    let density = clamp((raw - chLower[ch]) * chInvWidth[ch], 0.0, 1.0);
                     let chColor = uniforms.channelColors[ch];
+                    // Hidden channels (alpha 0) must contribute NOTHING —
+                    // previously they still drove maxDensity (extinction) and
+                    // diluted the hue normalisation, so toggling a dense
+                    // channel off darkened/blacked out the composite.
+                    if (chColor.a <= 0.0) { continue; }
+                    let raw = sampleAtlasChAffine(ch, voxel, brick.atlasOffset, brick.atlasScale);
+                    // Normalise raw float range to [0,1] BEFORE per-channel
+                    // windowing (identity for uint data). Without this,
+                    // float32 datasets compared raw values (e.g. 0–3000)
+                    // against [0,1]-space windows.
+                    let norm = clamp((raw - uniforms.floatMin) * floatInvRange, 0.0, 1.0);
+                    let density = clamp((norm - chLower[ch]) * chInvWidth[ch], 0.0, 1.0);
                     weightedColor += density * chColor.rgb * chColor.a;
                     maxDensity = max(maxDensity, density);
                 }

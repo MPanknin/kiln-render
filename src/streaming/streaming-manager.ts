@@ -20,6 +20,7 @@ import { BrickCache } from './brick-cache.js';
 import { PHYSICAL_BRICK_SIZE } from '../core/config.js';
 import type { DatasetConfig } from '../core/config.js';
 import { writeToCanvas } from '../core/volume.js';
+import { float16BitsToFloat32 } from '../utils/float16.js';
 import type { PipelineTimings } from '../data/data-provider.js';
 import { RollingAvg } from '../data/network-tracker.js';
 
@@ -238,6 +239,66 @@ export class StreamingManager {
   }
 
   /**
+   * Derive a percentile-clipped (p0.1 / p99.9) float data range from the
+   * in-memory base-LOD bricks. Brick data is float16 bit patterns in RAW
+   * data space. Restores the outlier clipping the old scanFloatRange
+   * performed — without it a single hot voxel compresses the entire
+   * contrast range.
+   *
+   * Uses a 65536-entry float16 decode LUT + histogram: no per-voxel
+   * Math.pow, no sorting.
+   */
+  private computeFloatPercentileRange(
+    bricks: Uint16Array[],
+    rawMin: number,
+    rawMax: number,
+  ): [number, number] {
+    const range = rawMax - rawMin;
+    if (!(range > 0) || bricks.length === 0) return [rawMin, rawMax];
+
+    // Decode LUT: every possible float16 bit pattern → float32
+    const lut = new Float32Array(65536);
+    for (let i = 0; i < 65536; i++) lut[i] = float16BitsToFloat32(i);
+
+    const BINS = 65536;
+    const histogram = new Uint32Array(BINS);
+    const invRange = (BINS - 1) / range;
+    let total = 0;
+
+    for (const brick of bricks) {
+      for (let i = 0; i < brick.length; i++) {
+        const v = lut[brick[i]!]!;
+        if (!isFinite(v)) continue;
+        let bin = ((v - rawMin) * invRange) | 0;
+        if (bin < 0) bin = 0;
+        else if (bin >= BINS) bin = BINS - 1;
+        histogram[bin] = (histogram[bin] ?? 0) + 1;
+        total++;
+      }
+    }
+    if (total === 0) return [rawMin, rawMax];
+
+    const loTarget = total * 0.001;
+    const hiTarget = total * 0.999;
+    let lo = rawMin;
+    let hi = rawMax;
+    let count = 0;
+    let loFound = false;
+    for (let b = 0; b < BINS; b++) {
+      count += histogram[b]!;
+      if (!loFound && count > loTarget) {
+        lo = rawMin + (b / BINS) * range;
+        loFound = true;
+      }
+      if (count >= hiTarget) {
+        hi = rawMin + ((b + 1) / BINS) * range;
+        break;
+      }
+    }
+    return lo < hi ? [lo, hi] : [rawMin, rawMax];
+  }
+
+  /**
    * Load and pin the coarsest LOD level (ensures no holes)
    * Bricks are processed with bounded concurrency to avoid saturating the HTTP
    * connection pool — especially important for multichannel where each brick
@@ -447,15 +508,33 @@ export class StreamingManager {
     } = {};
 
     if (needsFloatRange && isFinite(floatRangeMin) && isFinite(floatRangeMax) && floatRangeMin < floatRangeMax) {
-      derivedRanges.dataRange = [floatRangeMin, floatRangeMax];
-      this.metadata.dataRange = derivedRanges.dataRange;
+      // Percentile-clip (p0.1 / p99.9) using the in-memory base bricks —
+      // absolute per-brick extremes let one hot voxel compress the whole
+      // contrast range. (Falls back to raw extremes if no brick data.)
+      const clipped = allBrickData.length > 0
+        ? this.computeFloatPercentileRange(allBrickData as Uint16Array[], floatRangeMin, floatRangeMax)
+        : ([floatRangeMin, floatRangeMax] as [number, number]);
+      derivedRanges.dataRange = clipped;
+      this.metadata.dataRange = clipped;
       // Update workers so future brick stats use the real range
-      this.dataProvider.setFloatRange?.(floatRangeMin, floatRangeMax);
-      console.log(`[Kiln] B5: derived float range: [${floatRangeMin}, ${floatRangeMax}]`);
+      this.dataProvider.setFloatRange?.(clipped[0], clipped[1]);
+      console.log(`[Kiln] B5: derived float range: [${clipped[0]}, ${clipped[1]}] (raw extremes: [${floatRangeMin}, ${floatRangeMax}])`);
     }
 
     if (needsChannelRanges && channelMins.some(v => isFinite(v))) {
-      const dtypeMax = this.metadata.bitDepth === 16 ? 65535 : 255;
+      // Window space must match what the shader compares against AFTER float
+      // normalisation:
+      //  - float data: windows live in raw space relative to the global
+      //    dataRange (the shader normalises (raw − dataRange0)/(range) first).
+      //    Previously raw-space start/end were stored against min=0/max=65535,
+      //    collapsing the derived windows to ~nothing.
+      //  - integer data: the EFFECTIVE atlas bit depth — on the r8unorm
+      //    fallback worker stats are recomputed in 0-255 space, so
+      //    metadata.bitDepth (16) would inflate dtypeMax 256×.
+      const effectiveBitDepth = this.resources.canvases[0]!.bitDepth;
+      const dtypeMax = effectiveBitDepth === 16 ? 65535 : 255;
+      const winMin = isFloat ? (this.metadata.dataRange?.[0] ?? 0) : 0;
+      const winMax = isFloat ? (this.metadata.dataRange?.[1] ?? 1) : dtypeMax;
       const ranges: Array<{ min: number; max: number }> = [];
       for (let ch = 0; ch < numChannels; ch++) {
         const cMin = isFinite(channelMins[ch]!) ? channelMins[ch]! : 0;
@@ -463,7 +542,7 @@ export class StreamingManager {
         ranges.push({ min: cMin, max: cMax });
       }
       derivedRanges.channelRanges = ranges;
-      this.metadata.channelWindows = ranges.map(r => ({ start: r.min, end: r.max, min: 0, max: dtypeMax }));
+      this.metadata.channelWindows = ranges.map(r => ({ start: r.min, end: r.max, min: winMin, max: winMax }));
       console.log('[Kiln] B5: derived per-channel ranges:', ranges.map((r, i) => `ch${i}: [${r.min}, ${r.max}]`).join(', '));
     }
 
@@ -921,12 +1000,20 @@ export class StreamingManager {
 
     // Emptiness check using inline stats — no second async isBrickEmpty round-trip.
     // Check max across all channels: empty only if ALL channels are below threshold.
-    const threshold = this.config.emptyBrickThreshold ?? 1;
-    const maxAcrossChannels = Math.max(...channelResults.map(r => r?.max ?? 0));
-    if (maxAcrossChannels < threshold) {
-      this.emptyBricks.add(key);
-      this.resources.indirection.setEmpty(bx, by, bz, lod);
-      return;
+    // SKIPPED when any channel was served from the CPU cache: cached entries
+    // carry sentinel stats (max=1) which fail the real threshold (default
+    // 100), so every cache-served brick — i.e. every brick evicted from the
+    // atlas and revisited — was permanently marked empty, freezing the
+    // region at the coarse parent LOD. A brick is only ever put into the
+    // cache AFTER it was proven non-empty, so the re-check is redundant.
+    if (!fromCache.some(v => v)) {
+      const threshold = this.config.emptyBrickThreshold ?? 1;
+      const maxAcrossChannels = Math.max(...channelResults.map(r => r?.max ?? 0));
+      if (maxAcrossChannels < threshold) {
+        this.emptyBricks.add(key);
+        this.resources.indirection.setEmpty(bx, by, bz, lod);
+        return;
+      }
     }
 
     // brick is known non-empty — now it's worth caching. (Done before the

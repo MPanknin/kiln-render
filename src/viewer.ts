@@ -448,6 +448,7 @@ export class KilnViewer {
       this.canvas.width = width;
       this.canvas.height = height;
       this.renderer.resize(width, height);
+      this.renderer.prepareScale(0.25);
       this.dirty = true;
     }
   }
@@ -459,8 +460,7 @@ export class KilnViewer {
     const interacting = this.camera.isInteracting();
     const targetScale = interacting ? 0.25 : this.userRenderScale;
     if (this.renderer.renderScale !== targetScale) {
-      this.renderer.renderScale = targetScale;
-      this.renderer.resizeComputeTexture();
+      this.renderer.activateScale(targetScale);
       this.dirty = true;
     }
 

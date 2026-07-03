@@ -17,8 +17,7 @@ export class Camera {
   private rotationY = 3.5;
   private isDragging = false;
   private isPanning = false;
-  private isZooming = false;
-  private zoomTimer: number | null = null;
+  private lastInteractionTime = 0;
   private lastX = 0;
   private lastY = 0;
 
@@ -66,6 +65,7 @@ export class Camera {
         this.applyPan(dx, dy);
       }
 
+      this.lastInteractionTime = performance.now();
       this.updatePosition();
     });
 
@@ -83,14 +83,8 @@ export class Camera {
       this.distance *= 1 + e.deltaY * 0.001;
       // Zoom limits for normalized space
       this.distance = Math.max(0.5, Math.min(10, this.distance));
+      this.lastInteractionTime = performance.now();
       this.updatePosition();
-
-      this.isZooming = true;
-      if (this.zoomTimer !== null) clearTimeout(this.zoomTimer);
-      this.zoomTimer = setTimeout(() => {
-        this.isZooming = false;
-        this.zoomTimer = null;
-      }, 200) as unknown as number;
     }, { passive: false });
 
     // Touch controls
@@ -140,6 +134,7 @@ export class Camera {
 
         this.applyOrbit(dx, dy);
 
+        this.lastInteractionTime = performance.now();
         this.updatePosition();
 
       } else if (e.touches.length === 2 && this.isTouchPanning) {
@@ -165,6 +160,7 @@ export class Camera {
         }
         this.lastTouchCenter = currentCenter;
 
+        this.lastInteractionTime = performance.now();
         this.updatePosition();
       }
     }, { passive: false });
@@ -337,7 +333,8 @@ export class Camera {
   }
 
    isInteracting(): boolean {
-    return this.isDragging || this.isPanning || this.isZooming;
+    return this.isDragging || this.isPanning || this.isTouchPanning
+      || performance.now() - this.lastInteractionTime < 200;
   }
 
   getViewMatrix(): Float32Array {

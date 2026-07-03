@@ -66,12 +66,12 @@ function makeProvider(numChannels: number, isEmpty = false): DataProvider {
 }
 
 /**
- * Minimal Renderer stand-in.  Only the properties accessed during
+ * Minimal VolumeResources stand-in.  Only the properties accessed during
  * loadBaseLod and the streaming loadBrick path are populated.
  * `canvases` is an array of plain objects — the real type is irrelevant
  * because writeToCanvas is mocked.
  */
-function makeRenderer(numChannels: number) {
+function makeResources(numChannels: number) {
   return {
     numChannels,
     allocator: {
@@ -93,9 +93,8 @@ function makeRenderer(numChannels: number) {
       clearBrick: vi.fn(),
       clearAll: vi.fn(),
     },
-    // One canvas per channel — indexed in loadBrick as renderer.canvases[ch]
+    // One canvas per channel — indexed in loadBrick as resources.canvases[ch]
     canvases: Array.from({ length: Math.max(numChannels, 1) }, (_, i) => ({ _ch: i })),
-    resetAccumulation: vi.fn(),
   };
 }
 
@@ -119,14 +118,15 @@ describe('StreamingManager — multi-channel base LOD loading', () => {
 
   it('calls loadBrick once for a 1-channel dataset (channelIndex 0)', async () => {
     const provider = makeProvider(1);
-    const renderer = makeRenderer(1);
+    const resources = makeResources(1);
 
     const sm = new StreamingManager(
-      renderer as any,
+      resources as any,
       provider,
       makeMetadata(1),
       {} as GPUDevice,
       makeConfig() as any,
+      vi.fn(),
     );
 
     await vi.waitFor(() => { expect(sm.baseLodLoaded).toBe(true); });
@@ -137,14 +137,15 @@ describe('StreamingManager — multi-channel base LOD loading', () => {
 
   it('calls loadBrick twice for a 2-channel dataset, once per channel', async () => {
     const provider = makeProvider(2);
-    const renderer = makeRenderer(2);
+    const resources = makeResources(2);
 
     const sm = new StreamingManager(
-      renderer as any,
+      resources as any,
       provider,
       makeMetadata(2),
       {} as GPUDevice,
       makeConfig() as any,
+      vi.fn(),
     );
 
     await vi.waitFor(() => { expect(sm.baseLodLoaded).toBe(true); });
@@ -156,14 +157,15 @@ describe('StreamingManager — multi-channel base LOD loading', () => {
 
   it('calls loadBrick for all 4 channels of a 4-channel dataset', async () => {
     const provider = makeProvider(4);
-    const renderer = makeRenderer(4);
+    const resources = makeResources(4);
 
     const sm = new StreamingManager(
-      renderer as any,
+      resources as any,
       provider,
       makeMetadata(4),
       {} as GPUDevice,
       makeConfig() as any,
+      vi.fn(),
     );
 
     await vi.waitFor(() => { expect(sm.baseLodLoaded).toBe(true); });
@@ -178,14 +180,15 @@ describe('StreamingManager — multi-channel base LOD loading', () => {
     const { writeToCanvas } = await import('../src/core/volume.js');
 
     const provider = makeProvider(2);
-    const renderer = makeRenderer(2);
+    const resources = makeResources(2);
 
     const sm = new StreamingManager(
-      renderer as any,
+      resources as any,
       provider,
       makeMetadata(2),
       {} as GPUDevice,
       makeConfig() as any,
+      vi.fn(),
     );
 
     await vi.waitFor(() => { expect(sm.baseLodLoaded).toBe(true); });
@@ -196,14 +199,14 @@ describe('StreamingManager — multi-channel base LOD loading', () => {
     // Channel 0 → canvases[0], channel 1 → canvases[1]
     expect(vi.mocked(writeToCanvas)).toHaveBeenCalledWith(
       expect.anything(),        // device (mocked)
-      renderer.canvases[0],     // atlas for channel 0
+      resources.canvases[0],    // atlas for channel 0
       expect.any(Uint8Array),
       expect.anything(),
       expect.anything(),
     );
     expect(vi.mocked(writeToCanvas)).toHaveBeenCalledWith(
       expect.anything(),
-      renderer.canvases[1],     // atlas for channel 1
+      resources.canvases[1],    // atlas for channel 1
       expect.any(Uint8Array),
       expect.anything(),
       expect.anything(),
@@ -212,32 +215,34 @@ describe('StreamingManager — multi-channel base LOD loading', () => {
 
   it('allocates exactly one atlas slot shared across all channels', async () => {
     const provider = makeProvider(3);
-    const renderer = makeRenderer(3);
+    const resources = makeResources(3);
 
     const sm = new StreamingManager(
-      renderer as any,
+      resources as any,
       provider,
       makeMetadata(3),
       {} as GPUDevice,
       makeConfig() as any,
+      vi.fn(),
     );
 
     await vi.waitFor(() => { expect(sm.baseLodLoaded).toBe(true); });
 
     // 3 channels loaded, but only 1 slot allocated (channels share the atlas slot)
-    expect(renderer.allocator.allocate).toHaveBeenCalledTimes(1);
+    expect(resources.allocator.allocate).toHaveBeenCalledTimes(1);
   });
 
   it('does not call loadBrick for an empty brick', async () => {
     const provider = makeProvider(2, /* isEmpty */ true);
-    const renderer = makeRenderer(2);
+    const resources = makeResources(2);
 
     const sm = new StreamingManager(
-      renderer as any,
+      resources as any,
       provider,
       makeMetadata(2),
       {} as GPUDevice,
       makeConfig() as any,
+      vi.fn(),
     );
 
     await vi.waitFor(() => { expect(sm.baseLodLoaded).toBe(true); });
@@ -247,19 +252,20 @@ describe('StreamingManager — multi-channel base LOD loading', () => {
 
   it('marks empty bricks in the indirection table without loading data', async () => {
     const provider = makeProvider(2, /* isEmpty */ true);
-    const renderer = makeRenderer(2);
+    const resources = makeResources(2);
 
     const sm = new StreamingManager(
-      renderer as any,
+      resources as any,
       provider,
       makeMetadata(2),
       {} as GPUDevice,
       makeConfig() as any,
+      vi.fn(),
     );
 
     await vi.waitFor(() => { expect(sm.baseLodLoaded).toBe(true); });
 
-    expect(renderer.indirection.setEmpty).toHaveBeenCalledWith(0, 0, 0, 0);
-    expect(renderer.allocator.allocate).not.toHaveBeenCalled();
+    expect(resources.indirection.setEmpty).toHaveBeenCalledWith(0, 0, 0, 0);
+    expect(resources.allocator.allocate).not.toHaveBeenCalled();
   });
 });

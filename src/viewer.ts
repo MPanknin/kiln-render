@@ -8,6 +8,7 @@
  */
 
 import { Renderer, VolumeRenderMode } from './core/renderer.js';
+import { VolumeResources } from './core/volume-resources.js';
 import { Camera, UpAxis } from './core/camera.js';
 import { TransferFunction, TFPreset } from './core/transfer-function.js';
 import { StreamingManager } from './streaming/streaming-manager.js';
@@ -221,7 +222,8 @@ export class KilnViewer {
     const config = new DatasetConfig(metadata.dimensions, metadata.voxelSpacing);
 
     // Construct subsystems
-    const renderer = new Renderer(device, format, effectiveBitDepth, textureFormat, config, metadata.numChannels);
+    const resources = new VolumeResources(device, effectiveBitDepth, textureFormat, config, metadata.numChannels);
+    const renderer = new Renderer(device, format, resources, config);
 
     // Apply 16-bit window/level defaults from metadata
     if (effectiveBitDepth === 16) {
@@ -318,11 +320,12 @@ export class KilnViewer {
 
     // Streaming manager
     const streamingManager = new StreamingManager(
-      renderer,
+      resources,
       dataProvider,
       metadata,
       device,
       config,
+      () => renderer.resetAccumulation(),
       options.pageLoadStart,
     );
 

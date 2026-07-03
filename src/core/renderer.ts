@@ -4,15 +4,12 @@
 
 import { mat4 } from 'wgpu-matrix';
 import { Camera } from './camera.js';
-import { VolumeCanvas, createVolumeCanvas } from './volume.js';
 import { createBox, createAxis } from '../utils/geometry.js';
 import { TransferFunction } from './transfer-function.js';
-import { IndirectionTable } from './indirection.js';
-import { AtlasAllocator } from '../streaming/atlas-allocator.js';
+import { VolumeResources } from './volume-resources.js';
 import { wireframeShader, axisShader, computeShader, blitShader, accumulateShader, slicePlanesShader } from '../shaders/index.js';
 import { COMPUTE_UNIFORMS, SLICE_UNIFORMS } from '../shaders/uniform-layout.js';
 import type { DatasetConfig } from './config.js';
-import type { BitDepth } from '../data/data-provider.js';
 
 // Volume render mode (shader-side)
 export type VolumeRenderMode = 'dvr' | 'mip' | 'iso' | 'lod' | 'slice';
@@ -20,23 +17,13 @@ export type VolumeRenderMode = 'dvr' | 'mip' | 'iso' | 'lod' | 'slice';
 export class Renderer {
   private device: GPUDevice;
 
-  // Number of channels (1–4)
-  readonly numChannels: number;
+  /** Volume atlas textures, indirection table, and slot allocator */
+  readonly resources: VolumeResources;
 
-  // Atlas textures — one per channel
-  canvases: VolumeCanvas[];
-
-  // Channel 0 alias for single-channel callers
-  get canvas(): VolumeCanvas { return this.canvases[0]!; }
-
-  // Dummy 1×1×1 texture bound to unused channel slots
-  private dummyTexture: GPUTexture;
-
-  // Indirection table for virtual texturing
-  indirection: IndirectionTable;
-
-  // Atlas slot allocator
-  allocator: AtlasAllocator;
+  // Delegate getters for backwards compatibility
+  get numChannels(): number { return this.resources.numChannels; }
+  get canvas() { return this.resources.canvas; }
+  get canvases() { return this.resources.canvases; }
 
   // Debug: toggle indirection on/off
   useIndirection = true;
@@ -175,29 +162,10 @@ export class Renderer {
   private readonly sliceUniformScratch = new Float32Array(SLICE_UNIFORMS.size / 4);
   private readonly sliceUniformView = new DataView(this.sliceUniformScratch.buffer);
 
-  constructor(device: GPUDevice, format: GPUTextureFormat, bitDepth: BitDepth, textureFormat: GPUTextureFormat, config: DatasetConfig, numChannels = 1) {
+  constructor(device: GPUDevice, format: GPUTextureFormat, resources: VolumeResources, config: DatasetConfig) {
     this.device = device;
     this.config = config;
-    this.numChannels = Math.min(Math.max(1, numChannels), 4);
-
-    // Create atlas textures — one per channel
-    this.canvases = Array.from({ length: this.numChannels }, () =>
-      createVolumeCanvas(device, bitDepth, textureFormat)
-    );
-
-    // Dummy texture for unused channel bindings (always bound, never sampled when numChannels < 4)
-    this.dummyTexture = device.createTexture({
-      size: [1, 1, 1],
-      format: textureFormat,
-      dimension: '3d',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-    });
-
-    // Create indirection table for virtual texturing
-    this.indirection = new IndirectionTable(device, config);
-
-    // Create atlas allocator
-    this.allocator = new AtlasAllocator();
+    this.resources = resources;
 
     // Create geometry (normalized proxy based on dataset aspect ratio)
     const box = createBox(config.normalizedSize);
@@ -457,13 +425,6 @@ export class Renderer {
     this.recreateVolumeBindGroups();
   }
 
-  /** View for atlas channel ch (dummy if ch >= numChannels) */
-  private atlasView(ch: number): GPUTextureView {
-    return ch < this.numChannels
-      ? this.canvases[ch]!.texture.createView()
-      : this.dummyTexture.createView();
-  }
-
   private recreateVolumeBindGroups(): void {
     if (!this.tfTexture) return;
 
@@ -472,13 +433,13 @@ export class Renderer {
       entries: [
         { binding: 0, resource: { buffer: this.sliceUniformBuffer } },
         { binding: 1, resource: this.volumeSampler },
-        { binding: 2, resource: this.atlasView(0) },
+        { binding: 2, resource: this.resources.atlasView(0) },
         { binding: 3, resource: this.tfSampler },
         { binding: 4, resource: this.tfTexture.createView() },
-        { binding: 6, resource: this.indirection.texture.createView() },
-        { binding: 8, resource: this.atlasView(1) },
-        { binding: 9, resource: this.atlasView(2) },
-        { binding: 10, resource: this.atlasView(3) },
+        { binding: 6, resource: this.resources.indirection.texture.createView() },
+        { binding: 8, resource: this.resources.atlasView(1) },
+        { binding: 9, resource: this.resources.atlasView(2) },
+        { binding: 10, resource: this.resources.atlasView(3) },
       ],
     });
 
@@ -487,14 +448,14 @@ export class Renderer {
       entries: [
         { binding: 0, resource: { buffer: this.computeUniformBuffer } },
         { binding: 1, resource: this.volumeSampler },
-        { binding: 2, resource: this.atlasView(0) },
+        { binding: 2, resource: this.resources.atlasView(0) },
         { binding: 3, resource: this.tfSampler },
         { binding: 4, resource: this.tfTexture.createView() },
-        { binding: 6, resource: this.indirection.texture.createView() },
+        { binding: 6, resource: this.resources.indirection.texture.createView() },
         { binding: 7, resource: this.computeOutputView },
-        { binding: 8, resource: this.atlasView(1) },
-        { binding: 9, resource: this.atlasView(2) },
-        { binding: 10, resource: this.atlasView(3) },
+        { binding: 8, resource: this.resources.atlasView(1) },
+        { binding: 9, resource: this.resources.atlasView(2) },
+        { binding: 10, resource: this.resources.atlasView(3) },
       ],
     });
   }
@@ -552,14 +513,14 @@ export class Renderer {
       entries: [
         { binding: 0, resource: { buffer: this.computeUniformBuffer } },
         { binding: 1, resource: this.volumeSampler },
-        { binding: 2, resource: this.atlasView(0) },
+        { binding: 2, resource: this.resources.atlasView(0) },
         { binding: 3, resource: this.tfSampler },
         { binding: 4, resource: this.tfTexture.createView() },
-        { binding: 6, resource: this.indirection.texture.createView() },
+        { binding: 6, resource: this.resources.indirection.texture.createView() },
         { binding: 7, resource: this.computeOutputView },
-        { binding: 8, resource: this.atlasView(1) },
-        { binding: 9, resource: this.atlasView(2) },
-        { binding: 10, resource: this.atlasView(3) },
+        { binding: 8, resource: this.resources.atlasView(1) },
+        { binding: 9, resource: this.resources.atlasView(2) },
+        { binding: 10, resource: this.resources.atlasView(3) },
       ],
     });
 

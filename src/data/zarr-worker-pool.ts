@@ -49,8 +49,11 @@ export class ZarrWorkerPool {
   private requestId = 0;
   private pendingRequests = new Map<number, PendingRequest>();
   private is16bit = false;
+  private queueAvg = new RollingAvg();
   private fetchAvg = new RollingAvg();
   private assemblyAvg = new RollingAvg();
+  private chunkHitTotal = 0;
+  private chunkReqTotal = 0;
 
   /** Maps request ID → worker index, for routing cancel messages */
   private requestToWorker = new Map<number, number>();
@@ -62,7 +65,7 @@ export class ZarrWorkerPool {
   private abortListeners = new Map<number, { signal: AbortSignal; listener: () => void }>();
 
   /** Max queue depth before spilling to least-loaded worker */
-  private readonly MAX_AFFINITY_QUEUE = 4;
+  private readonly MAX_AFFINITY_QUEUE = 1;
 
   /** Per-LOD chunk layout, kept on main thread for spatial-affinity dispatch */
   private lodChunkInfo: { scaleX: number; scaleY: number; scaleZ: number; csx: number; csy: number; csz: number }[] = [];
@@ -100,7 +103,7 @@ export class ZarrWorkerPool {
       const worker = createWorker();
 
       worker.onmessage = (event: MessageEvent<ZarrWorkerResponse>) => {
-        const { type: msgType, id, error, data, min, max, avg, rawMin, rawMax, fetchMs, assemblyMs } = event.data;
+        const { type: msgType, id, error, data, min, max, avg, rawMin, rawMax, fetchMs, assemblyMs, queueMs, chunkHits, chunkTotal } = event.data;
         const pending = this.pendingRequests.get(id);
         if (!pending) return;
         this.pendingRequests.delete(id);
@@ -124,8 +127,13 @@ export class ZarrWorkerPool {
         } else if (msgType === 'init' || msgType === 'setTargetFormat' || msgType === 'setFloatRange') {
           pending.resolve(undefined);
         } else if (msgType === 'loadBrick' && data) {
+          if (queueMs !== undefined) this.queueAvg.add(queueMs);
           if (fetchMs !== undefined) this.fetchAvg.add(fetchMs);
           if (assemblyMs !== undefined) this.assemblyAvg.add(assemblyMs);
+          if (chunkHits !== undefined && chunkTotal !== undefined) {
+            this.chunkHitTotal += chunkHits;
+            this.chunkReqTotal += chunkTotal;
+          }
           const typedData = this.is16bit
             ? new Uint16Array(data)
             : new Uint8Array(data);
@@ -253,7 +261,7 @@ export class ZarrWorkerPool {
       this.pendingRequests.set(id, { resolve, reject });
       this.requestToWorker.set(id, workerIdx);
 
-      const req: ZarrWorkerRequest = { type: 'loadBrick', id, lod, bx, by, bz, channelIndex };
+      const req: ZarrWorkerRequest = { type: 'loadBrick', id, lod, bx, by, bz, channelIndex, dispatchTime: performance.now() };
       worker.postMessage(req);
 
       if (signal) {
@@ -309,10 +317,12 @@ export class ZarrWorkerPool {
 
   getPipelineTimings(): PipelineTimings {
     return {
+      avgQueueMs: this.queueAvg.value,
       avgFetchMs: this.fetchAvg.value,
       avgAssemblyMs: this.assemblyAvg.value,
       avgUploadMs: 0, // measured in StreamingManager
       sampleCount: this.fetchAvg.count,
+      chunkCacheHitRatio: this.chunkReqTotal > 0 ? this.chunkHitTotal / this.chunkReqTotal : 0,
     };
   }
 

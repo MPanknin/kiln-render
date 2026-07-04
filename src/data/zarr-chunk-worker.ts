@@ -56,6 +56,8 @@ export interface ZarrWorkerRequest {
   }[];
   /** Channel index to load (for datasets with a channel axis) */
   channelIndex?: number;
+  /** Main-thread timestamp (performance.now) when request was dispatched — for queue wait measurement */
+  dispatchTime?: number;
   is16bit?: boolean;
   /** Target texture format: r8unorm (8-bit), r16unorm (16-bit uint), r16float (16-bit float) */
   targetFormat?: 'r8unorm' | 'r16unorm' | 'r16float';
@@ -83,6 +85,11 @@ export interface ZarrWorkerResponse {
   /** Per-stage timing (ms) — for pipeline telemetry */
   fetchMs?: number;
   assemblyMs?: number;
+  /** Worker queue wait: dispatchTime → worker starts processing (ms) */
+  queueMs?: number;
+  /** Chunk-cache hit ratio for this brick (hits / total chunks needed) */
+  chunkHits?: number;
+  chunkTotal?: number;
 }
 
 // Worker state
@@ -211,12 +218,15 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
   }
 
   if (type === 'loadBrick') {
-    const { lod, bx, by, bz } = event.data;
+    const { lod, bx, by, bz, dispatchTime } = event.data;
     const channelIndex = event.data.channelIndex ?? 0;
 
     // Serialize brick processing — one at a time per worker.
     // This makes store.currentSignal safe (no concurrent overlap).
     processingChain = processingChain.then(async () => {
+      // Measure queue wait: main-thread dispatch → worker starts processing
+      const queueMs = dispatchTime !== undefined ? performance.now() - dispatchTime : undefined;
+
       // Already cancelled before we started? Skip entirely.
       if (cancelledRequests.has(id)) {
         cancelledRequests.delete(id);
@@ -247,6 +257,9 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
           rawMax: result.rawMax,
           fetchMs: result.fetchMs,
           assemblyMs: result.assemblyMs,
+          queueMs,
+          chunkHits: result.chunkHits,
+          chunkTotal: result.chunkTotal,
         };
         (self as unknown as Worker).postMessage(resp, [result.buffer]);
       } catch (e) {
@@ -273,7 +286,7 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
  */
 async function assembleBrick(
   lod: number, bx: number, by: number, bz: number, channelIndex: number, signal?: AbortSignal
-): Promise<{ buffer: ArrayBuffer; min: number; max: number; avg: number; rawMin?: number; rawMax?: number; fetchMs: number; assemblyMs: number }> {
+): Promise<{ buffer: ArrayBuffer; min: number; max: number; avg: number; rawMin?: number; rawMax?: number; fetchMs: number; assemblyMs: number; chunkHits: number; chunkTotal: number }> {
   const arr = arrays[lod]!;
   const params = lodParams![lod]!;
   const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx } = params;
@@ -320,6 +333,7 @@ async function assembleBrick(
     chunkWH[fi] = w * h;
   };
 
+  let chunkHits = 0;
   const fetchPromises: Promise<void>[] = [];
   for (let cz = minCz; cz <= maxCz; cz++) {
     for (let cy = minCy; cy <= maxCy; cy++) {
@@ -332,6 +346,7 @@ async function assembleBrick(
           chunkCache.delete(key);
           chunkCache.set(key, cached);
           setChunkEntry(fi, cached.data, cached.shape);
+          chunkHits++;
         } else {
           // In-flight dedup: if another assembleBrick is already fetching this
           // chunk, share its promise instead of issuing a duplicate HTTP request
@@ -511,5 +526,7 @@ async function assembleBrick(
     rawMax: isFloat32 && isFinite(rawMaxVal) ? rawMaxVal : undefined,
     fetchMs,
     assemblyMs,
+    chunkHits,
+    chunkTotal: chunkCount,
   };
 }

@@ -118,6 +118,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
 
   getPipelineTimings(): PipelineTimings {
     return {
+      avgQueueMs: 0, // no worker queue in local provider
       avgFetchMs: this.fetchAvg.value,
       avgAssemblyMs: this.assemblyAvg.value,
       avgUploadMs: 0, // measured in StreamingManager

@@ -100,6 +100,8 @@ export interface VolumeMetadata {
  * All values are milliseconds per brick. Zero means no data yet.
  */
 export interface PipelineTimings {
+  /** Avg queue wait: dispatch → worker starts processing (ms per brick) */
+  avgQueueMs: number;
   /** Avg time for chunk I/O (filesystem read or HTTP fetch + decompress) per brick */
   avgFetchMs: number;
   /** Avg time for brick assembly loop (voxel scatter + any format conversion) per brick */
@@ -108,6 +110,8 @@ export interface PipelineTimings {
   avgUploadMs: number;
   /** Number of bricks in the rolling sample window */
   sampleCount: number;
+  /** Per-worker chunk cache hit ratio (0–1). Measures bandwidth amplification quality. */
+  chunkCacheHitRatio?: number;
 }
 
 /**

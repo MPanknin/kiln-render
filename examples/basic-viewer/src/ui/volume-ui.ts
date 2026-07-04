@@ -94,10 +94,16 @@ export class VolumeUI {
     throughput: '',
     totalDownloaded: '',
     // Pipeline timings
+    pipelineQueue: '',
     pipelineFetch: '',
     pipelineAssembly: '',
     pipelineUpload: '',
     pipelineSamples: '',
+    // Telemetry
+    brickLifecycle: '',
+    wastedRate: '',
+    chunkCacheHit: '',
+    brickLatency: '',
   };
 
   // Frame timing tracking
@@ -515,12 +521,20 @@ export class VolumeUI {
       readonly: true,
     });
 
-    // Pipeline timing section (hidden)
-    // const pipeFolder = statsPane.addFolder({ title: 'Pipeline (avg/brick)', expanded: false });
-    // pipeFolder.addBinding(this.statsParams, 'pipelineFetch', { label: 'Fetch', readonly: true });
-    // pipeFolder.addBinding(this.statsParams, 'pipelineAssembly', { label: 'Assembly', readonly: true });
-    // pipeFolder.addBinding(this.statsParams, 'pipelineUpload', { label: 'GPU upload', readonly: true });
-    // pipeFolder.addBinding(this.statsParams, 'pipelineSamples', { label: 'Samples', readonly: true });
+    // Pipeline breakdown (avg ms per brick)
+    const pipeFolder = statsPane.addFolder({ title: 'Pipeline (avg/brick)', expanded: false });
+    pipeFolder.addBinding(this.statsParams, 'pipelineQueue', { label: 'Queue', readonly: true });
+    pipeFolder.addBinding(this.statsParams, 'pipelineFetch', { label: 'Fetch', readonly: true });
+    pipeFolder.addBinding(this.statsParams, 'pipelineAssembly', { label: 'Assembly', readonly: true });
+    pipeFolder.addBinding(this.statsParams, 'pipelineUpload', { label: 'Upload', readonly: true });
+    pipeFolder.addBinding(this.statsParams, 'pipelineSamples', { label: 'Samples', readonly: true });
+
+    // Telemetry section
+    const telemetryFolder = statsPane.addFolder({ title: 'Telemetry', expanded: false });
+    telemetryFolder.addBinding(this.statsParams, 'brickLifecycle', { label: 'Lifecycle', readonly: true });
+    telemetryFolder.addBinding(this.statsParams, 'wastedRate', { label: 'Wasted', readonly: true });
+    telemetryFolder.addBinding(this.statsParams, 'chunkCacheHit', { label: 'Cache hit', readonly: true });
+    telemetryFolder.addBinding(this.statsParams, 'brickLatency', { label: 'Latency', readonly: true });
   }
 
   private initStreaming(manager: StreamingManager, metadata: VolumeMetadata): void {
@@ -593,10 +607,26 @@ export class VolumeUI {
 
       // Pipeline timings
       const pt = stats.pipelineTimings;
+      this.statsParams.pipelineQueue = pt.sampleCount > 0 ? `${pt.avgQueueMs.toFixed(1)} ms` : '—';
       this.statsParams.pipelineFetch = pt.sampleCount > 0 ? `${pt.avgFetchMs.toFixed(1)} ms` : '—';
       this.statsParams.pipelineAssembly = pt.sampleCount > 0 ? `${pt.avgAssemblyMs.toFixed(1)} ms` : '—';
       this.statsParams.pipelineUpload = pt.sampleCount > 0 ? `${pt.avgUploadMs.toFixed(1)} ms` : '—';
       this.statsParams.pipelineSamples = `${pt.sampleCount}`;
+
+      // Telemetry
+      const d = stats.bricksDispatched;
+      const c = stats.bricksCommitted;
+      const x = stats.bricksCancelled;
+      const w = stats.bricksDiscarded;
+      this.statsParams.brickLifecycle = `D:${d} C:${c} X:${x} W:${w}`;
+
+      const wastedDenom = c + w;
+      this.statsParams.wastedRate = wastedDenom > 0 ? `${((w / wastedDenom) * 100).toFixed(1)}%` : '—';
+
+      const hitRatio = pt.chunkCacheHitRatio;
+      this.statsParams.chunkCacheHit = hitRatio !== undefined ? `${(hitRatio * 100).toFixed(1)}%` : '—';
+
+      this.statsParams.brickLatency = stats.avgBrickLatencyMs > 0 ? `${stats.avgBrickLatencyMs.toFixed(1)} ms` : '—';
 
       // Time to first render
       if (stats.timeToFirstRender !== null) {

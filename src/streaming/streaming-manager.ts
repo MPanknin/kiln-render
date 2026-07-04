@@ -53,10 +53,17 @@ export interface StreamingStats {
   timeToFirstRender: number | null; // ms, null if not yet loaded
   // Evictions since last stats reset
   evictedCount: number;
-  // Allocation refusals under atlas pressure 
+  // Allocation refusals under atlas pressure
   allocationsRefused: number;
   // Per-stage pipeline timings (rolling avg over last ~32 bricks)
   pipelineTimings: PipelineTimings;
+  // Brick lifecycle counters (cumulative)
+  bricksDispatched: number;
+  bricksCommitted: number;
+  bricksCancelled: number;
+  bricksDiscarded: number; // fetched but no longer desired (stale-on-arrival)
+  // End-to-end latency: dispatch → committed (rolling avg ms)
+  avgBrickLatencyMs: number;
 }
 
 export class StreamingManager {
@@ -128,6 +135,14 @@ export class StreamingManager {
   // GPU upload timing (writeTexture, measured on main thread for all providers)
   private uploadAvg = new RollingAvg();
 
+  // Brick lifecycle telemetry
+  private bricksDispatched = 0;
+  private bricksCommitted = 0;
+  private bricksCancelled = 0;
+  private bricksDiscarded = 0;
+  private brickLatencyAvg = new RollingAvg();
+  private dispatchTimestamps = new Map<string, number>();
+
   // Screen-Space Error (SSE) threshold in pixels
   // Split to finer LOD when projected voxel error exceeds this value
   // Lower = higher quality, more bricks loaded
@@ -173,7 +188,12 @@ export class StreamingManager {
     timeToFirstRender: null,
     evictedCount: 0,
     allocationsRefused: 0,
-    pipelineTimings: { avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0 },
+    pipelineTimings: { avgQueueMs: 0, avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0 },
+    bricksDispatched: 0,
+    bricksCommitted: 0,
+    bricksCancelled: 0,
+    bricksDiscarded: 0,
+    avgBrickLatencyMs: 0,
   };
 
   // Throttle updates (don't recompute every frame)
@@ -640,6 +660,7 @@ export class StreamingManager {
     }
     this.inFlightRequests.clear();
     this.inFlightStaleTime.clear();
+    this.dispatchTimestamps.clear();
 
     // reset the allocator wholesale instead of freeing slot-by-slot.
     // The old per-slot free loop left every pinned base-LOD slot in the
@@ -667,7 +688,7 @@ export class StreamingManager {
   getStats(): StreamingStats {
     const networkStats = this.dataProvider.getNetworkStats();
     const providerTimings = this.dataProvider.getPipelineTimings?.() ?? {
-      avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0,
+      avgQueueMs: 0, avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0,
     };
     return {
       ...this.lastStats,
@@ -677,11 +698,18 @@ export class StreamingManager {
       requestCount: networkStats.requestCount,
       timeToFirstRender: this.timeToFirstRender,
       pipelineTimings: {
+        avgQueueMs: providerTimings.avgQueueMs,
         avgFetchMs: providerTimings.avgFetchMs,
         avgAssemblyMs: providerTimings.avgAssemblyMs,
         avgUploadMs: this.uploadAvg.value,
         sampleCount: Math.max(providerTimings.sampleCount, this.uploadAvg.count),
+        chunkCacheHitRatio: providerTimings.chunkCacheHitRatio,
       },
+      bricksDispatched: this.bricksDispatched,
+      bricksCommitted: this.bricksCommitted,
+      bricksCancelled: this.bricksCancelled,
+      bricksDiscarded: this.bricksDiscarded,
+      avgBrickLatencyMs: this.brickLatencyAvg.value,
     };
   }
 
@@ -848,6 +876,7 @@ export class StreamingManager {
           controller.abort();
           this.inFlightRequests.delete(key);
           this.inFlightStaleTime.delete(key);
+          this.bricksCancelled++;
           cancelledCount++;
         }
       }
@@ -898,7 +927,12 @@ export class StreamingManager {
       timeToFirstRender: null, // Actual value comes from getStats()
       evictedCount: this.lastStats.evictedCount,
       allocationsRefused: this.lastStats.allocationsRefused,
-      pipelineTimings: { avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0 },
+      pipelineTimings: { avgQueueMs: 0, avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0 },
+      bricksDispatched: 0, // live values from getStats()
+      bricksCommitted: 0,
+      bricksCancelled: 0,
+      bricksDiscarded: 0,
+      avgBrickLatencyMs: 0,
     };
   }
 
@@ -940,6 +974,8 @@ export class StreamingManager {
       // Create AbortController for this request
       const controller = new AbortController();
       this.inFlightRequests.set(request.key, controller);
+      this.dispatchTimestamps.set(request.key, performance.now());
+      this.bricksDispatched++;
 
       this.loadBrick(request, controller.signal).finally(() => {
         // Guard against a stale .finally() from an aborted request deleting a newer
@@ -947,6 +983,7 @@ export class StreamingManager {
         if (this.inFlightRequests.get(request.key) === controller) {
           this.inFlightRequests.delete(request.key);
         }
+        this.dispatchTimestamps.delete(request.key);
       });
     }
   }
@@ -1027,7 +1064,10 @@ export class StreamingManager {
     }
 
     // Camera may have moved while the fetch was in flight — skip if no longer desired
-    if (!this.desiredKeys.has(key)) return;
+    if (!this.desiredKeys.has(key)) {
+      this.bricksDiscarded++;
+      return;
+    }
 
     // Allocate one slot (shared atlas position across all channels)
     const result = this.resources.allocator.allocate(this.frameCount);
@@ -1110,6 +1150,13 @@ export class StreamingManager {
 
     // Track
     this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
+    this.bricksCommitted++;
+
+    // Record end-to-end latency (dispatch → committed)
+    const dispatchTime = this.dispatchTimestamps.get(key);
+    if (dispatchTime !== undefined) {
+      this.brickLatencyAvg.add(performance.now() - dispatchTime);
+    }
 
     // Schedule accumulation reset to prevent constant flickering during streaming bursts
     this.scheduleAccumulationReset();

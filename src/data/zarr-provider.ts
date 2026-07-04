@@ -174,7 +174,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
 
   getPipelineTimings(): PipelineTimings {
     return this.workerPool?.getPipelineTimings() ?? {
-      avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0,
+      avgQueueMs: 0, avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0,
     };
   }
 

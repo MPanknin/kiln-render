@@ -57,10 +57,8 @@ export class TolerantFetchStore implements AsyncReadable<RequestInit> {
    * Per-request abort signal — set by the worker before each brick assembly,
    * cleared after. With serialized brick processing (one brick at a time per
    * worker), this is safe: only one signal is active at any moment.
-   *
-   * IMPORTANT: get()/getRange() capture this signal BEFORE the semaphore wait.
-   * If captured after, queued fetches from a cancelled brick would wake up with
-   * currentSignal=null and proceed as orphan requests that never abort.
+   * When set, every fetch() call in get()/getRange() includes this signal,
+   * allowing in-flight HTTP requests to be aborted when the brick is cancelled.
    */
   currentSignal: AbortSignal | null = null;
 
@@ -90,15 +88,10 @@ export class TolerantFetchStore implements AsyncReadable<RequestInit> {
   }
 
   async get(key: AbsolutePath, options?: RequestInit): Promise<Uint8Array | undefined> {
-    // Capture signal BEFORE the semaphore wait — if the brick is cancelled
-    // while this fetch is queued, the signal is already aborted when we
-    // finally get a slot, and fetch() rejects immediately instead of
-    // proceeding as an orphan request with no abort signal.
-    const signal = this.currentSignal;
     await this.acquireFetchSlot();
     try {
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       const href = resolveUrl(this.baseUrl, key);
+      const signal = this.currentSignal;
       const init: RequestInit = { ...this.overrides, ...options, ...(signal ? { signal } : {}) };
 
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -140,10 +133,9 @@ export class TolerantFetchStore implements AsyncReadable<RequestInit> {
   }
 
   async getRange(key: AbsolutePath, range: RangeQuery, options?: RequestInit): Promise<Uint8Array | undefined> {
-    const signal = this.currentSignal;
     await this.acquireFetchSlot();
     try {
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      const signal = this.currentSignal;
       const mergedOptions = signal ? { ...options, signal } : options;
 
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {

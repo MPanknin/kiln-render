@@ -216,9 +216,8 @@ export class ShardedDataProvider implements DataProvider {
   /**
    * Load a single brick
    */
-  async loadBrick(lod: number, bx: number, by: number, bz: number, _channelIndex?: number, signal?: AbortSignal): Promise<BrickLoadResult | null> {
+  async loadBrick(lod: number, bx: number, by: number, bz: number, _channelIndex?: number, _signal?: AbortSignal): Promise<BrickLoadResult | null> {
     const key = `lod${lod}:${bx}-${by}-${bz}`;
-    if (signal?.aborted) return null;
 
     // Check cache first
     if (this.cache.has(key)) {
@@ -257,7 +256,6 @@ export class ShardedDataProvider implements DataProvider {
         headers: {
           'Range': `bytes=${entry.offset}-${rangeEnd}`,
         },
-        ...(signal ? { signal } : {}),
       });
 
       if (!response.ok && response.status !== 206) {
@@ -290,7 +288,6 @@ export class ShardedDataProvider implements DataProvider {
       this.cache.set(key, data);
       return { data, min: entry.min, max: entry.max, avg: entry.avg };
     } catch (e) {
-      if (e instanceof DOMException && e.name === 'AbortError') return null;
       console.warn(`Error loading brick lod${lod}:${bx}-${by}-${bz}:`, e);
       return null;
     }

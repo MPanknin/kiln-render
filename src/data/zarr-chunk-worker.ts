@@ -302,18 +302,36 @@ async function assembleBrick(
 
   // --- Stage 1: chunk fetch (HTTP + zarr decompression, parallel, with cache + dedup) ---
   const t0 = performance.now();
-  const localChunks = new Map<string, { data: ArrayLike<number>; shape: number[] }>();
+  // Flat chunk lookup: direct integer indexing replaces Map<string> + per-voxel
+  // string allocation in the assembly loop.
+  // Index = (cz-minCz)*ncy*ncx + (cy-minCy)*ncx + (cx-minCx)
+  const ncx = maxCx - minCx + 1;
+  const ncy = maxCy - minCy + 1;
+  const chunkCount = ncx * ncy * (maxCz - minCz + 1);
+  const chunkDataArr: (ArrayLike<number> | null)[] = new Array(chunkCount).fill(null);
+  const chunkW = new Int32Array(chunkCount);  // per-chunk width (stride for Y)
+  const chunkWH = new Int32Array(chunkCount); // per-chunk W*H (stride for Z)
+
+  const setChunkEntry = (fi: number, data: ArrayLike<number>, shape: number[]) => {
+    chunkDataArr[fi] = data;
+    const w = shape[shape.length - 1]!;
+    const h = shape[shape.length - 2]!;
+    chunkW[fi] = w;
+    chunkWH[fi] = w * h;
+  };
+
   const fetchPromises: Promise<void>[] = [];
   for (let cz = minCz; cz <= maxCz; cz++) {
     for (let cy = minCy; cy <= maxCy; cy++) {
       for (let cx = minCx; cx <= maxCx; cx++) {
+        const fi = (cz - minCz) * ncy * ncx + (cy - minCy) * ncx + (cx - minCx);
         const key = cacheKey(lod, cz, cy, cx, channelIndex);
         const cached = chunkCache.get(key);
         if (cached) {
           // refresh recency: delete+re-set moves to end of map iteration order (LRU)
           chunkCache.delete(key);
           chunkCache.set(key, cached);
-          localChunks.set(key, cached);
+          setChunkEntry(fi, cached.data, cached.shape);
         } else {
           // In-flight dedup: if another assembleBrick is already fetching this
           // chunk, share its promise instead of issuing a duplicate HTTP request
@@ -333,7 +351,7 @@ async function assembleBrick(
             inflightFetches.set(key, chunkPromise);
           }
           fetchPromises.push(chunkPromise.then(entry => {
-            localChunks.set(key, entry);
+            setChunkEntry(fi, entry.data, entry.shape);
           }));
         }
       }
@@ -350,7 +368,33 @@ async function assembleBrick(
     throw new DOMException('Aborted', 'AbortError');
   }
 
-  // --- Stage 2: brick assembly (voxel scatter + format conversion) ---
+  // --- Stage 2: brick assembly (LUT-based voxel scatter + format conversion) ---
+  // Precompute per-axis LUTs: local brick coord → (chunk index, intra-chunk offset).
+  // Eliminates ~287k string allocations + Map.get calls per 66³ brick.
+  const lutChunkX = new Int32Array(physSize);
+  const lutChunkY = new Int32Array(physSize);
+  const lutChunkZ = new Int32Array(physSize);
+  const lutOffX = new Int32Array(physSize);
+  const lutOffY = new Int32Array(physSize);
+  const lutOffZ = new Int32Array(physSize);
+
+  for (let i = 0; i < physSize; i++) {
+    const gx = Math.max(0, Math.min(actualDimX - 1, Math.round((vStartX + i) * scaleX)));
+    const cxI = Math.floor(gx / csx);
+    lutChunkX[i] = cxI - minCx;
+    lutOffX[i] = gx - cxI * csx;
+
+    const gy = Math.max(0, Math.min(actualDimY - 1, Math.round((vStartY + i) * scaleY)));
+    const cyI = Math.floor(gy / csy);
+    lutChunkY[i] = cyI - minCy;
+    lutOffY[i] = gy - cyI * csy;
+
+    const gz = Math.max(0, Math.min(actualDimZ - 1, Math.round((vStartZ + i) * scaleZ)));
+    const czI = Math.floor(gz / csz);
+    lutChunkZ[i] = czI - minCz;
+    lutOffZ[i] = gz - czI * csz;
+  }
+
   const t1 = performance.now();
   const brick = is16bit
     ? new Uint16Array(physSize * physSize * physSize)
@@ -365,31 +409,23 @@ async function assembleBrick(
   let rawMaxVal = -Infinity;
 
   for (let lz = 0; lz < physSize; lz++) {
+    const czi = lutChunkZ[lz]!;
+    const lcz = lutOffZ[lz]!;
+    const zBase = czi * ncy * ncx;
+    const brickZBase = lz * physSize * physSize;
+
     for (let ly = 0; ly < physSize; ly++) {
+      const cyi = lutChunkY[ly]!;
+      const lcy = lutOffY[ly]!;
+      const yzBase = zBase + cyi * ncx;
+      const brickYZBase = brickZBase + ly * physSize;
+
       for (let lx = 0; lx < physSize; lx++) {
-        const vx = vStartX + lx;
-        const vy = vStartY + ly;
-        const vz = vStartZ + lz;
-
-        const gx = Math.max(0, Math.min(actualDimX - 1, Math.round(vx * scaleX)));
-        const gy = Math.max(0, Math.min(actualDimY - 1, Math.round(vy * scaleY)));
-        const gz = Math.max(0, Math.min(actualDimZ - 1, Math.round(vz * scaleZ)));
-
-        const cx = Math.floor(gx / csx);
-        const cy = Math.floor(gy / csy);
-        const cz = Math.floor(gz / csz);
-
-        const lcx = gx - cx * csx;
-        const lcy = gy - cy * csy;
-        const lcz = gz - cz * csz;
-
-        const key = cacheKey(lod, cz, cy, cx, channelIndex);
-        const chunk = localChunks.get(key);
-        if (chunk) {
-          const chunkW = chunk.shape[chunk.shape.length - 1]!;
-          const chunkH = chunk.shape[chunk.shape.length - 2]!;
-          const idx = lcz * chunkH * chunkW + lcy * chunkW + lcx;
-          const raw = Number(chunk.data[idx]!);
+        const fi = yzBase + lutChunkX[lx]!;
+        const data = chunkDataArr[fi];
+        if (data) {
+          const idx = lcz * chunkWH[fi]! + lcy * chunkW[fi]! + lutOffX[lx]!;
+          const raw = Number(data[idx]!);
 
           let brickVal: number;
           let statVal: number;
@@ -414,7 +450,7 @@ async function assembleBrick(
             statVal = raw;
           }
 
-          brick[lx + ly * physSize + lz * physSize * physSize] = brickVal;
+          brick[brickYZBase + lx] = brickVal;
           min = Math.min(min, statVal);
           max = Math.max(max, statVal);
           sum += statVal;

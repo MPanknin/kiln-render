@@ -12,16 +12,15 @@
  *    "Unexpected token '<'". We detect HTML responses by Content-Type and
  *    return undefined instead.
  *
- * 3. Fetch concurrency is bounded by a per-store semaphore. Each worker creates
- *    its own store, so the limit is per-worker. This prevents exhausting
- *    Chrome's socket pool (ERR_INSUFFICIENT_RESOURCES) when many bricks are
- *    assembled concurrently — especially on HTTP/1.1 where ~6 connections
- *    per origin is the hard browser limit.
- *
- * 4. Transient failures (5xx, network errors) are retried with bounded
+ * 3. Transient failures (5xx, network errors) are retried with bounded
  *    exponential backoff and THROW after exhaustion — they must never map to
  *    undefined, because zarrita interprets undefined as "chunk does not exist"
  *    and silently fills the region with zeros (permanent data holes).
+ *
+ * Fetch concurrency is NOT throttled here — the browser's connection pool
+ * handles multiplexing (HTTP/2) and queuing (HTTP/1.1) natively. The
+ * StreamingManager's maxConcurrentRequests (8) bounds how many bricks are
+ * in-flight, which naturally limits the number of chunk fetches.
  */
 
 import { FetchStore } from 'zarrita';
@@ -48,116 +47,69 @@ export class TolerantFetchStore implements AsyncReadable<RequestInit> {
   private baseUrl: string | URL;
   private overrides?: RequestInit;
 
-  /** Fetch concurrency control — limits active HTTP requests per store instance */
-  private activeFetches = 0;
-  private fetchQueue: (() => void)[] = [];
-  private readonly maxConcurrentFetches: number;
-
-  /**
-   * Per-request abort signal — set by the worker before each brick assembly,
-   * cleared after. With serialized brick processing (one brick at a time per
-   * worker), this is safe: only one signal is active at any moment.
-   * When set, every fetch() call in get()/getRange() includes this signal,
-   * allowing in-flight HTTP requests to be aborted when the brick is cancelled.
-   */
-  currentSignal: AbortSignal | null = null;
-
-  constructor(url: string | URL, options?: { overrides?: RequestInit; maxConcurrentFetches?: number }) {
+  constructor(url: string | URL, options?: { overrides?: RequestInit }) {
     this.inner = new FetchStore(url, options);
     this.baseUrl = url;
     this.overrides = options?.overrides;
-    this.maxConcurrentFetches = options?.maxConcurrentFetches ?? 6;
-  }
-
-  private async acquireFetchSlot(): Promise<void> {
-    if (this.activeFetches < this.maxConcurrentFetches) {
-      this.activeFetches++;
-      return;
-    }
-    await new Promise<void>(resolve => this.fetchQueue.push(resolve));
-  }
-
-  private releaseFetchSlot(): void {
-    const next = this.fetchQueue.shift();
-    if (next) {
-      // Hand the slot directly to the next waiter (no decrement/increment)
-      next();
-    } else {
-      this.activeFetches--;
-    }
   }
 
   async get(key: AbsolutePath, options?: RequestInit): Promise<Uint8Array | undefined> {
-    await this.acquireFetchSlot();
-    try {
-      const href = resolveUrl(this.baseUrl, key);
-      const signal = this.currentSignal;
-      const init: RequestInit = { ...this.overrides, ...options, ...(signal ? { signal } : {}) };
+    const href = resolveUrl(this.baseUrl, key);
+    const init: RequestInit = { ...this.overrides, ...options };
 
-      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        let response: Response;
-        try {
-          response = await fetch(href, init);
-        } catch (e) {
-          // AbortError — don't retry, rethrow immediately
-          if (e instanceof DOMException && e.name === 'AbortError') throw e;
-          // Network error — retry with backoff
-          if (attempt < MAX_RETRIES) {
-            await delay(RETRY_DELAYS[attempt]!);
-            continue;
-          }
-          throw new Error(`Network error fetching ${key} after ${MAX_RETRIES + 1} attempts`);
-        }
-
-        // 403/404 are intentional "not found" (CloudFront OAI, missing chunks)
-        if (response.status === 404 || response.status === 403) return undefined;
-
-        if (response.status === 200 || response.status === 206) {
-          const ct = response.headers.get('content-type') ?? '';
-          if (ct.includes('text/html')) return undefined;
-          return new Uint8Array(await response.arrayBuffer());
-        }
-
-        // 5xx or unexpected status — retry with backoff
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      let response: Response;
+      try {
+        response = await fetch(href, init);
+      } catch (e) {
+        // AbortError — don't retry, rethrow immediately
+        if (e instanceof DOMException && e.name === 'AbortError') throw e;
+        // Network error — retry with backoff
         if (attempt < MAX_RETRIES) {
           await delay(RETRY_DELAYS[attempt]!);
           continue;
         }
-        throw new Error(`HTTP ${response.status} fetching ${key} after ${MAX_RETRIES + 1} attempts`);
+        throw new Error(`Network error fetching ${key} after ${MAX_RETRIES + 1} attempts`);
       }
 
-      return undefined; // unreachable, satisfies TS
-    } finally {
-      this.releaseFetchSlot();
+      // 403/404 are intentional "not found" (CloudFront OAI, missing chunks)
+      if (response.status === 404 || response.status === 403) return undefined;
+
+      if (response.status === 200 || response.status === 206) {
+        const ct = response.headers.get('content-type') ?? '';
+        if (ct.includes('text/html')) return undefined;
+        return new Uint8Array(await response.arrayBuffer());
+      }
+
+      // 5xx or unexpected status — retry with backoff
+      if (attempt < MAX_RETRIES) {
+        await delay(RETRY_DELAYS[attempt]!);
+        continue;
+      }
+      throw new Error(`HTTP ${response.status} fetching ${key} after ${MAX_RETRIES + 1} attempts`);
     }
+
+    return undefined; // unreachable, satisfies TS
   }
 
   async getRange(key: AbsolutePath, range: RangeQuery, options?: RequestInit): Promise<Uint8Array | undefined> {
-    await this.acquireFetchSlot();
-    try {
-      const signal = this.currentSignal;
-      const mergedOptions = signal ? { ...options, signal } : options;
-
-      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        try {
-          return await this.inner.getRange!(key, range, mergedOptions);
-        } catch (e) {
-          // AbortError — don't retry, rethrow immediately
-          if (e instanceof DOMException && e.name === 'AbortError') throw e;
-          // Intentional "not found" semantics (CloudFront OAI) — not an error
-          if (e instanceof Error && e.message.includes('403')) {
-            return undefined;
-          }
-          if (attempt < MAX_RETRIES) {
-            await delay(RETRY_DELAYS[attempt]!);
-            continue;
-          }
-          throw e;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        return await this.inner.getRange!(key, range, options);
+      } catch (e) {
+        // AbortError — don't retry, rethrow immediately
+        if (e instanceof DOMException && e.name === 'AbortError') throw e;
+        // Intentional "not found" semantics (CloudFront OAI) — not an error
+        if (e instanceof Error && e.message.includes('403')) {
+          return undefined;
         }
+        if (attempt < MAX_RETRIES) {
+          await delay(RETRY_DELAYS[attempt]!);
+          continue;
+        }
+        throw e;
       }
-      return undefined; // unreachable, satisfies TS
-    } finally {
-      this.releaseFetchSlot();
     }
+    return undefined; // unreachable, satisfies TS
   }
 }

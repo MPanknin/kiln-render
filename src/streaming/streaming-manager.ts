@@ -109,7 +109,7 @@ export class StreamingManager {
   private readonly CANCEL_GRACE_MS = 200;
 
   // Max concurrent requests
-  private maxConcurrentRequests = 8;
+  private maxConcurrentRequests = 12;
 
   // Callback for when base LOD is loaded with brick data
   private onBaseLodLoaded: ((brickData: (Uint8Array | Uint16Array)[]) => void) | null = null;

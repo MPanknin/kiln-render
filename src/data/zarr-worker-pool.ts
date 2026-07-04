@@ -4,6 +4,10 @@
  * Each worker runs the full pipeline: fetch + decompress + assemble 66³ bricks.
  * The main thread never touches voxel data — just dispatches requests
  * and uploads returned buffers to the GPU.
+ *
+ * Workers are assigned via round-robin. Concurrency is bounded by the
+ * StreamingManager's maxConcurrentRequests (8), so each worker typically
+ * handles ~1 brick at a time.
  */
 
 import type { ZarrWorkerRequest, ZarrWorkerResponse } from './zarr-chunk-worker.js';
@@ -46,6 +50,7 @@ interface PendingRequest {
 
 export class ZarrWorkerPool {
   private workers: Worker[] = [];
+  private nextWorkerIndex = 0;
   private requestId = 0;
   private pendingRequests = new Map<number, PendingRequest>();
   private is16bit = false;
@@ -58,18 +63,8 @@ export class ZarrWorkerPool {
   /** Maps request ID → worker index, for routing cancel messages */
   private requestToWorker = new Map<number, number>();
 
-  /** Outstanding request count per worker, for load-balance spill */
-  private outstandingPerWorker: number[] = [];
-
   /** Abort listeners to clean up on normal completion (prevents stale cancel messages) */
   private abortListeners = new Map<number, { signal: AbortSignal; listener: () => void }>();
-
-  /** Max queue depth before spilling to least-loaded worker */
-  private readonly MAX_AFFINITY_QUEUE = 1;
-
-  /** Per-LOD chunk layout, kept on main thread for spatial-affinity dispatch */
-  private lodChunkInfo: { scaleX: number; scaleY: number; scaleZ: number; csx: number; csy: number; csz: number }[] = [];
-  private logicalBrickSize = 64;
 
   constructor(
     private poolSize: number = navigator.hardwareConcurrency
@@ -92,11 +87,6 @@ export class ZarrWorkerPool {
     floatRange?: [number, number],
   ): Promise<void> {
     this.is16bit = is16bit;
-    this.logicalBrickSize = logicalBrickSize;
-    this.lodChunkInfo = (lodParams ?? []).map(p => ({
-      scaleX: p.scaleX, scaleY: p.scaleY, scaleZ: p.scaleZ,
-      csx: p.csx, csy: p.csy, csz: p.csz,
-    }));
     const initPromises: Promise<void>[] = [];
 
     for (let i = 0; i < this.poolSize; i++) {
@@ -108,12 +98,8 @@ export class ZarrWorkerPool {
         if (!pending) return;
         this.pendingRequests.delete(id);
 
-        // Decrement outstanding count for the worker that handled this request
-        const wi = this.requestToWorker.get(id);
-        if (wi !== undefined) {
-          this.outstandingPerWorker[wi]!--;
-          this.requestToWorker.delete(id);
-        }
+        // Clean up request→worker mapping
+        this.requestToWorker.delete(id);
 
         // Remove abort listener so a later signal.abort() doesn't post a stale cancel
         const entry = this.abortListeners.get(id);
@@ -176,7 +162,6 @@ export class ZarrWorkerPool {
     }
 
     await Promise.all(initPromises);
-    this.outstandingPerWorker = new Array(this.workers.length).fill(0);
   }
 
   /**
@@ -205,59 +190,18 @@ export class ZarrWorkerPool {
   }
 
   /**
-   * Pick a worker by spatial affinity: bricks that overlap the same zarr chunks
-   * land on the same worker, maximizing per-worker chunk-cache hits.
-   *
-   * Coarsened (>>1) so a 2×2×2 neighbourhood of chunk-indices maps to the same
-   * worker — prevents load imbalance when zoomed into a small region where all
-   * bricks fall into the same fine-grained chunk bucket.
-   *
-   * If the affinity worker's queue exceeds MAX_AFFINITY_QUEUE, spill to the
-   * least-loaded worker to prevent starvation.
-   */
-  private getAffinityWorker(lod: number, bx: number, by: number, bz: number): number {
-    const info = this.lodChunkInfo[lod];
-    if (!info) return 0;
-
-    // Brick center in virtual voxel coords → actual zarr coords → chunk index
-    const half = this.logicalBrickSize >> 1;
-    const cx = Math.floor((bx * this.logicalBrickSize + half) * info.scaleX / info.csx) >> 1;
-    const cy = Math.floor((by * this.logicalBrickSize + half) * info.scaleY / info.csy) >> 1;
-    const cz = Math.floor((bz * this.logicalBrickSize + half) * info.scaleZ / info.csz) >> 1;
-
-    // Spatial hash → worker index (constants are large coprime numbers for mixing)
-    const h = ((lod * 73856093) ^ (cx * 19349663) ^ (cy * 83492791) ^ (cz * 4256233)) >>> 0;
-    const affinityIdx = h % this.workers.length;
-
-    // Spill to least-loaded worker if affinity worker is overloaded
-    if (this.outstandingPerWorker[affinityIdx]! >= this.MAX_AFFINITY_QUEUE) {
-      let minIdx = 0;
-      let minLoad = this.outstandingPerWorker[0]!;
-      for (let i = 1; i < this.outstandingPerWorker.length; i++) {
-        if (this.outstandingPerWorker[i]! < minLoad) {
-          minLoad = this.outstandingPerWorker[i]!;
-          minIdx = i;
-        }
-      }
-      return minIdx;
-    }
-
-    return affinityIdx;
-  }
-
-  /**
    * Load a fully assembled 66³ brick in a worker (off main thread).
-   * When an AbortSignal is provided and fires, a cancel message is sent to
-   * the worker (aborting the in-flight HTTP fetch) and the promise rejects
+   * Workers are assigned round-robin. When an AbortSignal is provided and
+   * fires, a cancel message is sent to the worker and the promise rejects
    * with an AbortError.
    */
   loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0, signal?: AbortSignal): Promise<BrickResult> {
     return new Promise((resolve, reject) => {
       const id = this.requestId++;
-      const workerIdx = this.getAffinityWorker(lod, bx, by, bz);
+      const workerIdx = this.nextWorkerIndex;
+      this.nextWorkerIndex = (this.nextWorkerIndex + 1) % this.workers.length;
       const worker = this.workers[workerIdx]!;
 
-      this.outstandingPerWorker[workerIdx]!++;
       this.pendingRequests.set(id, { resolve, reject });
       this.requestToWorker.set(id, workerIdx);
 
@@ -266,14 +210,13 @@ export class ZarrWorkerPool {
 
       if (signal) {
         const onAbort = () => {
-          // Send cancel message to the worker so it aborts the HTTP fetch
+          // Send cancel message to the worker
           worker.postMessage({ type: 'cancel', id });
           // Reject immediately so the caller doesn't wait
           const pending = this.pendingRequests.get(id);
           if (pending) {
             this.pendingRequests.delete(id);
             this.requestToWorker.delete(id);
-            this.outstandingPerWorker[workerIdx]!--;
             pending.reject(new DOMException('Aborted', 'AbortError'));
           }
         };
@@ -334,6 +277,5 @@ export class ZarrWorkerPool {
     this.pendingRequests.clear();
     this.requestToWorker.clear();
     this.abortListeners.clear();
-    this.outstandingPerWorker = [];
   }
 }

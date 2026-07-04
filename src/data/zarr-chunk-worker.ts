@@ -112,17 +112,12 @@ const MAX_CACHE_BYTES = 128 * 1024 * 1024; // 128 MB per worker
 // so multiple assembleBrick calls that need the same chunk share one fetch+decompress
 const inflightFetches = new Map<string, Promise<{ data: ArrayLike<number>; shape: number[] }>>();
 
-// Store reference — needed to set currentSignal for per-request abort
+// Store reference
 let workerStore: TolerantFetchStore | null = null;
 
 // Cancellation state
 const cancelledRequests = new Set<number>();
 const activeControllers = new Map<number, AbortController>();
-
-// Serialization chain — only one loadBrick runs at a time per worker.
-// This makes the store's `currentSignal` safe (no concurrent signal overlap)
-// while still allowing parallel chunk fetches within a single brick.
-let processingChain: Promise<void> = Promise.resolve();
 
 function cacheKey(lod: number, cz: number, cy: number, cx: number, channelIndex: number): string {
   return `${lod}:ch${channelIndex}:${cz}/${cy}/${cx}`;
@@ -220,32 +215,25 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
   if (type === 'loadBrick') {
     const { lod, bx, by, bz, dispatchTime } = event.data;
     const channelIndex = event.data.channelIndex ?? 0;
+    const queueMs = dispatchTime !== undefined ? performance.now() - dispatchTime : undefined;
 
-    // Serialize brick processing — one at a time per worker.
-    // This makes store.currentSignal safe (no concurrent overlap).
-    processingChain = processingChain.then(async () => {
-      // Measure queue wait: main-thread dispatch → worker starts processing
-      const queueMs = dispatchTime !== undefined ? performance.now() - dispatchTime : undefined;
+    // Already cancelled before we started? Skip entirely.
+    if (cancelledRequests.has(id)) {
+      cancelledRequests.delete(id);
+      return;
+    }
 
-      // Already cancelled before we started? Skip entirely.
-      if (cancelledRequests.has(id)) {
-        cancelledRequests.delete(id);
-        return;
-      }
+    const controller = new AbortController();
+    activeControllers.set(id, controller);
 
-      const controller = new AbortController();
-      activeControllers.set(id, controller);
-      if (workerStore) workerStore.currentSignal = controller.signal;
-
+    (async () => {
       try {
         const result = await assembleBrick(lod!, bx!, by!, bz!, channelIndex, controller.signal);
 
-        // Clean up — check abort before responding
         activeControllers.delete(id);
         cancelledRequests.delete(id);
-        if (workerStore) workerStore.currentSignal = null;
 
-        if (controller.signal.aborted) return; // cancelled mid-flight
+        if (controller.signal.aborted) return;
 
         const resp: ZarrWorkerResponse = {
           type: 'loadBrick', id,
@@ -265,10 +253,7 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
       } catch (e) {
         activeControllers.delete(id);
         cancelledRequests.delete(id);
-        if (workerStore) workerStore.currentSignal = null;
 
-        // Aborted requests don't send error responses — the main thread
-        // already rejected the promise when it sent the cancel message.
         if (e instanceof DOMException && e.name === 'AbortError') return;
 
         const resp: ZarrWorkerResponse = {
@@ -277,7 +262,7 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
         };
         (self as unknown as Worker).postMessage(resp);
       }
-    });
+    })();
   }
 };
 

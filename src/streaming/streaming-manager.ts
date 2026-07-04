@@ -53,10 +53,16 @@ export interface StreamingStats {
   timeToFirstRender: number | null; // ms, null if not yet loaded
   // Evictions since last stats reset
   evictedCount: number;
-  // Allocation refusals under atlas pressure 
+  // Allocation refusals under atlas pressure
   allocationsRefused: number;
   // Per-stage pipeline timings (rolling avg over last ~32 bricks)
   pipelineTimings: PipelineTimings;
+  // Cancellation metrics (Phase 0 instrumentation)
+  bricksDispatched: number;
+  bricksCommitted: number;
+  bricksCancelled: number;
+  bricksDiscarded: number;
+  cancelLatencyMs: number; // rolling average: stale-timestamp → abort
 }
 
 export class StreamingManager {
@@ -99,7 +105,7 @@ export class StreamingManager {
   // leave the desired set (LOD oscillation during gestures) survive and warm
   // the worker chunk cache instead of wasting bandwidth on aborted fetches.
   private inFlightStaleTime = new Map<string, number>();
-  private readonly CANCEL_GRACE_MS = 200;
+  private readonly CANCEL_GRACE_MS = 100;
 
   // Max concurrent requests
   private maxConcurrentRequests = 8;
@@ -127,6 +133,13 @@ export class StreamingManager {
 
   // GPU upload timing (writeTexture, measured on main thread for all providers)
   private uploadAvg = new RollingAvg();
+
+  // Cancellation instrumentation (Phase 0)
+  private cancelLatencyAvg = new RollingAvg();
+  private bricksDispatched = 0;
+  private bricksCommitted = 0;
+  private bricksCancelled = 0;
+  private bricksDiscarded = 0;
 
   // Screen-Space Error (SSE) threshold in pixels
   // Split to finer LOD when projected voxel error exceeds this value
@@ -174,6 +187,11 @@ export class StreamingManager {
     evictedCount: 0,
     allocationsRefused: 0,
     pipelineTimings: { avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0 },
+    bricksDispatched: 0,
+    bricksCommitted: 0,
+    bricksCancelled: 0,
+    bricksDiscarded: 0,
+    cancelLatencyMs: 0,
   };
 
   // Throttle updates (don't recompute every frame)
@@ -411,6 +429,7 @@ export class StreamingManager {
 
     // Track
     this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
+    this.bricksCommitted++;
 
     // Schedule debounced accumulation reset
     this.scheduleAccumulationReset();
@@ -773,6 +792,11 @@ export class StreamingManager {
         avgUploadMs: this.uploadAvg.value,
         sampleCount: Math.max(providerTimings.sampleCount, this.uploadAvg.count),
       },
+      bricksDispatched: this.bricksDispatched,
+      bricksCommitted: this.bricksCommitted,
+      bricksCancelled: this.bricksCancelled,
+      bricksDiscarded: this.bricksDiscarded,
+      cancelLatencyMs: this.cancelLatencyAvg.value,
     };
   }
 
@@ -918,27 +942,42 @@ export class StreamingManager {
       this.desiredKeys.add(brick.key);
     }
 
-    // Cancel in-flight requests that are no longer desired (with grace period).
-    // Don't abort instantly — a request that briefly leaves the desired set
-    // (LOD oscillation near the SSE threshold) and returns within the grace
-    // window survives, completes, and warms the worker chunk cache. Without
-    // this, per-frame recompute + instant cancel = fetch thrash.
+    // Cancel in-flight requests that are no longer desired.
+    // Grace period is conditional:
+    //  - During interaction (zoom/orbit gesture): apply CANCEL_GRACE_MS so
+    //    requests that briefly leave the desired set due to LOD oscillation
+    //    near the SSE threshold survive instead of churn-cancelling.
+    //  - Camera at rest: abort immediately. The desired set is stable, so
+    //    anything outside it is genuinely stale. Waiting wastes bandwidth.
+    const isInteracting = camera.isInteracting();
     let cancelledCount = 0;
     const now = performance.now();
     for (const [key, controller] of this.inFlightRequests.entries()) {
       if (this.desiredKeys.has(key)) {
         // Still desired — clear any stale timestamp
         this.inFlightStaleTime.delete(key);
+      } else if (!isInteracting) {
+        // Camera at rest — abort immediately, no grace period needed
+        const staleTime = this.inFlightStaleTime.get(key);
+        if (staleTime !== undefined) {
+          this.cancelLatencyAvg.add(now - staleTime);
+        }
+        controller.abort();
+        this.inFlightRequests.delete(key);
+        this.inFlightStaleTime.delete(key);
+        this.bricksCancelled++;
+        cancelledCount++;
       } else {
+        // During interaction — apply grace period for LOD oscillation
         const staleTime = this.inFlightStaleTime.get(key);
         if (staleTime === undefined) {
-          // First frame this request left the desired set — start grace period
           this.inFlightStaleTime.set(key, now);
         } else if (now - staleTime > this.CANCEL_GRACE_MS) {
-          // Grace period expired — this request is genuinely stale, abort it
+          this.cancelLatencyAvg.add(now - staleTime);
           controller.abort();
           this.inFlightRequests.delete(key);
           this.inFlightStaleTime.delete(key);
+          this.bricksCancelled++;
           cancelledCount++;
         }
       }
@@ -990,6 +1029,11 @@ export class StreamingManager {
       evictedCount: this.lastStats.evictedCount,
       allocationsRefused: this.lastStats.allocationsRefused,
       pipelineTimings: { avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0 },
+      bricksDispatched: 0, // live values from getStats()
+      bricksCommitted: 0,
+      bricksCancelled: 0,
+      bricksDiscarded: 0,
+      cancelLatencyMs: 0,
     };
   }
 
@@ -1032,12 +1076,16 @@ export class StreamingManager {
       const controller = new AbortController();
       this.inFlightRequests.set(request.key, controller);
 
+      this.bricksDispatched++;
       this.loadBrick(request, controller.signal).finally(() => {
         // Guard against a stale .finally() from an aborted request deleting a newer
         // controller that was registered for the same key in the same sync block.
         if (this.inFlightRequests.get(request.key) === controller) {
           this.inFlightRequests.delete(request.key);
         }
+        // Clean up stale-time entry so it doesn't leak when a request
+        // completes normally while it was already marked stale.
+        this.inFlightStaleTime.delete(request.key);
       });
     }
   }
@@ -1080,8 +1128,6 @@ export class StreamingManager {
         return this.dataProvider.loadBrick(lod, bx, by, bz, ch, signal);
       })
     );
-    if (signal.aborted) return;
-
     // ch0 is mandatory (matches loadBaseLod's policy); other channels
     // degrade gracefully — a transient failure on ch3 must not discard the
     // three channels that succeeded. The brick stays desired and a full
@@ -1089,8 +1135,30 @@ export class StreamingManager {
     // cached, so the retry re-fetches only what's missing).
     if (!channelResults[0]) return;
 
+    // Cache downloaded channel data into the CPU brick cache.
+    // Done BEFORE the abort/desired checks so that already-downloaded data
+    // from aborted or discarded bricks isn't thrown away — a re-zoom that
+    // desires the same brick gets a free cache hit instead of re-fetching.
+    const cacheChannels = () => {
+      for (let ch = 0; ch < numChannels; ch++) {
+        const r = channelResults[ch];
+        if (r && !fromCache[ch]) {
+          this.brickCache.put(`ch${ch}:${key}`, r.data);
+        }
+      }
+    };
+
+    if (signal.aborted) {
+      cacheChannels();
+      return;
+    }
+
     // Camera may have moved while the fetch was in flight — skip if no longer desired
-    if (!this.desiredKeys.has(key)) return;
+    if (!this.desiredKeys.has(key)) {
+      cacheChannels();
+      this.bricksDiscarded++;
+      return;
+    }
 
     // commitBrick handles: post-fetch emptiness check (C3 inline stats with
     // cache-sentinel skip), allocation (with backpressure), eviction,
@@ -1101,12 +1169,7 @@ export class StreamingManager {
     // Cache non-empty brick data regardless of whether allocation succeeded.
     // Alloc-failed bricks stay desired and retry with a cache hit next pass.
     if (!this.emptyBricks.has(key)) {
-      for (let ch = 0; ch < numChannels; ch++) {
-        const r = channelResults[ch];
-        if (r && !fromCache[ch]) {
-          this.brickCache.put(`ch${ch}:${key}`, r.data);
-        }
-      }
+      cacheChannels();
     }
   }
 
@@ -1232,7 +1295,7 @@ export class StreamingManager {
       for (let dy = 0; dy < 2; dy++) {
         for (let dx = 0; dx < 2; dx++) {
           const childKey = `lod${finerLod}:${bz * 2 + dz}/${by * 2 + dy}/${bx * 2 + dx}`;
-          if (this.loadedBricks.has(childKey) || this.inFlightRequests.has(childKey)) {
+          if (this.loadedBricks.has(childKey)) {
             return true;
           }
         }

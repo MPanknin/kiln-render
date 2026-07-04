@@ -84,9 +84,10 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     return this.metadata;
   }
 
-  async loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0): Promise<BrickLoadResult | null> {
+  async loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0, signal?: AbortSignal): Promise<BrickLoadResult | null> {
     const meta = this.metadata;
     if (!meta) return null;
+    if (signal?.aborted) return null;
 
     const level = meta.levels.find(l => l.lod === lod);
     if (!level) return null;
@@ -96,7 +97,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     }
 
     try {
-      const result = await this.assembleBrick(lod, bx, by, bz, channelIndex);
+      const result = await this.assembleBrick(lod, bx, by, bz, channelIndex, signal);
 
       // Cache stats and track bytes
       this.cacheBrickStats(lod, bx, by, bz, result.stats);
@@ -111,6 +112,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
         rawMax: result.rawMax,
       };
     } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return null;
       console.warn(`Failed to load brick lod${lod}:${bx}-${by}-${bz}:`, e);
       return null;
     }
@@ -126,7 +128,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
   }
 
 
-  private async assembleBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0): Promise<{ data: BrickData; stats: BrickStats; rawMin?: number; rawMax?: number }> {
+  private async assembleBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0, signal?: AbortSignal): Promise<{ data: BrickData; stats: BrickStats; rawMin?: number; rawMax?: number }> {
     const arr = this.arrays[lod]!;
     const params = this.lodParams[lod]!;
     const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx } = params;
@@ -176,6 +178,9 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     }
     await Promise.all(chunkFetches);
     this.fetchAvg.add(performance.now() - t0);
+
+    // Abort check between fetch and assembly — assembly is CPU-bound and can't yield
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
     // --- Stage 2: brick assembly (voxel scatter + format conversion) ---
     const t1 = performance.now();

@@ -299,6 +299,126 @@ export class StreamingManager {
   }
 
   /**
+   * Commit a fetched brick to the atlas: post-fetch emptiness check →
+   * allocate (with backpressure) → evict if needed → per-channel upload
+   * with zero-fill for failed channels (A3.3) → indirection → metadata +
+   * tracking → debounced accumulation reset.
+   *
+   * Single-sited path used by both loadBaseLod and loadBrick so every
+   * upload/tracking/emptiness path exists in exactly one place.
+   *
+   * @returns slotIndex on success, null if the brick was empty or
+   *          allocation failed. Caller can check emptyBricks.has(key)
+   *          to distinguish.
+   */
+  private commitBrick(
+    lod: number,
+    bx: number,
+    by: number,
+    bz: number,
+    key: string,
+    channelResults: (BrickLoadResult | null)[],
+    opts?: { pin?: boolean; fromCache?: boolean[] },
+  ): number | null {
+    // Post-fetch emptiness check using inline stats (C3).
+    // Empty only if ALL channels are below threshold.
+    // Skipped when any channel was served from the CPU cache: cached entries
+    // carry sentinel stats (max=1) which fail the real threshold, so every
+    // cache-served brick would be permanently marked empty. A brick is only
+    // cached after it was proven non-empty, so the re-check is redundant.
+    if (!opts?.fromCache?.some(v => v)) {
+      const threshold = this.config.emptyBrickThreshold ?? 1;
+      const maxAcrossChannels = Math.max(...channelResults.map(r => r?.max ?? 0));
+      if (maxAcrossChannels < threshold) {
+        this.emptyBricks.add(key);
+        this.resources.indirection.setEmpty(bx, by, bz, lod);
+        return null;
+      }
+    }
+
+    // Allocate atlas slot
+    const result = this.resources.allocator.allocate(this.frameCount);
+    if (!result) {
+      this.allocationStalled = true;
+      this.lastStats.allocationsRefused++;
+      return null;
+    }
+
+    // Handle eviction (no-op on fresh atlas, e.g. during initial loadBaseLod)
+    if (result.evicted) {
+      this.lastStats.evictedCount++;
+      const evictedKey = result.evicted.key;
+      const evictedEntry = this.loadedBricks.get(evictedKey);
+
+      if (!evictedEntry || evictedEntry.slotIndex === result.slotIndex) {
+        const fallback = this.findParentBrick(
+          result.evicted.bx, result.evicted.by, result.evicted.bz, result.evicted.lod,
+        );
+
+        if (fallback) {
+          this.resources.indirection.clearBrick(
+            result.evicted.bx, result.evicted.by, result.evicted.bz, result.evicted.lod,
+            [fallback.slot.x, fallback.slot.y, fallback.slot.z], fallback.lod,
+          );
+        } else if (this.hasEmptyAncestor(
+          result.evicted.bx, result.evicted.by, result.evicted.bz, result.evicted.lod,
+        )) {
+          this.resources.indirection.setEmpty(
+            result.evicted.bx, result.evicted.by, result.evicted.bz, result.evicted.lod,
+          );
+        } else {
+          this.resources.indirection.clearBrick(
+            result.evicted.bx, result.evicted.by, result.evicted.bz, result.evicted.lod,
+          );
+        }
+        this.loadedBricks.delete(evictedKey);
+      }
+    }
+
+    // Upload each channel to the atlas at the allocated slot.
+    // Failed channels are zero-filled — the slot may be reused and still
+    // hold a previous brick's data for that channel (A3.3).
+    const numChannels = this.resources.numChannels;
+    const offset: [number, number, number] = [
+      result.slot.x * PHYSICAL_BRICK_SIZE,
+      result.slot.y * PHYSICAL_BRICK_SIZE,
+      result.slot.z * PHYSICAL_BRICK_SIZE,
+    ];
+    const tUpload = performance.now();
+    for (let ch = 0; ch < numChannels; ch++) {
+      const data = channelResults[ch]?.data ?? this.getZeroBrick(this.resources.canvases[ch]!.bitDepth);
+      writeToCanvas(
+        this.device,
+        this.resources.canvases[ch]!,
+        data,
+        [PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE],
+        offset,
+      );
+    }
+    this.uploadAvg.add(performance.now() - tUpload);
+
+    // Update indirection table
+    this.resources.indirection.setBrick(bx, by, bz, result.slot.x, result.slot.y, result.slot.z, lod);
+
+    // Set metadata for future eviction
+    this.resources.allocator.setMetadata(result.slotIndex, { lod, bx, by, bz, key });
+
+    // Pin if requested (base LOD bricks are never evicted)
+    if (opts?.pin) {
+      this.resources.allocator.pin(result.slotIndex);
+      this.pinnedBricks.add(key);
+    }
+
+    // Track
+    this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
+
+    // Schedule debounced accumulation reset
+    this.scheduleAccumulationReset();
+
+    return result.slotIndex;
+  }
+
+  /**
    * Load and pin the coarsest LOD level (ensures no holes)
    * Bricks are processed with bounded concurrency to avoid saturating the HTTP
    * connection pool — especially important for multichannel where each brick
@@ -343,7 +463,7 @@ export class StreamingManager {
     // from the shared queue until empty.
     const allBrickData: (Uint8Array | Uint16Array)[] = [];
     let firstBrickMs: number | null = null;
-    let sumIsEmptyMs = 0, sumFetchMs = 0, sumUploadMs = 0, brickCount = 0;
+    let sumIsEmptyMs = 0, sumFetchMs = 0, brickCount = 0;
 
     // B5: range accumulators — derive float data range and per-channel
     // min/max incrementally from BrickLoadResult stats during base LOD
@@ -398,53 +518,24 @@ export class StreamingManager {
         }
       }
 
-      const result = this.resources.allocator.allocate(this.frameCount);
-      if (!result) {
-        console.warn('[Kiln] loadBaseLod: atlas allocation failed');
+      // commitBrick handles: post-fetch emptiness check (catches A3.1 for
+      // Zarr where isBrickEmpty returns false on cold load), allocation,
+      // per-channel upload with zero-fill (A3.3), indirection, pinning,
+      // tracking, and debounced accumulation reset.
+      const slotIndex = this.commitBrick(maxLod, bx, by, bz, key, channelResults, { pin: true });
+      if (slotIndex === null) {
+        if (!this.emptyBricks.has(key)) {
+          console.warn('[Kiln] loadBaseLod: atlas allocation failed');
+        }
         return;
       }
 
-      const offset: [number, number, number] = [
-        result.slot.x * PHYSICAL_BRICK_SIZE,
-        result.slot.y * PHYSICAL_BRICK_SIZE,
-        result.slot.z * PHYSICAL_BRICK_SIZE,
-      ];
-      const tUpload = performance.now();
-      for (let ch = 0; ch < numChannels; ch++) {
-        // Zero-fill failed channels. The "fresh from free list" assumption is
-        // only true on cold load — after clear() the allocator recycles slots
-        // without re-zeroing texture memory, so skipping would show the
-        // previous dataset's data in that channel.
-        const data = channelResults[ch]?.data ?? this.getZeroBrick(this.resources.canvases[ch]!.bitDepth);
-        writeToCanvas(
-          this.device,
-          this.resources.canvases[ch]!,
-          data,
-          [PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE],
-          offset
-        );
-      }
-      const uploadMs = performance.now() - tUpload;
-      sumUploadMs += uploadMs;
-      this.uploadAvg.add(uploadMs);
-
-      this.resources.indirection.setBrick(bx, by, bz, result.slot.x, result.slot.y, result.slot.z, maxLod);
-      this.resources.allocator.setMetadata(result.slotIndex, { lod: maxLod, bx, by, bz, key });
-      this.resources.allocator.pin(result.slotIndex);
-
-      this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
-      this.pinnedBricks.add(key);
       allBrickData.push(channelResults[0].data);
       brickCount++;
 
       if (firstBrickMs === null) {
         firstBrickMs = performance.now() - this.loadStartTime;
       }
-
-      // arriving base bricks must trigger a re-render — otherwise the
-      // viewer converges on a near-empty scene and freezes while the base LOD
-      // silently streams in. The 100 ms debounce coalesces the burst.
-      this.scheduleAccumulationReset();
       } finally {
         this.baseLodPending = Math.max(0, this.baseLodPending - 1);
       }
@@ -498,7 +589,7 @@ export class StreamingManager {
       ` | first brick: ${firstBrickStr}ms` +
       ` | avg isEmpty: ${(sumIsEmptyMs / bricks.length).toFixed(1)}ms` +
       ` | avg fetch: ${brickCount > 0 ? (sumFetchMs / brickCount).toFixed(1) : 'n/a'}ms` +
-      ` | avg upload: ${brickCount > 0 ? (sumUploadMs / brickCount).toFixed(1) : 'n/a'}ms`
+      ` | avg upload: ${this.uploadAvg.value.toFixed(1)}ms`
     );
 
     // B5: finalize derived ranges and push to renderer + workers
@@ -998,121 +1089,25 @@ export class StreamingManager {
     // cached, so the retry re-fetches only what's missing).
     if (!channelResults[0]) return;
 
-    // Emptiness check using inline stats — no second async isBrickEmpty round-trip.
-    // Check max across all channels: empty only if ALL channels are below threshold.
-    // SKIPPED when any channel was served from the CPU cache: cached entries
-    // carry sentinel stats (max=1) which fail the real threshold (default
-    // 100), so every cache-served brick — i.e. every brick evicted from the
-    // atlas and revisited — was permanently marked empty, freezing the
-    // region at the coarse parent LOD. A brick is only ever put into the
-    // cache AFTER it was proven non-empty, so the re-check is redundant.
-    if (!fromCache.some(v => v)) {
-      const threshold = this.config.emptyBrickThreshold ?? 1;
-      const maxAcrossChannels = Math.max(...channelResults.map(r => r?.max ?? 0));
-      if (maxAcrossChannels < threshold) {
-        this.emptyBricks.add(key);
-        this.resources.indirection.setEmpty(bx, by, bz, lod);
-        return;
-      }
-    }
-
-    // brick is known non-empty — now it's worth caching. (Done before the
-    // desired-set check: a brick fetched but no longer desired is still likely
-    // to be desired again soon.)
-    for (let ch = 0; ch < numChannels; ch++) {
-      const r = channelResults[ch];
-      if (r && !fromCache[ch]) {
-        this.brickCache.put(`ch${ch}:${key}`, r.data);
-      }
-    }
-
     // Camera may have moved while the fetch was in flight — skip if no longer desired
     if (!this.desiredKeys.has(key)) return;
 
-    // Allocate one slot (shared atlas position across all channels)
-    const result = this.resources.allocator.allocate(this.frameCount);
-    if (!result) {
-      // silent backpressure — the brick stays desired and retries after
-      // the next computeDesiredSet; the shader keeps rendering the coarser
-      // parent via indirection, so a refusal costs nothing visually.
-      this.allocationStalled = true;
-      this.lastStats.allocationsRefused++;
-      return;
-    }
+    // commitBrick handles: post-fetch emptiness check (C3 inline stats with
+    // cache-sentinel skip), allocation (with backpressure), eviction,
+    // per-channel upload with zero-fill (A3.3), indirection, tracking,
+    // and debounced accumulation reset.
+    this.commitBrick(lod, bx, by, bz, key, channelResults, { fromCache });
 
-    // Handle eviction
-    if (result.evicted) {
-      this.lastStats.evictedCount++;
-      const evictedKey = result.evicted.key;
-      const evictedEntry = this.loadedBricks.get(evictedKey);
-
-      if (!evictedEntry || evictedEntry.slotIndex === result.slotIndex) {
-        const fallback = this.findParentBrick(result.evicted.bx, result.evicted.by, result.evicted.bz, result.evicted.lod);
-
-        if (fallback) {
-          this.resources.indirection.clearBrick(
-            result.evicted.bx,
-            result.evicted.by,
-            result.evicted.bz,
-            result.evicted.lod,
-            [fallback.slot.x, fallback.slot.y, fallback.slot.z],
-            fallback.lod
-          );
-        } else if (this.hasEmptyAncestor(result.evicted.bx, result.evicted.by, result.evicted.bz, result.evicted.lod)) {
-          // Ancestor is known-empty — restore empty marker (w=255) so the
-          // shader skips this region instead of treating w=0 as unloaded.
-          this.resources.indirection.setEmpty(
-            result.evicted.bx,
-            result.evicted.by,
-            result.evicted.bz,
-            result.evicted.lod
-          );
-        } else {
-          // No parent found - clear completely (shouldn't happen if base LOD is loaded)
-          this.resources.indirection.clearBrick(
-            result.evicted.bx,
-            result.evicted.by,
-            result.evicted.bz,
-            result.evicted.lod
-          );
+    // Cache non-empty brick data regardless of whether allocation succeeded.
+    // Alloc-failed bricks stay desired and retry with a cache hit next pass.
+    if (!this.emptyBricks.has(key)) {
+      for (let ch = 0; ch < numChannels; ch++) {
+        const r = channelResults[ch];
+        if (r && !fromCache[ch]) {
+          this.brickCache.put(`ch${ch}:${key}`, r.data);
         }
-        this.loadedBricks.delete(evictedKey);
       }
-
     }
-
-    // Upload each channel to its atlas at the same slot coordinates (timed for pipeline telemetry).
-    // failed channels are zero-filled — the slot may be a reused
-    // (evicted) slot still holding a previous brick's data for that channel.
-    const offset: [number, number, number] = [
-      result.slot.x * PHYSICAL_BRICK_SIZE,
-      result.slot.y * PHYSICAL_BRICK_SIZE,
-      result.slot.z * PHYSICAL_BRICK_SIZE,
-    ];
-    const tUpload = performance.now();
-    for (let ch = 0; ch < numChannels; ch++) {
-      const data = channelResults[ch]?.data ?? this.getZeroBrick(this.resources.canvases[ch]!.bitDepth);
-      writeToCanvas(
-        this.device,
-        this.resources.canvases[ch]!,
-        data,
-        [PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE],
-        offset
-      );
-    }
-    this.uploadAvg.add(performance.now() - tUpload);
-
-    // Update indirection
-    this.resources.indirection.setBrick(bx, by, bz, result.slot.x, result.slot.y, result.slot.z, lod);
-
-    // Set metadata for future eviction
-    this.resources.allocator.setMetadata(result.slotIndex, { lod, bx, by, bz, key });
-
-    // Track
-    this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
-
-    // Schedule accumulation reset to prevent constant flickering during streaming bursts
-    this.scheduleAccumulationReset();
   }
 
   private scheduleAccumulationReset(): void {

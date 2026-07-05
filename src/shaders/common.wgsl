@@ -21,20 +21,21 @@ const SPECULAR: f32 = 0.3;
 const SHININESS: f32 = 32.0;
 
 // LOD level colors for debugging (lodLevel is stored as lod+1, so 1=LOD0, 2=LOD1, etc.)
+// Maximally distinct hues so adjacent LOD levels are easy to tell apart.
 fn getLodColor(lodLevel: u32) -> vec3f {
     switch(lodLevel) {
-        case 1u: { return vec3f(0.0, 1.0, 0.0); }  // LOD 0 = Green (finest)
-        case 2u: { return vec3f(0.5, 1.0, 0.0); }  // LOD 1 = Yellow-Green
-        case 3u: { return vec3f(1.0, 1.0, 0.0); }  // LOD 2 = Yellow
-        case 4u: { return vec3f(1.0, 0.5, 0.0); }  // LOD 3 = Orange
-        case 5u: { return vec3f(1.0, 0.0, 0.0); }  // LOD 4 = Red
-        case 6u: { return vec3f(0.5, 0.0, 0.5); }  // LOD 5 = Purple
-        case 7u: { return vec3f(0.0, 0.0, 1.0); }  // LOD 6 = Blue
-        case 8u: { return vec3f(0.0, 0.5, 0.5); }  // LOD 7 = Cyan
-        case 9u: { return vec3f(1.0, 0.0, 0.5); }  // LOD 8 = Magenta
-        case 10u: { return vec3f(0.5, 0.5, 0.5); } // LOD 9 = Gray
-        case 11u: { return vec3f(0.8, 0.4, 0.2); } // LOD 10 = Brown (coarsest)
-        default: { return vec3f(0.2, 0.2, 0.2); } // Not loaded = Dark gray
+        case 1u: { return vec3f(0.15, 0.85, 0.25); } // LOD 0 = Green (finest)
+        case 2u: { return vec3f(0.0,  0.75, 1.0);  } // LOD 1 = Cyan
+        case 3u: { return vec3f(1.0,  0.85, 0.0);  } // LOD 2 = Yellow
+        case 4u: { return vec3f(1.0,  0.2,  0.2);  } // LOD 3 = Red
+        case 5u: { return vec3f(0.7,  0.3,  1.0);  } // LOD 4 = Purple
+        case 6u: { return vec3f(1.0,  0.55, 0.0);  } // LOD 5 = Orange
+        case 7u: { return vec3f(0.2,  0.4,  1.0);  } // LOD 6 = Blue
+        case 8u: { return vec3f(1.0,  0.4,  0.7);  } // LOD 7 = Pink
+        case 9u: { return vec3f(0.0,  0.65, 0.55); } // LOD 8 = Teal
+        case 10u: { return vec3f(0.75, 0.55, 1.0); } // LOD 9 = Lavender
+        case 11u: { return vec3f(0.85, 0.6,  0.2); } // LOD 10 = Amber (coarsest)
+        default: { return vec3f(0.2, 0.2, 0.2); }    // Not loaded = Dark gray
     }
 }
 

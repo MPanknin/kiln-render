@@ -69,8 +69,17 @@ fn vs(
 fn fs(@location(0) voxelPos: vec3f) -> @location(0) vec4f {
     let brickIndex = floor(voxelPos / LOGICAL_BRICK_SIZE);
     let indirection = lookupIndirection(brickIndex);
-    if (indirection.w == 0u || indirection.w == 255u) { return vec4f(0.0); }
+    if (indirection.w == 0u || indirection.w == 255u) {
+        if (uniforms.lodDebug != 0u) { return vec4f(0.2, 0.2, 0.2, 1.0); }
+        return vec4f(0.0);
+    }
     let lodScale = getLodScale(indirection);
+
+    // LOD debug: color by LOD level, ignore data
+    if (uniforms.lodDebug != 0u) {
+        let lodColor = getLodColor(indirection.w);
+        return vec4f(lodColor, 1.0);
+    }
 
     if (uniforms.numChannels > 1u) {
         // Multi-channel opacity-weighted average (VTK.js ImageMapper approach):

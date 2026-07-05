@@ -110,6 +110,7 @@ export const SLICE_UNIFORMS = defineUniformStruct([
   { name: 'sliceYEnabled',   type: 'u32' },
   { name: 'sliceZEnabled',   type: 'u32' },
   { name: 'numChannels',     type: 'u32' },
+  { name: 'lodDebug',        type: 'u32' },
   { name: 'channelColors',   type: 'array<vec4f, 4>' },
   { name: 'channelWindowCenter', type: 'vec4f' },
   { name: 'channelWindowWidth',  type: 'vec4f' },

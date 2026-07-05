@@ -189,8 +189,9 @@ export class VolumeUI {
         DVR: 'dvr',
         MIP: 'mip',
         ISO: 'iso',
-        LOD: 'lod',
         Slices: 'slice',
+        LOD: 'lod',
+        'Slice LOD': 'slice-lod',
       },
     }).on('change', (ev: { value: unknown }) => {
       const mode = ev.value as VolumeRenderMode;
@@ -828,7 +829,7 @@ export class VolumeUI {
 
   private updateVisibility(): void {
     const mode = this.params.renderMode;
-    const isSlice = mode === 'slice';
+    const isSlice = mode === 'slice' || mode === 'slice-lod';
 
     // ISO section only in ISO mode
     if (this.isoFolder) this.isoFolder.hidden = mode !== 'iso';

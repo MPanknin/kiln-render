@@ -106,7 +106,7 @@ let floatMax = 1;
 // Per-worker chunk cache (LRU, bounded by byte count to prevent OOM)
 const chunkCache = new Map<string, { data: ArrayLike<number>; shape: number[]; bytes: number }>();
 let cacheBytes = 0;
-const MAX_CACHE_BYTES = 128 * 1024 * 1024; // 128 MB per worker
+const MAX_CACHE_BYTES = 32 * 1024 * 1024; // 32 MB per worker
 
 // In-flight chunk fetch promises — coalesces concurrent requests for the same chunk
 // so multiple assembleBrick calls that need the same chunk share one fetch+decompress

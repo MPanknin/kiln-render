@@ -199,7 +199,7 @@ export class MultichannelUI {
 
     pane.addBinding(this.params, 'renderMode', {
       label: 'Mode',
-      options: { DVR: 'dvr', MIP: 'mip', Slice: 'slice' },
+      options: { DVR: 'dvr', MIP: 'mip', Slice: 'slice', 'LOD': 'slice-lod' },
     }).on('change', (ev: { value: unknown }) => {
       this.viewer.mode = ev.value as VolumeRenderMode;
       this.updateVisibility();
@@ -518,7 +518,7 @@ export class MultichannelUI {
   }
 
   private updateVisibility(): void {
-    const isSlice = this.params.renderMode === 'slice';
+    const isSlice = this.params.renderMode === 'slice' || this.params.renderMode === 'slice-lod';
     if (this.sliceFolder) this.sliceFolder.hidden = !isSlice;
   }
 

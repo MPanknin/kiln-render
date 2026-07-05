@@ -12,7 +12,7 @@ import { COMPUTE_UNIFORMS, SLICE_UNIFORMS } from '../shaders/uniform-layout.js';
 import type { DatasetConfig } from './config.js';
 
 // Volume render mode (shader-side)
-export type VolumeRenderMode = 'dvr' | 'mip' | 'iso' | 'lod' | 'slice';
+export type VolumeRenderMode = 'dvr' | 'mip' | 'iso' | 'lod' | 'slice' | 'slice-lod';
 
 /** pre-allocated compute/accumulation resources for one render scale */
 interface ScaleSet {
@@ -378,8 +378,12 @@ export class Renderer {
   }
 
   /** Whether the image is stable (no further rendering will change the output) */
+  private get isSliceMode(): boolean {
+    return this.volumeRenderMode === 'slice' || this.volumeRenderMode === 'slice-lod';
+  }
+
   get isConverged(): boolean {
-    return this.volumeRenderMode === 'slice'
+    return this.isSliceMode
       || !this.enableTAA
       || this.active.accumFrameCount >= 64;
   }
@@ -598,6 +602,7 @@ export class Renderer {
     dv.setUint32(o.sliceYEnabled, this.showSliceY ? 1 : 0, true);
     dv.setUint32(o.sliceZEnabled, this.showSliceZ ? 1 : 0, true);
     dv.setUint32(o.numChannels, this.numChannels, true);
+    dv.setUint32(o.lodDebug, this.volumeRenderMode === 'slice-lod' ? 1 : 0, true);
     d.set(this.channelColors, o.channelColors / 4);
     d.set(this.channelWindowCenter, o.channelWindowCenter / 4);
     d.set(this.channelWindowWidth, o.channelWindowWidth / 4);
@@ -689,7 +694,7 @@ export class Renderer {
     const workgroupsX = Math.ceil(this.active.width / 8);
     const workgroupsY = Math.ceil(this.active.height / 8);
 
-    if (this.volumeRenderMode !== 'slice') {
+    if (!this.isSliceMode) {
       // Normal volume compute path
       const computePass = encoder.beginComputePass();
       computePass.setPipeline(this.computePipeline);
@@ -725,7 +730,7 @@ export class Renderer {
     if (this.showWireframe) {
       this.device.queue.writeBuffer(this.wireframeUniformBuffer, 0, vp as Float32Array<ArrayBuffer>);
     }
-    if (this.volumeRenderMode === 'slice') {
+    if (this.isSliceMode) {
       this.updateSliceUniforms(vp);
     }
 
@@ -748,7 +753,7 @@ export class Renderer {
     });
 
     // Blit volume compute result as first draw (depthCompare: 'always', no depth write)
-    if (this.volumeRenderMode !== 'slice') {
+    if (!this.isSliceMode) {
       // select blit source: TAA accumulation result or direct compute output
       const blitBG = this.enableTAA
         ? this.active.blitBindGroups[1 - this.active.accumIndex as 0 | 1]!
@@ -759,7 +764,7 @@ export class Renderer {
     }
 
     // Draw slice planes
-    if (this.volumeRenderMode === 'slice' && this.sliceBindGroup) {
+    if (this.isSliceMode && this.sliceBindGroup) {
       overlayPass.setPipeline(this.slicePipeline);
       overlayPass.setBindGroup(0, this.sliceBindGroup);
       overlayPass.draw(6, 3); // 6 vertices × 3 instances (X, Y, Z planes)

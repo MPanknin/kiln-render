@@ -92,7 +92,7 @@ export class Camera {
       e.preventDefault();
       this.distance *= 1 + e.deltaY * 0.001;
       // Zoom limits for normalized space
-      this.distance = Math.max(0.5, Math.min(10, this.distance));
+      this.distance = Math.max(0.1, Math.min(10, this.distance));
       this.lastInteractionTime = performance.now();
       this.updatePosition();
     }, { passive: false });

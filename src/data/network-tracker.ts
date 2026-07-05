@@ -37,13 +37,16 @@ export class NetworkTracker {
 
   getStats(): NetworkStats {
     const now = performance.now();
-    const windowMs = 2000;
+    const windowMs = 10_000;
     const cutoff = now - windowMs;
     this.recentDownloads = this.recentDownloads.filter(d => d.timestamp > cutoff);
     const recentBytes = this.recentDownloads.reduce((sum, d) => sum + d.bytes, 0);
+    const elapsed = this.recentDownloads.length > 0
+      ? Math.max(1000, now - this.recentDownloads[0]!.timestamp)
+      : 0;
     return {
       totalBytesDownloaded: this.totalBytesDownloaded,
-      recentBytesPerSecond: (recentBytes / windowMs) * 1000,
+      recentBytesPerSecond: elapsed > 0 ? (recentBytes / elapsed) * 1000 : 0,
       requestCount: this.requestCount,
     };
   }

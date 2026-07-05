@@ -336,12 +336,13 @@ async function assembleBrick(
           // In-flight dedup: if another assembleBrick is already fetching this
           // chunk, share its promise instead of issuing a duplicate HTTP request
           let chunkPromise = inflightFetches.get(key);
+          const prefix = new Array(shapePrefixLength).fill(0);
+          if (channelAxisIdx >= 0 && channelAxisIdx < shapePrefixLength) {
+            prefix[channelAxisIdx] = channelIndex;
+          }
+          const coords = [...prefix, cz, cy, cx];
           if (!chunkPromise) {
-            const prefix = new Array(shapePrefixLength).fill(0);
-            if (channelAxisIdx >= 0 && channelAxisIdx < shapePrefixLength) {
-              prefix[channelAxisIdx] = channelIndex;
-            }
-            chunkPromise = arr.getChunk([...prefix, cz, cy, cx]).then(chunk => {
+            chunkPromise = arr.getChunk(coords, { signal } as RequestInit).then(chunk => {
               const entry = { data: chunk.data as unknown as ArrayLike<number>, shape: chunk.shape };
               cacheSet(key, entry.data, entry.shape);
               return entry;
@@ -352,6 +353,22 @@ async function assembleBrick(
           }
           fetchPromises.push(chunkPromise.then(entry => {
             setChunkEntry(fi, entry.data, entry.shape);
+          }).catch(e => {
+            // Dedup conflict: the shared fetch was aborted by another brick's
+            // signal, but this brick is still active. Retry with our own signal.
+            if (e instanceof DOMException && e.name === 'AbortError' && !signal?.aborted) {
+              const cached = chunkCache.get(key);
+              if (cached) {
+                setChunkEntry(fi, cached.data, cached.shape);
+                return;
+              }
+              return arr.getChunk(coords, { signal } as RequestInit).then(chunk => {
+                const entry = { data: chunk.data as unknown as ArrayLike<number>, shape: chunk.shape };
+                cacheSet(key, entry.data, entry.shape);
+                setChunkEntry(fi, entry.data, entry.shape);
+              });
+            }
+            throw e;
           }));
         }
       }

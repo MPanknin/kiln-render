@@ -1,9 +1,6 @@
 /**
- * Zarr dataset validation for Kiln Render.
- *
- * Supported: OME-NGFF v0.4 and v0.5, single channel, single timepoint,
- * uint8 or uint16. All checks are centralised here so the dialog
- * pre-validation and the provider-level safety-net use exactly the same rules.
+ * Zarr dataset validation for Kiln Render. Supports OME-NGFF v0.4/v0.5.
+ * Shared by dialog pre-validation and provider-level safety-net.
  */
 
 import { open, root } from 'zarrita';
@@ -22,13 +19,7 @@ export interface NormalizedAxis {
   type: string;
 }
 
-/**
- * Normalise the axes field from any OME-NGFF version into a consistent shape.
- *
- * - v0.5:      typed objects  { name, type, unit? }
- * - v0.4:      string array   ["z", "y", "x"]  or typed objects
- * - absent:    assumed [z, y, x] spatial
- */
+/** Normalise axes from OME-NGFF v0.4 (strings) / v0.5 (typed objects) to uniform shape. */
 export function normalizeAxes(raw: unknown): NormalizedAxis[] {
   if (!raw || !Array.isArray(raw) || raw.length === 0) {
     return [
@@ -99,11 +90,7 @@ export function validateZarrSupport(
   return reasons;
 }
 
-/**
- * Pre-validate a remote zarr URL.
- * Reads only group attrs and first array metadata — no volume data fetched.
- * Throws on network / parse errors; returns validation reasons otherwise.
- */
+/** Pre-validate a remote zarr URL (metadata only, no volume data fetched). */
 export async function preValidateRemoteZarr(url: string): Promise<string[]> {
   const store = new TolerantFetchStore(url.replace(/\/$/, ''));
   const rootGroup = await open(root(store), { kind: 'group' });

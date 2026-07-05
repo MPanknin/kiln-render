@@ -1,10 +1,6 @@
 /**
- * KilnViewer — self-contained WebGPU volume renderer
- *
- * Encapsulates WebGPU initialisation, data provider selection, subsystem
- * construction, the render loop, and resize handling.  The application layer
- * (main.ts) is responsible for URL parsing, the dataset dialog, the share
- * button, analytics, and the optional VolumeUI panel.
+ * KilnViewer — self-contained WebGPU volume renderer. Handles WebGPU init,
+ * data provider setup, render loop, and resize. App layer handles UI.
  */
 
 import { Renderer, VolumeRenderMode } from './core/renderer.js';
@@ -90,21 +86,10 @@ export class KilnViewer {
   readonly device: GPUDevice;
   readonly metadata: VolumeMetadata;
 
-  /**
-   * Optional callback invoked at the start of every render frame.
-   * Use this to drive frame-rate tracking in the UI layer.
-   *
-   * @example
-   * viewer.onBeforeFrame = () => ui.recordFrame();
-   */
+  /** Optional callback invoked at the start of every render frame. */
   onBeforeFrame?: () => void;
 
-  /**
-   * Optional callback invoked when per-channel window/level or float data
-   * ranges are derived during base LOD loading (B5 deferred scan).
-   * Use this to refresh UI controls that were initialised before the ranges
-   * were available.
-   */
+  /** Callback invoked when float/channel ranges are derived during base LOD loading. */
   onChannelWindowsChanged?: () => void;
 
   private readonly dataProvider: DataProvider;
@@ -155,14 +140,7 @@ export class KilnViewer {
     this.rafHandle = requestAnimationFrame(() => this.frame());
   }
 
-  /**
-   * Create a fully initialised KilnViewer.
-   *
-   * @param canvas  The canvas element to render into.
-   * @param dataset URL string (HTTP sharded or OME-Zarr) **or** a pre-constructed
-   *                DataProvider (e.g. LocalZarrDataProvider for File System API).
-   * @param options Optional initial viewer state.
-   */
+  /** Create a fully initialised KilnViewer from a URL or DataProvider. */
   static async create(
     canvas: HTMLCanvasElement,
     dataset: string | DataProvider,
@@ -253,11 +231,8 @@ export class KilnViewer {
       }
     }
 
-    // Apply per-channel window/level defaults from metadata (OMERO or auto-scanned).
-    // For FLOAT data the shader normalises every sample with the *global*
-    // dataRange before per-channel windowing, so windows must be expressed
-    // relative to that global range — not each channel's own OMERO min/max
-    // (which can differ between channels and would mis-level them).
+    // Apply per-channel window/level from metadata. Float windows are
+    // relative to the global dataRange (not per-channel OMERO min/max).
     if (metadata.channelWindows && metadata.numChannels > 1) {
       const useGlobalRange = (metadata.isFloat ?? false) && !!metadata.dataRange;
       for (let ch = 0; ch < metadata.channelWindows.length; ch++) {
@@ -274,9 +249,7 @@ export class KilnViewer {
       }
     }
 
-    // For float32 datasets: pass raw data range to renderer so the shader can
-    // normalize (raw − floatMin) / (floatMax − floatMin) → [0, 1] on the GPU.
-    // For uint data floatMin/floatMax stay at their defaults (0 / 1 = identity).
+    // Pass float32 data range to renderer for GPU normalization.
     if (metadata.isFloat && metadata.dataRange) {
       renderer.floatMin = metadata.dataRange[0];
       renderer.floatMax = metadata.dataRange[1];
@@ -369,10 +342,8 @@ export class KilnViewer {
       userRenderScale,
     );
 
-    // B5: when base LOD derives float/channel ranges, update renderer + metadata.
-    // Wired after viewer construction so the callback can notify external UI via
-    // viewer.onChannelWindowsChanged. Safe because loadBaseLod is async and will
-    // complete well after this synchronous setup.
+    // When base LOD derives float/channel ranges, update renderer + metadata.
+    // Wired after construction so onChannelWindowsChanged can notify external UI.
     streamingManager.setRangesDerivedCallback((opts) => {
       if (opts.dataRange) {
         renderer.floatMin = opts.dataRange[0];
@@ -522,7 +493,7 @@ export class KilnViewer {
 
     // Keep SSE LOD selection in sync with the rendered resolution.
     // The clamp in computeDesiredSet (max(renderScale, 0.5)) prevents the
-    // LOD-collapse that caused the original B1 revert.
+    // LOD-collapse at low render scales.
     this.streamingManager.renderScale = this.renderer.renderScale;
 
     // Always run streaming (may trigger onDirty via resetAccumulation)

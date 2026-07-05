@@ -1,8 +1,4 @@
-/**
- * Simple arcball camera with mouse and touch interaction
- * Mouse: Left drag = orbit, Right drag = pan, Wheel = zoom
- * Touch: One finger = orbit, Two finger = pan + pinch zoom
- */
+/** Arcball camera — mouse (orbit/pan/wheel) and touch (orbit/pinch/pan). */
 
 import { mat4 } from 'wgpu-matrix';
 
@@ -357,11 +353,7 @@ export class Camera {
   }
 }
 
-/**
- * Frustum planes for culling.
- * Each plane is [a, b, c, d] where ax + by + cz + d = 0
- * Normal points inward (positive side is inside frustum)
- */
+/** Frustum planes for culling. Each plane [a,b,c,d]: normal points inward. */
 export type FrustumPlanes = {
   left: [number, number, number, number];
   right: [number, number, number, number];

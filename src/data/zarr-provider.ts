@@ -1,14 +1,6 @@
 /**
- * ZarrDataProvider - DataProvider implementation for OME-Zarr (NGFF) volumes
- *
- * Loads OME-Zarr v0.5 datasets over HTTP using zarrita.js.
- * All heavy work (fetch, decompress, re-chunk into 66³ bricks) runs in a
- * Web Worker pool — the main thread only handles metadata and GPU uploads.
- *
- * Axis convention:
- * - Zarr stores dimensions as [z, y, x] (C-order, x fastest-varying)
- * - Kiln uses [x, y, z] in metadata but identical memory layout
- * - Only metadata tuples need swapping, no data transposition
+ * ZarrDataProvider - Loads OME-Zarr (NGFF) datasets over HTTP via a Web Worker pool.
+ * Zarr [z,y,x] metadata is swapped to Kiln's [x,y,z]; memory layout is unchanged.
  */
 
 import { open, root, Array as ZarrArray } from 'zarrita';
@@ -91,13 +83,8 @@ export class ZarrDataProvider extends BaseZarrProvider {
     const name = urlParts[urlParts.length - 1]?.replace(/\.ome\.zarr|\.zarr/, '') ?? 'zarr-volume';
     const { metadata, lodParams } = this.parseOmeMetadata(attrs, arrays, name);
 
-    // B5: startup scans (scanFloatRange / scanChannelRanges) removed —
-    // ranges are now derived incrementally during base LOD loading in
-    // StreamingManager.loadBaseLod, eliminating the blocking full-LOD
-    // download that doubled startup time for float/multichannel datasets.
-    // Use provisional dataRange for float data without OMERO window so
-    // the worker can start immediately; the real range is derived from
-    // per-brick rawMin/rawMax and pushed to workers + shader afterwards.
+    // Provisional dataRange for float data without OMERO window — real range
+    // is derived incrementally during base LOD loading.
     if (metadata.isFloat && !metadata.dataRange) {
       metadata.dataRange = [0, 1];
     }
@@ -124,11 +111,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
   }
 
 
-  /**
-   * Load a fully assembled 66³ brick via the worker pool.
-   * The entire pipeline (fetch + decompress + re-chunk + stats) runs off main thread.
-   * When signal fires, the worker's in-flight HTTP requests are aborted.
-   */
+  /** Load a fully assembled 66³ brick via the worker pool (fully off main thread). */
   async loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0, signal?: AbortSignal): Promise<BrickLoadResult | null> {
     const meta = this.getMetadata();
     const level = meta.levels.find(l => l.lod === lod);

@@ -1,9 +1,6 @@
 /**
- * Atlas Allocator - manages free/used brick slots in the atlas texture
- *
- * Uses LRU (Least Recently Used) eviction when the atlas is full.
- * Each slot tracks the brick metadata so we can properly clear the
- * indirection table when evicting.
+ * Atlas Allocator - manages free/used brick slots in the atlas texture.
+ * Uses LRU eviction when full, tracking brick metadata for indirection cleanup.
  */
 
 import { GRID_SIZE } from '../core/config.js';
@@ -129,13 +126,7 @@ export class AtlasAllocator {
     return this.findLRUSlot(currentFrame) !== -1;
   }
 
-  /**
-   * Allocate a slot in the atlas
-   * If atlas is full, evicts the least recently used slot
-   *
-   * @param frame - Current frame number for LRU tracking
-   * @returns AllocationResult with slot and any evicted brick metadata
-   */
+  /** Allocate a slot, evicting the LRU slot if the atlas is full. */
   allocate(frame: number = 0): AllocationResult | null {
     // Try free list first
     if (this.freeList.length > 0) {

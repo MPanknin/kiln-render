@@ -1,9 +1,6 @@
 /**
- * BrickCache - CPU-side LRU cache for decompressed brick data
- *
- * Keeps recently fetched brick data in memory so that bricks evicted
- * from the GPU atlas can be re-uploaded without a network round-trip.
- * Bounded by total byte count, not entry count.
+ * BrickCache - CPU-side LRU cache for decompressed brick data.
+ * Re-uploads evicted bricks without network round-trip. Bounded by bytes.
  */
 
 import type { BrickData } from '../data/data-provider.js';

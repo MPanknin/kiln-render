@@ -466,7 +466,7 @@ export class MultichannelUI {
 
   /**
    * Re-read per-channel window/level from metadata and update the UI sliders.
-   * Called when ranges are derived after base LOD loading (B5 deferred scan).
+   * Called when ranges are derived after base LOD loading.
    */
   refreshChannelWindows(): void {
     const windows = this.viewer.metadata.channelWindows;

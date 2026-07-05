@@ -1,14 +1,6 @@
 /**
- * StreamingManager - Resident Set Manager for brick streaming
- *
- * Decides which bricks should be in VRAM based on camera position and frustum.
- * Handles:
- * - Visibility testing (frustum culling)
- * - LOD selection (distance-based coarse-to-fine)
- * - Desired set calculation
- * - Priority queue for async loading
- * - Touch loop for LRU management
- * - Request cancellation for stale bricks
+ * StreamingManager - Resident set manager for brick streaming. Selects visible
+ * bricks by frustum/LOD, queues priority loads, and cancels stale requests.
  */
 
 import { mat4 } from 'wgpu-matrix';
@@ -114,7 +106,7 @@ export class StreamingManager {
   // Callback for when base LOD is loaded with brick data
   private onBaseLodLoaded: ((brickData: (Uint8Array | Uint16Array)[]) => void) | null = null;
 
-  // Callback for when base LOD derives float/channel ranges (B5)
+  // Callback for when base LOD derives float/channel ranges
   private onRangesDerived: ((opts: {
     dataRange?: [number, number];
     channelRanges?: Array<{ min: number; max: number }>;
@@ -161,11 +153,7 @@ export class StreamingManager {
   // Max bricks to request at once (prevents runaway loading)
   private maxDesiredBricks = 256;
 
-  // set when an allocation was refused 
-  // suspends load-queue draining until the next computeDesiredSet, so bricks that
-  // can't get a slot don't burn network/worker time. The refused bricks stay
-  // in the desired set and retry automatically; the shader falls back to the
-  // resident coarser parent via the indirection table in the meantime.
+  // Suspends load-queue draining when atlas is full; retries on next computeDesiredSet.
   private allocationStalled = false;
 
   // cached zero-filled bricks per bit depth, used to clear stale slot
@@ -239,7 +227,7 @@ export class StreamingManager {
     this.onBaseLodLoaded = callback;
   }
 
-  /** Set callback for when base LOD derives float/channel ranges (B5) */
+  /** Set callback for when base LOD derives float/channel ranges */
   setRangesDerivedCallback(callback: (opts: {
     dataRange?: [number, number];
     channelRanges?: Array<{ min: number; max: number }>;
@@ -259,14 +247,8 @@ export class StreamingManager {
   }
 
   /**
-   * Derive a percentile-clipped (p0.1 / p99.9) float data range from the
-   * in-memory base-LOD bricks. Brick data is float16 bit patterns in RAW
-   * data space. Restores the outlier clipping the old scanFloatRange
-   * performed — without it a single hot voxel compresses the entire
-   * contrast range.
-   *
-   * Uses a 65536-entry float16 decode LUT + histogram: no per-voxel
-   * Math.pow, no sorting.
+   * Derive a percentile-clipped (p0.1 / p99.9) float data range from base-LOD
+   * bricks using a 65536-entry float16 histogram (no per-voxel Math.pow).
    */
   private computeFloatPercentileRange(
     bricks: Uint16Array[],
@@ -318,12 +300,7 @@ export class StreamingManager {
     return lo < hi ? [lo, hi] : [rawMin, rawMax];
   }
 
-  /**
-   * Load and pin the coarsest LOD level (ensures no holes)
-   * Bricks are processed with bounded concurrency to avoid saturating the HTTP
-   * connection pool — especially important for multichannel where each brick
-   * triggers N parallel channel fetches.
-   */
+  /** Load and pin the coarsest LOD level with bounded concurrency. */
   private async loadBaseLod(): Promise<void> {
     const t0 = performance.now();
     const maxLod = Math.max(...this.metadata.levels.map(l => l.lod));
@@ -365,9 +342,8 @@ export class StreamingManager {
     let firstBrickMs: number | null = null;
     let sumIsEmptyMs = 0, sumFetchMs = 0, sumUploadMs = 0, brickCount = 0;
 
-    // B5: range accumulators — derive float data range and per-channel
-    // min/max incrementally from BrickLoadResult stats during base LOD
-    // loading, replacing the blocking scanFloatRange/scanChannelRanges.
+    // Range accumulators — derive float data range and per-channel
+    // min/max incrementally from BrickLoadResult stats during base LOD loading.
     const isFloat = this.metadata.isFloat ?? false;
     const needsFloatRange = isFloat && !this.metadata.window; // no OMERO → provisional
     const needsChannelRanges = numChannels > 1 && !this.metadata.channelWindows;
@@ -400,7 +376,7 @@ export class StreamingManager {
 
       if (!channelResults[0]) return; // ch0 mandatory; skip brick entirely if it failed
 
-      // B5: accumulate per-channel stats for range derivation
+      // Accumulate per-channel stats for range derivation
       for (let ch = 0; ch < numChannels; ch++) {
         const r = channelResults[ch];
         if (!r) continue;
@@ -521,7 +497,7 @@ export class StreamingManager {
       ` | avg upload: ${brickCount > 0 ? (sumUploadMs / brickCount).toFixed(1) : 'n/a'}ms`
     );
 
-    // B5: finalize derived ranges and push to renderer + workers
+    // Finalize derived ranges and push to renderer + workers
     const derivedRanges: {
       dataRange?: [number, number];
       channelRanges?: Array<{ min: number; max: number }>;
@@ -538,19 +514,12 @@ export class StreamingManager {
       this.metadata.dataRange = clipped;
       // Update workers so future brick stats use the real range
       this.dataProvider.setFloatRange?.(clipped[0], clipped[1]);
-      console.log(`[Kiln] B5: derived float range: [${clipped[0]}, ${clipped[1]}] (raw extremes: [${floatRangeMin}, ${floatRangeMax}])`);
+      console.log(`[Kiln] derived float range: [${clipped[0]}, ${clipped[1]}] (raw extremes: [${floatRangeMin}, ${floatRangeMax}])`);
     }
 
     if (needsChannelRanges && channelMins.some(v => isFinite(v))) {
-      // Window space must match what the shader compares against AFTER float
-      // normalisation:
-      //  - float data: windows live in raw space relative to the global
-      //    dataRange (the shader normalises (raw − dataRange0)/(range) first).
-      //    Previously raw-space start/end were stored against min=0/max=65535,
-      //    collapsing the derived windows to ~nothing.
-      //  - integer data: the EFFECTIVE atlas bit depth — on the r8unorm
-      //    fallback worker stats are recomputed in 0-255 space, so
-      //    metadata.bitDepth (16) would inflate dtypeMax 256×.
+      // Window space must match shader expectations: float windows use
+      // raw-space dataRange, integer windows use effective atlas bit depth.
       const effectiveBitDepth = this.resources.canvases[0]!.bitDepth;
       const dtypeMax = effectiveBitDepth === 16 ? 65535 : 255;
       const winMin = isFloat ? (this.metadata.dataRange?.[0] ?? 0) : 0;
@@ -563,7 +532,7 @@ export class StreamingManager {
       }
       derivedRanges.channelRanges = ranges;
       this.metadata.channelWindows = ranges.map(r => ({ start: r.min, end: r.max, min: winMin, max: winMax }));
-      console.log('[Kiln] B5: derived per-channel ranges:', ranges.map((r, i) => `ch${i}: [${r.min}, ${r.max}]`).join(', '));
+      console.log('[Kiln] derived per-channel ranges:', ranges.map((r, i) => `ch${i}: [${r.min}, ${r.max}]`).join(', '));
     }
 
     if ((derivedRanges.dataRange || derivedRanges.channelRanges) && this.onRangesDerived) {
@@ -598,11 +567,8 @@ export class StreamingManager {
       this.cameraStillFrames++;
     }
 
-    // Decide when to recompute:
-    // 1. Every frame while moving — keeps desiredKeys fresh so stale in-flight
-    //    requests are cancelled within 1 frame instead of `updateInterval` frames.
-    // 2. Immediately when camera comes to rest (after stillness threshold)
-    // 3. Regular interval as a fallback when still (no-op if nothing changed)
+    // Recompute every frame while moving, immediately on rest, and
+    // periodically as a fallback when still.
     const regularUpdate = cameraMoved
       ? true
       : (this.frameCount - this.lastUpdateFrame) >= this.updateInterval;
@@ -734,11 +700,8 @@ export class StreamingManager {
     const viewProj = mat4.multiply(projMatrix, viewMatrix);
     const frustum = extractFrustumPlanes(viewProj);
 
-    // projectionFactor always targets full canvas resolution — LOD selection
-    // should pre-load fine bricks even during interaction so they're ready when
-    // the camera stops. Dispatch gating (processLoadQueue skipped while
-    // interacting) prevents wasted loads; scaling projectionFactor by renderScale
-    // was tried twice and reverted both times because it delays LOD too much.
+    // projectionFactor targets full canvas resolution — LOD selection pre-loads
+    // fine bricks during interaction; dispatch gating prevents wasted loads.
     this.projectionFactor = canvas.height / (2 * Math.tan(this.cameraFovRad / 2));
 
     // Get LOD range from metadata
@@ -775,11 +738,8 @@ export class StreamingManager {
       const voxelWorldSize = this.getVoxelWorldSize(lod);
       const projectedError = (voxelWorldSize / Math.max(dist, 0.001)) * this.projectionFactor;
 
-      // Decision: load this LOD or split to finer?
-      // SSE hysteresis: if children already exist at finer LOD, keep splitting
-      // until the error drops to 70% of maxPixelError. Prevents the oscillation
-      // where bricks near the threshold flip between LODs frame-to-frame,
-      // causing cancel → re-fetch churn during gestures.
+      // SSE hysteresis: keep splitting while children exist and error > 70%
+      // of maxPixelError, preventing LOD oscillation during gestures.
       let shouldSplit: boolean;
       if (projectedError > this.maxPixelError) {
         shouldSplit = lod > 0;
@@ -855,11 +815,8 @@ export class StreamingManager {
       this.desiredKeys.add(brick.key);
     }
 
-    // Cancel in-flight requests that are no longer desired (with grace period).
-    // Don't abort instantly — a request that briefly leaves the desired set
-    // (LOD oscillation near the SSE threshold) and returns within the grace
-    // window survives, completes, and warms the worker chunk cache. Without
-    // this, per-frame recompute + instant cancel = fetch thrash.
+    // Cancel in-flight requests no longer desired, with a grace period
+    // to avoid fetch thrash from LOD oscillation near the SSE threshold.
     let cancelledCount = 0;
     const now = performance.now();
     for (const [key, controller] of this.inFlightRequests.entries()) {
@@ -1009,9 +966,7 @@ export class StreamingManager {
 
     // Try CPU cache first, fall back to network — load all channels in parallel.
     // Capped to renderer.numChannels (≤ 4) so we never write to a non-existent atlas.
-    // fetched data is NOT put into the brick cache here — caching
-    // happens below, after the brick is known to be non-empty, so empty bricks
-    // don't evict useful entries from the cache budget.
+    // Caching deferred until after emptiness check (empty bricks shouldn't evict useful cache entries).
     const numChannels = this.resources.numChannels;
     const fromCache: boolean[] = new Array(numChannels).fill(false);
     const channelResults: (BrickLoadResult | null)[] = await Promise.all(
@@ -1028,21 +983,11 @@ export class StreamingManager {
     );
     if (signal.aborted) return;
 
-    // ch0 is mandatory (matches loadBaseLod's policy); other channels
-    // degrade gracefully — a transient failure on ch3 must not discard the
-    // three channels that succeeded. The brick stays desired and a full
-    // version is fetched on a later pass if needed (failed channels aren't
-    // cached, so the retry re-fetches only what's missing).
+    // ch0 mandatory; other channels degrade gracefully (retry re-fetches missing ones).
     if (!channelResults[0]) return;
 
-    // Emptiness check using inline stats — no second async isBrickEmpty round-trip.
-    // Check max across all channels: empty only if ALL channels are below threshold.
-    // SKIPPED when any channel was served from the CPU cache: cached entries
-    // carry sentinel stats (max=1) which fail the real threshold (default
-    // 100), so every cache-served brick — i.e. every brick evicted from the
-    // atlas and revisited — was permanently marked empty, freezing the
-    // region at the coarse parent LOD. A brick is only ever put into the
-    // cache AFTER it was proven non-empty, so the re-check is redundant.
+    // Emptiness check via inline stats. Skipped for cache-served bricks
+    // (sentinel stats would false-positive; cached bricks are already proven non-empty).
     if (!fromCache.some(v => v)) {
       const threshold = this.config.emptyBrickThreshold ?? 1;
       const maxAcrossChannels = Math.max(...channelResults.map(r => r?.max ?? 0));
@@ -1271,12 +1216,7 @@ export class StreamingManager {
     return null;
   }
 
-  /**
-   * Check if any child brick (one LOD finer) is already loaded or in-flight.
-   * Used for SSE hysteresis: if children exist, keep splitting even when the
-   * projected error dips into the hysteresis band (0.7×–1.0× maxPixelError),
-   * preventing LOD oscillation at the threshold boundary during gestures.
-   */
+  /** Check if any child brick (one LOD finer) is loaded or in-flight (SSE hysteresis). */
   private hasResidentChildren(bx: number, by: number, bz: number, lod: number): boolean {
     const finerLod = lod - 1;
     if (finerLod < 0) return false;
@@ -1293,12 +1233,7 @@ export class StreamingManager {
     return false;
   }
 
-  /**
-   * Check if any ancestor brick is known-empty.
-   * Used during eviction: if no loaded parent exists but an ancestor was
-   * empty, the evicted region should be marked empty (w=255) rather than
-   * cleared to unloaded (w=0).
-   */
+  /** Check if any ancestor brick is known-empty (for eviction fallback). */
   private hasEmptyAncestor(bx: number, by: number, bz: number, lod: number): boolean {
     const maxLod = Math.max(...this.metadata.levels.map(l => l.lod));
     for (let parentLod = lod + 1; parentLod <= maxLod; parentLod++) {

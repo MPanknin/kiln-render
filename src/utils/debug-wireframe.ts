@@ -1,9 +1,4 @@
-/**
- * Debug Wireframe Renderer
- *
- * Draws wireframe boxes around octree cells to visualize LOD structure.
- * Each LOD level gets a different color.
- */
+/** Debug Wireframe Renderer — draws colored wireframe boxes to visualize LOD structure. */
 
 import type { DatasetConfig } from '../core/config.js';
 

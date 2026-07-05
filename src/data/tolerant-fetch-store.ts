@@ -1,26 +1,6 @@
 /**
- * TolerantFetchStore - Zarr store that handles quirky HTTP backends
- *
- * 1. CloudFront / S3 with OAI/OAC returns HTTP 403 instead of 404 for missing
- *    objects. zarrita's FetchStore only treats 404 as "not found", so we map
- *    403 → undefined as well.
- *
- * 2. Vite's dev server (and other SPA hosts) return index.html with HTTP 200
- *    for any unmatched path. zarrita's FetchStore accepts any 200 response as
- *    valid data, so when zarrita probes for zarr.json (v3 format detection) it
- *    receives index.html, tries to JSON-parse it, and throws
- *    "Unexpected token '<'". We detect HTML responses by Content-Type and
- *    return undefined instead.
- *
- * 3. Transient failures (5xx, network errors) are retried with bounded
- *    exponential backoff and THROW after exhaustion — they must never map to
- *    undefined, because zarrita interprets undefined as "chunk does not exist"
- *    and silently fills the region with zeros (permanent data holes).
- *
- * Fetch concurrency is NOT throttled here — the browser's connection pool
- * handles multiplexing (HTTP/2) and queuing (HTTP/1.1) natively. The
- * StreamingManager's maxConcurrentRequests (8) bounds how many bricks are
- * in-flight, which naturally limits the number of chunk fetches.
+ * TolerantFetchStore - Zarr store that handles quirky HTTP backends.
+ * Maps 403→undefined, rejects HTML 200s, retries 5xx with backoff.
  */
 
 import { FetchStore } from 'zarrita';

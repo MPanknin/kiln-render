@@ -1,9 +1,4 @@
-/**
- * DecompressionWorker - Web Worker for off-main-thread gzip decompression
- *
- * This worker receives compressed brick data and decompresses it using fflate,
- * keeping the main thread free for rendering at 60+ FPS.
- */
+/** DecompressionWorker - Off-main-thread gzip decompression via fflate. */
 
 import { gunzipSync } from 'fflate';
 import { uint16ToFloat16 } from '../utils/float16.js';

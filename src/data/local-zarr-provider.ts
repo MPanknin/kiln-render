@@ -1,9 +1,6 @@
 /**
- * LocalZarrDataProvider - Load OME-Zarr from local filesystem
- *
- * Uses File System Access API to read local Zarr datasets.
- * Unlike ZarrDataProvider, this runs on the main thread since
- * FileSystemDirectoryHandle cannot be transferred to workers.
+ * LocalZarrDataProvider - Loads OME-Zarr from local filesystem via
+ * File System Access API. Runs on main thread (handles can't transfer to workers).
  */
 
 import { open, root, Array as ZarrArray } from 'zarrita';
@@ -71,7 +68,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     const name = this.dirHandle.name.replace(/\.ome\.zarr|\.zarr/, '');
     const { metadata, lodParams } = this.parseOmeMetadata(attrs, this.arrays, name);
 
-    // B5: startup scans removed — ranges derived during base LOD loading
+    // Provisional dataRange — real range derived during base LOD loading
     if (metadata.isFloat && !metadata.dataRange) {
       metadata.dataRange = [0, 1];
     }

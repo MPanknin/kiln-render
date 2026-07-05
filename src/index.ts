@@ -1,10 +1,4 @@
-/**
- * kiln-render — public API
- *
- * Everything a consumer needs to embed a volume renderer:
- *   import { KilnViewer } from 'kiln-render';
- *   const viewer = await KilnViewer.create(canvas, url);
- */
+/** kiln-render — public API */
 
 // Viewer
 export { KilnViewer } from './viewer.js';

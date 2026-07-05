@@ -1,9 +1,6 @@
 /**
- * DecompressionPool - Worker pool for parallel brick decompression
- *
- * Manages a pool of Web Workers to decompress gzip-compressed bricks
- * without blocking the main thread. Uses round-robin assignment with
- * promise-based request tracking.
+ * DecompressionPool - Round-robin Web Worker pool for parallel
+ * gzip decompression of brick data off the main thread.
  */
 
 import type { DecompressRequest, DecompressResponse } from './decompression-worker.js';

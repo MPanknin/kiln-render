@@ -1,8 +1,4 @@
-// Axis-aligned slice planes through the volume in 3D space.
-// Three instanced quads (instance 0=X, 1=Y, 2=Z) positioned in normalized
-// volume space and sampled from the atlas.
-//
-// Prepend: uniform-layout (Uniforms struct) + bindings + common.wgsl + sampling.wgsl
+// Axis-aligned slice planes: three instanced quads (X, Y, Z) sampled from the atlas.
 
 struct VertexOut {
     @builtin(position) position: vec4f,

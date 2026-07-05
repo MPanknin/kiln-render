@@ -1,10 +1,4 @@
-/**
- * Data module - Volume data provider abstraction
- *
- * This module provides an abstract interface for loading volume data from
- * different sources and formats. The renderer and streaming manager depend
- * only on the DataProvider interface, not on specific implementations.
- */
+/** Data module — volume data provider abstraction. */
 
 // Core types and interface
 export type {

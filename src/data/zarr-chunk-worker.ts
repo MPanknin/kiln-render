@@ -1,15 +1,6 @@
 /**
- * ZarrChunkWorker - Web Worker for fully off-main-thread Zarr brick loading
- *
- * Runs the entire pipeline inside the worker:
- *   1. Fetch compressed Zarr chunks over HTTP
- *   2. Decompress via zarrita's codec pipeline (zstd/blosc WASM)
- *   3. Assemble 66³ brick from overlapping chunks (re-chunking + ghost borders)
- *   4. Compute brick stats (min/max/avg)
- *   5. Transfer the assembled brick buffer back to main thread (zero-copy)
- *
- * The main thread never touches voxel data — it just dispatches requests
- * and uploads the returned buffers to the GPU atlas.
+ * ZarrChunkWorker - Web Worker that fetches, decompresses, and assembles
+ * 66³ bricks entirely off-thread, transferring results back zero-copy.
  */
 
 import { open, root, Array as ZarrArray, registry } from 'zarrita';
@@ -20,10 +11,7 @@ import zstd from 'numcodecs/zstd';
 import { TolerantFetchStore } from './tolerant-fetch-store.js';
 import { uint16ToFloat16, float32ToFloat16Bits } from '../utils/float16.js';
 
-// Override zarrita's default codec registry with static imports.
-// By default zarrita lazily loads codecs via dynamic import("numcodecs/blosc") etc.,
-// which Vite pre-bundles to @fs paths that workers cannot fetch in dev mode.
-// Static imports bundle the codecs directly into the worker chunk.
+// Static codec imports — zarrita's dynamic imports fail in Vite dev workers.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 registry.set('blosc', async () => blosc as any);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -421,7 +409,7 @@ async function assembleBrick(
   let max = -Infinity;
   let sum = 0;
   // Raw-space min/max for float data — used by StreamingManager to derive
-  // the actual data range during base LOD loading (B5 deferred scan).
+  // the actual data range during base LOD loading.
   let rawMinVal = Infinity;
   let rawMaxVal = -Infinity;
 

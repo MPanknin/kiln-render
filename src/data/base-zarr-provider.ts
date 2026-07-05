@@ -1,16 +1,6 @@
 /**
- * BaseZarrProvider - Shared base class for Zarr data providers
- *
- * Contains common logic for:
- * - OME-Zarr metadata parsing (multiscales, OMERO window metadata, voxel spacing)
- * - LOD level calculation with virtual dimensions
- * - Brick statistics caching
- * - Network/IO statistics tracking
- * - Common utility methods
- *
- * Subclasses implement the actual brick loading strategy:
- * - ZarrDataProvider: Uses worker pool for HTTP fetching
- * - LocalZarrDataProvider: Main thread assembly from File System Access API
+ * BaseZarrProvider - Shared base for OME-Zarr metadata parsing, LOD calculation,
+ * and brick stats. Subclassed by ZarrDataProvider (HTTP) and LocalZarrDataProvider (FS).
  */
 
 import type { Array as ZarrArray } from 'zarrita';
@@ -56,13 +46,7 @@ export interface LodParams {
   channelAxisIdx: number;
 }
 
-/**
- * Detect the compression codec by reading raw zarr metadata from a store.
- * Tries zarr v2 (.zarray) first, then zarr v3 (zarr.json).
- *
- * @param store - Any zarr store with a `get(key)` method
- * @param arrayPath - Path to the zarr array relative to the store root (e.g. "s0" or "0/s0")
- */
+/** Detect the compression codec from zarr v2 (.zarray) or v3 (zarr.json) metadata. */
 export async function detectCompression(
   store: { get: (key: any) => Promise<Uint8Array | undefined> },
   arrayPath: string,
@@ -252,11 +236,7 @@ export abstract class BaseZarrProvider implements DataProvider {
     return [lo, hi];
   }
 
-  /**
-   * Scan the coarsest LOD per-channel to find each channel's actual min/max.
-   * Used as a fallback when no OMERO window metadata is available for multichannel datasets.
-   * Follows the Vizarr approach: pure min/max on the lowest-resolution level.
-   */
+  /** Scan coarsest LOD per-channel for min/max (fallback when no OMERO window). */
   protected async scanChannelRanges(
     arr: ZarrArray<DataType, any>,
     params: LodParams,
@@ -327,16 +307,7 @@ export abstract class BaseZarrProvider implements DataProvider {
     }
   }
 
-  /**
-   * Parse OME-Zarr metadata and build VolumeMetadata
-   *
-   * This handles:
-   * - Extracting OME multiscales from group attributes
-   * - Detecting bit depth from dtype
-   * - Parsing voxel spacing from coordinateTransformations
-   * - Building LOD levels with virtual dimensions
-   * - Extracting OMERO window metadata
-   */
+  /** Parse OME-Zarr metadata and build VolumeMetadata. */
   protected parseOmeMetadata(
     attrs: Record<string, unknown>,
     arrays: ZarrArray<DataType, any>[],

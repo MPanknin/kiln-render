@@ -1,9 +1,4 @@
-/**
- * Single source of truth for WGSL uniform struct layouts.
- *
- * Generates both the WGSL struct text and byte offsets from one definition,
- * eliminating the hand-maintained offset mirrors in renderer.ts.
- */
+/** Single source of truth for WGSL uniform struct layouts. */
 
 type WGSLType =
   | 'f32' | 'u32' | 'i32'

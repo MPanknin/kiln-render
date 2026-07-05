@@ -1,9 +1,4 @@
-/**
- * Kiln Configuration
- *
- * Centralized configuration for volume rendering constants.
- * These values define the structure of the virtual texturing system.
- */
+/** Kiln Configuration — volume rendering and virtual texturing constants. */
 
 // Core constants
 export const LOGICAL_BRICK_SIZE = 64;

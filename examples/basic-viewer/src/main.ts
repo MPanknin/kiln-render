@@ -1,9 +1,6 @@
 /**
- * Kiln — application entry point
- *
- * Responsible for: URL parameter parsing, data provider selection for local
- * Zarr (File System API), error display, the dataset dialog, share button,
- * and analytics.  All rendering and streaming concerns live in KilnViewer.
+ * Kiln — application entry point. URL parsing, data provider selection,
+ * dataset dialog, and share button. Rendering lives in KilnViewer.
  */
 
 declare global {

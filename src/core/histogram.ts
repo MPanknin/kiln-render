@@ -6,13 +6,8 @@ import type { BitDepth } from '../data/data-provider.js';
 import { float16BitsToFloat32 } from '../utils/float16.js';
 
 /**
- * Compute a histogram from multiple volume data arrays.
- *
- * - Standard uint8/uint16: pass nothing extra.
- * - Float32 source (r16float atlas): pass `isFloat32=true` + `floatMin`/`floatMax`
- *   so float16 bit-patterns are decoded and normalised with the correct range.
- * - Uint16 source stored as r16float: pass `targetFormat='r16float'`; float16
- *   bit-patterns encode [0,1] directly so no range remapping is needed.
+ * Compute a histogram from volume data arrays. Handles uint8/uint16 directly,
+ * float32-as-r16float (with range remapping), and uint16-as-r16float.
  */
 export function computeHistogram(
   dataArrays: (Uint8Array | Uint16Array)[],

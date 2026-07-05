@@ -1,9 +1,6 @@
 /**
  * VolumeResources — atlas textures, indirection table, and slot allocator.
- *
- * Owns the GPU-resident volume data that both Renderer (for bind groups) and
- * StreamingManager (for brick upload / eviction) need.  Extracting this from
- * Renderer breaks the direct Renderer↔StreamingManager coupling.
+ * Shared between Renderer and StreamingManager.
  */
 
 import { VolumeCanvas, createVolumeCanvas } from './volume.js';

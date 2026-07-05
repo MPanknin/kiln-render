@@ -14,10 +14,7 @@ export interface VolumeCanvas {
 
 /**
  * Detect best supported texture format for 16-bit data.
- * Tries r16float first (filterable, works on Chrome/Firefox/Safari),
- * falls back to r8unorm. r16unorm is skipped for now — Chrome 147+ enforces
- * its UnfilterableFloat sample type which breaks the current shader setup.
- * TODO: proper r16unorm support via runtime filterability probe.
+ * Tries r16float first (filterable), falls back to r8unorm.
  */
 export function detectBest16BitFormat(device: GPUDevice): GPUTextureFormat {
   const formats: GPUTextureFormat[] = ['r16float'];
@@ -42,12 +39,7 @@ export function detectBest16BitFormat(device: GPUDevice): GPUTextureFormat {
   return 'r8unorm';
 }
 
-/**
- * Create empty volume canvas (atlas texture)
- * @param device - WebGPU device
- * @param bitDepth - Effective bit depth (8 or 16) 
- * @param format - Texture format to use (r8unorm, r16unorm, or r16float)
- */
+/** Create empty volume canvas (atlas texture) */
 export function createVolumeCanvas(device: GPUDevice, bitDepth: BitDepth, format: GPUTextureFormat): VolumeCanvas {
   const texture = device.createTexture({
     size: [ATLAS_SIZE, ATLAS_SIZE, ATLAS_SIZE],

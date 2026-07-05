@@ -735,8 +735,8 @@ export class Renderer {
     }
 
     // Single merged pass: blit volume (if any) then draw overlays.
-    // Always clears — avoids a tile flush+reload on TBDR GPUs (P8a).
-    // Depth is never read back, so discard saves a full-screen write (P8b).
+    // Always clears — avoids a tile flush+reload on TBDR GPUs.
+    // Depth is never read back, so discard saves a full-screen write.
     const overlayPass = encoder.beginRenderPass({
       colorAttachments: [{
         view: colorView,

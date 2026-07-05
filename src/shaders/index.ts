@@ -1,20 +1,6 @@
 /**
- * Shader module assembly
- *
- * Combines modular WGSL shader components into complete shader programs.
- *
- * Architecture:
- * - common.wgsl: Constants, utility functions, coordinate transforms
- * - sampling.wgsl: Indirection table and atlas sampling
- * - compositing.wgsl: Front-to-back volume compositing
- * - raymarching.wgsl: Brick traversal and integration core
- * - dvr.wgsl: Direct Volume Rendering mode
- * - mip.wgsl: Maximum Intensity Projection mode
- * - iso.wgsl: Isosurface rendering mode
- * - lod-debug.wgsl: LOD visualization mode
- * - wireframe.wgsl: Proxy box wireframe
- * - axis.wgsl: RGB axis helper
- * - blit.wgsl: Fullscreen texture blit
+ * Shader module assembly — combines modular WGSL components into
+ * complete shader programs (compute, blit, overlays).
  */
 
 import { CONFIG } from '../core/config.js';

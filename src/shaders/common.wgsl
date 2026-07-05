@@ -104,11 +104,7 @@ fn phongLighting(normal: vec3f, lightDir: vec3f, baseColor: vec3f) -> vec3f {
     return ambient + diffuse + specular;
 }
 
-// Window/Level (windowing) for density remapping
-// Maps a sub-range of density values to the full 0-1 range for better contrast
-// windowCenter: center of the window (0-1)
-// windowWidth: width of the window (0-1, where 1 = full range)
-// Returns density remapped to 0-1 based on window settings
+// Window/Level: remap a density sub-range to [0,1] for contrast adjustment.
 fn applyWindow(density: f32, windowCenter: f32, windowWidth: f32) -> f32 {
     let halfWidth = windowWidth * 0.5;
     let minVal = windowCenter - halfWidth;

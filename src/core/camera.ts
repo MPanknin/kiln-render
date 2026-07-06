@@ -4,6 +4,11 @@ import { mat4 } from 'wgpu-matrix';
 
 export type UpAxis = 'x' | 'y' | 'z' | '-x' | '-y' | '-z';
 
+// Orbit distance clamp (normalized units), shared by mouse wheel and touch pinch
+// so the two paths can't drift — mobile must zoom in as close as desktop.
+const MIN_DISTANCE = 0.1;
+const MAX_DISTANCE = 10;
+
 export class Camera {
   position: Float32Array;
 
@@ -87,8 +92,7 @@ export class Camera {
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.distance *= 1 + e.deltaY * 0.001;
-      // Zoom limits for normalized space
-      this.distance = Math.max(0.1, Math.min(10, this.distance));
+      this.distance = Math.max(MIN_DISTANCE, Math.min(MAX_DISTANCE, this.distance));
       this.lastInteractionTime = performance.now();
       this.updatePosition();
     }, { passive: false });
@@ -152,7 +156,7 @@ export class Camera {
         if (this.lastPinchDistance > 0) {
           const pinchRatio = this.lastPinchDistance / currentDistance;
           this.distance *= pinchRatio;
-          this.distance = Math.max(0.5, Math.min(10, this.distance));
+          this.distance = Math.max(MIN_DISTANCE, Math.min(MAX_DISTANCE, this.distance));
         }
         this.lastPinchDistance = currentDistance;
 
@@ -332,7 +336,7 @@ export class Camera {
   setOrbitState(state: [number, number, number] | [number, number, number, number, number, number]): void {
     this.rotationX = state[0];
     this.rotationY = state[1];
-    this.distance = state[2];
+    this.distance = Math.max(MIN_DISTANCE, Math.min(MAX_DISTANCE, state[2]));
     if (state.length === 6) {
       this.target = [state[3], state[4], state[5]];
     }

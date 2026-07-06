@@ -46,11 +46,16 @@ export class AtlasAllocator {
   // Reverse mapping: slot index -> brick metadata (for eviction)
   private slotMetadata: (BrickMetadata | null)[];
 
-  // Total slots available (GRID_SIZE³)
+  // Atlas grid dimension (slots per axis); may be smaller than the default
+  // GRID_SIZE when the atlas was shrunk to fit a VRAM budget.
+  private readonly gridSize: number;
+
+  // Total slots available (gridSize³)
   readonly totalSlots: number;
 
-  constructor() {
-    this.totalSlots = GRID_SIZE * GRID_SIZE * GRID_SIZE;
+  constructor(gridSize: number = GRID_SIZE) {
+    this.gridSize = gridSize;
+    this.totalSlots = gridSize * gridSize * gridSize;
     this.used = new Set();
     this.pinned = new Set();
     this.freeList = [];
@@ -260,16 +265,16 @@ export class AtlasAllocator {
    * Convert slot coordinates to flat index
    */
   slotToIndex(slot: AtlasSlot): number {
-    return slot.x + slot.y * GRID_SIZE + slot.z * GRID_SIZE * GRID_SIZE;
+    return slot.x + slot.y * this.gridSize + slot.z * this.gridSize * this.gridSize;
   }
 
   /**
    * Convert flat index to slot coordinates
    */
   indexToSlot(idx: number): AtlasSlot {
-    const x = idx % GRID_SIZE;
-    const y = Math.floor(idx / GRID_SIZE) % GRID_SIZE;
-    const z = Math.floor(idx / (GRID_SIZE * GRID_SIZE));
+    const x = idx % this.gridSize;
+    const y = Math.floor(idx / this.gridSize) % this.gridSize;
+    const z = Math.floor(idx / (this.gridSize * this.gridSize));
     return { x, y, z };
   }
 }

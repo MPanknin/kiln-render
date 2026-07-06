@@ -6,11 +6,18 @@
 import { VolumeCanvas, createVolumeCanvas } from './volume.js';
 import { IndirectionTable } from './indirection.js';
 import { AtlasAllocator } from '../streaming/atlas-allocator.js';
+import { GRID_SIZE, PHYSICAL_BRICK_SIZE } from './config.js';
 import type { DatasetConfig } from './config.js';
 import type { BitDepth } from '../data/data-provider.js';
 
 export class VolumeResources {
   readonly numChannels: number;
+
+  /** Atlas grid dimension (slots per axis) — may be shrunk to fit a VRAM budget */
+  readonly gridSize: number;
+
+  /** Atlas texture dimension in voxels (gridSize × PHYSICAL_BRICK_SIZE) */
+  readonly atlasSize: number;
 
   /** Per-channel atlas textures (length === numChannels) */
   readonly canvases: VolumeCanvas[];
@@ -27,11 +34,13 @@ export class VolumeResources {
   /** Channel-0 alias for single-channel callers */
   get canvas(): VolumeCanvas { return this.canvases[0]!; }
 
-  constructor(device: GPUDevice, bitDepth: BitDepth, textureFormat: GPUTextureFormat, config: DatasetConfig, numChannels = 1) {
+  constructor(device: GPUDevice, bitDepth: BitDepth, textureFormat: GPUTextureFormat, config: DatasetConfig, numChannels = 1, gridSize: number = GRID_SIZE) {
     this.numChannels = Math.min(Math.max(1, numChannels), 4);
+    this.gridSize = gridSize;
+    this.atlasSize = gridSize * PHYSICAL_BRICK_SIZE;
 
     this.canvases = Array.from({ length: this.numChannels }, () =>
-      createVolumeCanvas(device, bitDepth, textureFormat)
+      createVolumeCanvas(device, bitDepth, textureFormat, this.atlasSize)
     );
 
     this.dummyTexture = device.createTexture({
@@ -42,7 +51,7 @@ export class VolumeResources {
     });
 
     this.indirection = new IndirectionTable(device, config);
-    this.allocator = new AtlasAllocator();
+    this.allocator = new AtlasAllocator(gridSize);
   }
 
   /** View for atlas channel ch (dummy if ch >= numChannels) */

@@ -21,12 +21,13 @@ import blitWGSL from './blit.wgsl?raw';
 import accumulateWGSL from './accumulate.wgsl?raw';
 import slicePlanesWGSL from './slice-planes.wgsl?raw';
 
-// Inject all rendering constants from config into shader source
-function injectConfig(shader: string): string {
+// Inject rendering constants into shader source. Atlas size is per-viewer (the
+// atlas may be budget-shrunk), so it's passed in rather than read from CONFIG.
+function injectConfig(shader: string, atlasSize: number = CONFIG.ATLAS_SIZE): string {
   return shader
     .replace(/LOGICAL_BRICK_SIZE: f32 = \d+\.0/, `LOGICAL_BRICK_SIZE: f32 = ${CONFIG.LOGICAL_BRICK_SIZE}.0`)
     .replace(/PHYSICAL_BRICK_SIZE: f32 = \d+\.0/, `PHYSICAL_BRICK_SIZE: f32 = ${CONFIG.PHYSICAL_BRICK_SIZE}.0`)
-    .replace(/ATLAS_SIZE: f32 = \d+\.0/, `ATLAS_SIZE: f32 = ${CONFIG.ATLAS_SIZE}.0`)
+    .replace(/ATLAS_SIZE: f32 = \d+\.0/, `ATLAS_SIZE: f32 = ${atlasSize}.0`)
     .replace(/MAX_BRICK_TRAVERSALS: u32 = \d+u/, `MAX_BRICK_TRAVERSALS: u32 = ${CONFIG.MAX_BRICK_TRAVERSALS}u`);
 }
 
@@ -42,13 +43,15 @@ const sharedBindings = /* wgsl */ `
 @group(0) @binding(10) var volumeTexture3: texture_3d<f32>;
 `;
 
-// Assemble the common shader code
-const sharedCode = [
-  injectConfig(commonWGSL),
-  samplingWGSL,
-  compositingWGSL,
-  raymarchingWGSL,
-].join('\n');
+// Assemble the common shader code for a given atlas size
+function buildSharedCode(atlasSize: number): string {
+  return [
+    injectConfig(commonWGSL, atlasSize),
+    samplingWGSL,
+    compositingWGSL,
+    raymarchingWGSL,
+  ].join('\n');
+}
 
 // Mode dispatch function (calls appropriate render mode)
 const modeDispatch = /* wgsl */ `
@@ -79,13 +82,15 @@ fn rayMarchMode(
 }
 `;
 
-// Compute shader (full-screen ray marching)
-export const computeShader = /* wgsl */ `
+// Compute shader (full-screen ray marching). Built per-viewer so the injected
+// ATLAS_SIZE matches the (possibly budget-shrunk) atlas texture.
+export function buildComputeShader(atlasSize: number = CONFIG.ATLAS_SIZE): string {
+  return /* wgsl */ `
 struct Uniforms {
 ${COMPUTE_UNIFORMS.fields}
 }
 
-${sharedCode}
+${buildSharedCode(atlasSize)}
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 ${sharedBindings}
@@ -141,6 +146,7 @@ fn main(@builtin(global_invocation_id) globalId: vec3u) {
     textureStore(outputTexture, pixelCoord, vec4f(finalColor, 1.0));
 }
 `;
+}
 
 // Re-export simple shaders directly
 export const wireframeShader = wireframeWGSL;
@@ -148,12 +154,15 @@ export const axisShader = axisWGSL;
 export const blitShader = blitWGSL;
 export const accumulateShader = accumulateWGSL;
 
-// Slice planes shader: axis-aligned cross-sections through the volume
-export const slicePlanesShader = [
-  `struct Uniforms {\n${SLICE_UNIFORMS.fields}\n}`,
-  `@group(0) @binding(0) var<uniform> uniforms: Uniforms;`,
-  sharedBindings,
-  injectConfig(commonWGSL),
-  samplingWGSL,
-  slicePlanesWGSL,
-].join('\n');
+// Slice planes shader: axis-aligned cross-sections through the volume. Built
+// per-viewer so the injected ATLAS_SIZE matches the atlas texture.
+export function buildSlicePlanesShader(atlasSize: number = CONFIG.ATLAS_SIZE): string {
+  return [
+    `struct Uniforms {\n${SLICE_UNIFORMS.fields}\n}`,
+    `@group(0) @binding(0) var<uniform> uniforms: Uniforms;`,
+    sharedBindings,
+    injectConfig(commonWGSL, atlasSize),
+    samplingWGSL,
+    slicePlanesWGSL,
+  ].join('\n');
+}

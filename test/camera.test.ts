@@ -1,73 +1,19 @@
+/**
+ * Camera frustum culling — extractFrustumPlanes / isAABBInFrustum.
+ *
+ * Only Kiln's own culling code is tested here. Earlier revisions also asserted
+ * mat4.multiply behaviour (that's wgpu-matrix's job) and reimplemented the
+ * plane-distance dot product inline (testing arithmetic, not our code); both
+ * were removed as test theater.
+ */
 import { describe, it, expect } from 'vitest';
 import { mat4 } from 'wgpu-matrix';
 import {
   extractFrustumPlanes,
   isAABBInFrustum,
-  type FrustumPlanes,
 } from '../src/core/camera.js';
 
 const multiplyMatrices = (a: Float32Array, b: Float32Array) => mat4.multiply(a, b) as Float32Array;
-
-describe('Matrix Operations', () => {
-  describe('multiplyMatrices', () => {
-    it('should return identity when multiplying by identity', () => {
-      const identity = new Float32Array([
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1,
-      ]);
-      const result = multiplyMatrices(identity, identity);
-
-      for (let i = 0; i < 16; i++) {
-        expect(result[i]).toBeCloseTo(identity[i]!);
-      }
-    });
-
-    it('should handle translation matrix correctly', () => {
-      const identity = new Float32Array([
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1,
-      ]);
-      // Translation by (1, 2, 3) in column-major
-      const translation = new Float32Array([
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        1, 2, 3, 1,
-      ]);
-
-      const result = multiplyMatrices(identity, translation);
-      expect(result[12]).toBeCloseTo(1); // tx
-      expect(result[13]).toBeCloseTo(2); // ty
-      expect(result[14]).toBeCloseTo(3); // tz
-    });
-
-    it('should combine two translations', () => {
-      // Translation by (1, 0, 0)
-      const t1 = new Float32Array([
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        1, 0, 0, 1,
-      ]);
-      // Translation by (0, 2, 0)
-      const t2 = new Float32Array([
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        0, 2, 0, 1,
-      ]);
-
-      const result = multiplyMatrices(t1, t2);
-      expect(result[12]).toBeCloseTo(1); // Combined tx
-      expect(result[13]).toBeCloseTo(2); // Combined ty
-      expect(result[14]).toBeCloseTo(0); // Combined tz
-    });
-  });
-});
 
 describe('Frustum Culling', () => {
   // Create a simple orthographic-like view-projection for testing
@@ -188,34 +134,5 @@ describe('Frustum Culling', () => {
 
       expect(isAABBInFrustum(min, max, frustum)).toBe(true);
     });
-  });
-});
-
-describe('Frustum Plane Mathematics', () => {
-  it('should correctly classify point on positive side of plane', () => {
-    // Plane: x = 0 (normal pointing +x, d = 0)
-    const plane: [number, number, number, number] = [1, 0, 0, 0];
-    const point = [1, 0, 0]; // On positive side
-
-    const distance = plane[0] * point[0] + plane[1] * point[1] + plane[2] * point[2] + plane[3];
-    expect(distance).toBeGreaterThan(0);
-  });
-
-  it('should correctly classify point on negative side of plane', () => {
-    // Plane: x = 0 (normal pointing +x, d = 0)
-    const plane: [number, number, number, number] = [1, 0, 0, 0];
-    const point = [-1, 0, 0]; // On negative side
-
-    const distance = plane[0] * point[0] + plane[1] * point[1] + plane[2] * point[2] + plane[3];
-    expect(distance).toBeLessThan(0);
-  });
-
-  it('should correctly classify point on plane', () => {
-    // Plane: x = 1 (normal pointing +x, d = -1)
-    const plane: [number, number, number, number] = [1, 0, 0, -1];
-    const point = [1, 5, 5]; // On the plane
-
-    const distance = plane[0] * point[0] + plane[1] * point[1] + plane[2] * point[2] + plane[3];
-    expect(distance).toBeCloseTo(0);
   });
 });

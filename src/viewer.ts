@@ -8,7 +8,7 @@ import { VolumeResources } from './core/volume-resources.js';
 import { Camera, UpAxis } from './core/camera.js';
 import { TransferFunction, TFPreset } from './core/transfer-function.js';
 import { StreamingManager } from './streaming/streaming-manager.js';
-import { DatasetConfig } from './core/config.js';
+import { DatasetConfig, computeAtlasGrid } from './core/config.js';
 import { detectBest16BitFormat } from './core/volume.js';
 import type { DataProvider, VolumeMetadata } from './data/data-provider.js';
 import { ShardedDataProvider } from './data/sharded-provider.js';
@@ -27,6 +27,11 @@ export interface ViewerOptions {
   renderScale?: number;
   /** LOD screen-space error threshold in pixels */
   maxPixelError?: number;
+  /**
+   * Atlas VRAM budget in bytes (default ~1.3 GiB). The grid shrinks to fit;
+   * lower it for constrained mobile GPUs, raise it to keep 660³ for many channels.
+   */
+  atlasBudgetBytes?: number;
   /** Axis-aligned clip minimum, normalised 0–1 */
   clipMin?: [number, number, number];
   /** Axis-aligned clip maximum, normalised 0–1 */
@@ -211,11 +216,18 @@ export class KilnViewer {
       (dataProvider as { setTargetFormat: (f: string) => void }).setTargetFormat(textureFormat);
     }
 
-    // Build DatasetConfig 
+    // Build DatasetConfig
     const config = new DatasetConfig(metadata.dimensions, metadata.voxelSpacing);
 
+    // Shrink the atlas grid with channel count so total atlas VRAM fits the
+    // budget — a fixed 660³ × 4 channels (~2.3 GB) OOMs mobile GPUs at startup.
+    const bytesPerVoxel = textureFormat === 'r8unorm' ? 1 : 2;
+    const { gridSize, atlasSize } = computeAtlasGrid(metadata.numChannels, bytesPerVoxel, options.atlasBudgetBytes);
+    const atlasVramMB = Math.round((metadata.numChannels * atlasSize ** 3 * bytesPerVoxel) / 1e6);
+    console.log(`[Kiln] atlas grid ${gridSize}³ (${atlasSize}³ voxels) × ${metadata.numChannels} channel(s) ≈ ${atlasVramMB} MB VRAM`);
+
     // Construct subsystems
-    const resources = new VolumeResources(device, effectiveBitDepth, textureFormat, config, metadata.numChannels);
+    const resources = new VolumeResources(device, effectiveBitDepth, textureFormat, config, metadata.numChannels, gridSize);
     const renderer = new Renderer(device, format, resources, config);
 
     // Apply 16-bit window/level defaults from metadata

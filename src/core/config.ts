@@ -15,6 +15,31 @@ export const TOTAL_BRICK_SLOTS = GRID_SIZE * GRID_SIZE * GRID_SIZE;
 // For backward compatibility with existing code
 export const BRICK_SIZE = LOGICAL_BRICK_SIZE;
 
+// Atlas VRAM budget (bytes, ~1.3 GiB). A fixed 660³ atlas × 4 r16float channels
+// needs ~2.3 GB and OOMs mobile GPUs; computeAtlasGrid shrinks the grid to fit.
+// Sized so 1–2 channels keep the full 660³ grid.
+export const DEFAULT_ATLAS_BUDGET_BYTES = 1_400_000_000;
+
+// Smallest grid computeAtlasGrid may return — must still hold the pinned base
+// LOD plus a working set.
+export const MIN_GRID_SIZE = 6;
+
+/**
+ * Largest atlas grid (slots/axis) whose VRAM (numChannels × atlasSize³ ×
+ * bytesPerVoxel) fits budgetBytes, clamped to [MIN_GRID_SIZE, GRID_SIZE].
+ */
+export function computeAtlasGrid(
+  numChannels: number,
+  bytesPerVoxel: number,
+  budgetBytes: number = DEFAULT_ATLAS_BUDGET_BYTES,
+): { gridSize: number; atlasSize: number } {
+  const bytesPerChannel = budgetBytes / Math.max(1, numChannels);
+  const voxelsPerChannel = bytesPerChannel / Math.max(1, bytesPerVoxel);
+  const rawGrid = Math.floor(Math.cbrt(voxelsPerChannel) / PHYSICAL_BRICK_SIZE);
+  const gridSize = Math.max(MIN_GRID_SIZE, Math.min(GRID_SIZE, rawGrid));
+  return { gridSize, atlasSize: gridSize * PHYSICAL_BRICK_SIZE };
+}
+
 // Grouped config object (static constants only)
 export const CONFIG = {
   LOGICAL_BRICK_SIZE,

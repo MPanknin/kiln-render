@@ -39,16 +39,16 @@ export function detectBest16BitFormat(device: GPUDevice): GPUTextureFormat {
   return 'r8unorm';
 }
 
-/** Create empty volume canvas (atlas texture) */
-export function createVolumeCanvas(device: GPUDevice, bitDepth: BitDepth, format: GPUTextureFormat): VolumeCanvas {
+/** Create empty volume canvas (atlas texture). Size defaults to the full ATLAS_SIZE. */
+export function createVolumeCanvas(device: GPUDevice, bitDepth: BitDepth, format: GPUTextureFormat, atlasSize: number = ATLAS_SIZE): VolumeCanvas {
   const texture = device.createTexture({
-    size: [ATLAS_SIZE, ATLAS_SIZE, ATLAS_SIZE],
+    size: [atlasSize, atlasSize, atlasSize],
     format,
     dimension: '3d',
     usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
   });
 
-  return { texture, size: ATLAS_SIZE, bitDepth, format };
+  return { texture, size: atlasSize, bitDepth, format };
 }
 
 /**

@@ -7,7 +7,7 @@ import { Camera } from './camera.js';
 import { createBox, createAxis } from '../utils/geometry.js';
 import { TransferFunction } from './transfer-function.js';
 import { VolumeResources } from './volume-resources.js';
-import { wireframeShader, axisShader, computeShader, blitShader, accumulateShader, slicePlanesShader } from '../shaders/index.js';
+import { wireframeShader, axisShader, buildComputeShader, blitShader, accumulateShader, buildSlicePlanesShader } from '../shaders/index.js';
 import { COMPUTE_UNIFORMS, SLICE_UNIFORMS } from '../shaders/uniform-layout.js';
 import type { DatasetConfig } from './config.js';
 
@@ -286,7 +286,7 @@ export class Renderer {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    const sliceModule = device.createShaderModule({ code: slicePlanesShader });
+    const sliceModule = device.createShaderModule({ code: buildSlicePlanesShader(resources.atlasSize) });
     this.slicePipeline = device.createRenderPipeline({
       layout: 'auto',
       vertex: { module: sliceModule, entryPoint: 'vs' },
@@ -327,7 +327,7 @@ export class Renderer {
     });
 
     // Compute pipeline
-    const computeModule = device.createShaderModule({ code: computeShader });
+    const computeModule = device.createShaderModule({ code: buildComputeShader(resources.atlasSize) });
     this.computePipeline = device.createComputePipeline({
       layout: 'auto',
       compute: { module: computeModule, entryPoint: 'main' },

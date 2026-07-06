@@ -7,7 +7,7 @@ import { open, root, Array as ZarrArray } from 'zarrita';
 import type { DataType } from 'zarrita';
 import { FileSystemStore } from './filesystem-store.js';
 import { BaseZarrProvider, detectCompression, type LodParams } from './base-zarr-provider.js';
-import { float32ToFloat16Bits } from '../utils/float16.js';
+import { float32ToFloat16Bits, uint16ToFloat16 } from '../utils/float16.js';
 import type { VolumeMetadata, BrickData, BrickLoadResult, BrickStats, PipelineTimings } from './data-provider.js';
 import { UnsupportedDatasetError } from './data-provider.js';
 import { extractMultiscales } from './zarr-validator.js';
@@ -17,6 +17,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
   private dirHandle: FileSystemDirectoryHandle;
   private arrays: ZarrArray<DataType, any>[] = [];
   private lodParams: LodParams[] = [];
+  private targetFormat: 'r8unorm' | 'r16float' = 'r16float';
 
   // Per-stage rolling averages (last 32 bricks)
   private fetchAvg = new RollingAvg();
@@ -25,6 +26,11 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
   constructor(dirHandle: FileSystemDirectoryHandle) {
     super();
     this.dirHandle = dirHandle;
+  }
+
+  // r16float: convert uint16 → float16 bit pattern. r8unorm: downsample to 8-bit.
+  setTargetFormat(format: 'r8unorm' | 'r16float'): void {
+    this.targetFormat = format;
   }
 
   async initialize(): Promise<VolumeMetadata> {
@@ -215,9 +221,10 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     const t1 = performance.now();
     const is16bit = this.metadata!.bitDepth === 16;
     const isFloat = this.metadata!.isFloat ?? false;
+    const downsampleTo8 = is16bit && !isFloat && this.targetFormat === 'r8unorm';
     const floatMin = this.metadata!.dataRange?.[0] ?? 0;
     const floatMax = this.metadata!.dataRange?.[1] ?? 1;
-    const brick = is16bit
+    const brick = (is16bit && !downsampleTo8)
       ? new Uint16Array(physSize * physSize * physSize)
       : new Uint8Array(physSize * physSize * physSize);
 
@@ -260,6 +267,9 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
                 if (raw < rawMinVal) rawMinVal = raw;
                 if (raw > rawMaxVal) rawMaxVal = raw;
               }
+            } else if (downsampleTo8) {
+              brickVal = raw >> 8;
+              statVal = raw;
             } else {
               brickVal = raw;
               statVal = raw;
@@ -275,10 +285,15 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     }
     this.assemblyAvg.add(performance.now() - t1);
 
+    // Convert raw uint16 intensities to float16 bit patterns for r16float textures
+    const finalBrick = (is16bit && !isFloat && !downsampleTo8)
+      ? uint16ToFloat16(brick as Uint16Array)
+      : brick;
+
     const voxelCount = physSize * physSize * physSize;
 
     return {
-      data: brick,
+      data: finalBrick,
       stats: {
         min: min === Infinity ? 0 : min,
         max: max === -Infinity ? 0 : max,

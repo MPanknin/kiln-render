@@ -98,6 +98,8 @@ export class MultichannelUI {
 
   private sliceFolder: TweakpaneFolder | null = null;
   private initialSlice?: { x: number; y: number; z: number; showX: boolean; showY: boolean; showZ: boolean };
+  /** When true, auto-leveling from base LOD will not overwrite URL-restored channel windows. */
+  private channelsRestoredFromURL = false;
 
   private frameTimes: number[] = [];
   private lastFrameTime = 0;
@@ -116,6 +118,9 @@ export class MultichannelUI {
     this.params.renderScale = this.renderer.renderScale;
 
     // Build per-channel params from renderer state (or URL-restored state)
+    if (initialChannels && initialChannels.length > 0) {
+      this.channelsRestoredFromURL = true;
+    }
     for (let i = 0; i < this.renderer.numChannels; i++) {
       const restored = initialChannels?.[i];
       if (restored) {
@@ -469,6 +474,9 @@ export class MultichannelUI {
    * Called when ranges are derived after base LOD loading.
    */
   refreshChannelWindows(): void {
+    // Don't clobber URL-restored channel windows with auto-leveled values
+    if (this.channelsRestoredFromURL) return;
+
     const windows = this.viewer.metadata.channelWindows;
     if (!windows) return;
 

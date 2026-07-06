@@ -66,7 +66,6 @@ export class ShardedDataProvider implements DataProvider {
   private basePath: string;
   private rawMetadata: ShardedVolumeJson | null = null;
   private metadata: VolumeMetadata | null = null;
-  private cache = new Map<string, BrickData>();
   private lodIndices = new Map<number, ShardedLodIndex>();
   private networkTracker = new NetworkTracker();
   private pool: DecompressionPool | null = null;
@@ -210,16 +209,7 @@ export class ShardedDataProvider implements DataProvider {
   /**
    * Load a single brick
    */
-  async loadBrick(lod: number, bx: number, by: number, bz: number, _channelIndex?: number, _signal?: AbortSignal): Promise<BrickLoadResult | null> {
-    const key = `lod${lod}:${bx}-${by}-${bz}`;
-
-    // Check cache first
-    if (this.cache.has(key)) {
-      const data = this.cache.get(key)!;
-      const stats = await this.getBrickStats(lod, bx, by, bz);
-      return { data, min: stats?.min ?? 0, max: stats?.max ?? 0, avg: stats?.avg ?? 0 };
-    }
-
+  async loadBrick(lod: number, bx: number, by: number, bz: number, _channelIndex?: number, signal?: AbortSignal): Promise<BrickLoadResult | null> {
     if (!this.rawMetadata) {
       throw new Error('Metadata not loaded');
     }
@@ -251,6 +241,7 @@ export class ShardedDataProvider implements DataProvider {
         headers: {
           'Range': `bytes=${entry.offset}-${rangeEnd}`,
         },
+        signal,
       });
 
       if (!response.ok && response.status !== 206) {
@@ -282,9 +273,9 @@ export class ShardedDataProvider implements DataProvider {
       }
       this.assemblyAvg.add(performance.now() - tAssembly);
 
-      this.cache.set(key, data);
       return { data, min: entry.min, max: entry.max, avg: entry.avg };
     } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return null;
       console.warn(`Error loading brick lod${lod}:${bx}-${by}-${bz}:`, e);
       return null;
     }
@@ -305,31 +296,9 @@ export class ShardedDataProvider implements DataProvider {
   }
 
   /**
-   * Clear the cache
-   */
-  clearCache(): void {
-    this.cache.clear();
-  }
-
-  /**
-   * Get cache stats
-   */
-  getCacheStats(): { entries: number; sizeBytes: number } {
-    let sizeBytes = 0;
-    for (const data of this.cache.values()) {
-      sizeBytes += data.byteLength;
-    }
-    return {
-      entries: this.cache.size,
-      sizeBytes,
-    };
-  }
-
-  /**
    * Clean up resources
    */
   dispose(): void {
-    this.cache.clear();
     this.lodIndices.clear();
     this.pool?.terminate();
     this.pool = null;

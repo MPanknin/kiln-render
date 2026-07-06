@@ -452,7 +452,9 @@ export class Renderer {
     this.depthView = this.depthTexture.createView();
 
     // rebuild all pre-allocated scale sets at new screen size
-    const scales = [...this.scaleSets.keys()];
+    // Always include the current renderScale — it may have been set externally
+    // (e.g. via ViewerOptions) before this first resize, and wouldn't be in the map yet.
+    const scales = Array.from(new Set([...this.scaleSets.keys(), this.renderScale]));
     for (const set of this.scaleSets.values()) this.destroyScaleSet(set);
     this.scaleSets.clear();
 

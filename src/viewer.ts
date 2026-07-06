@@ -207,6 +207,8 @@ export class KilnViewer {
       } else if (textureFormat !== 'r16unorm' || sourceBitDepth !== 16) {
         (dataProvider as ShardedDataProvider).setTargetFormat(textureFormat as 'r8unorm' | 'r16float');
       }
+    } else if ('setTargetFormat' in dataProvider) {
+      (dataProvider as { setTargetFormat: (f: string) => void }).setTargetFormat(textureFormat);
     }
 
     // Build DatasetConfig 
@@ -490,11 +492,6 @@ export class KilnViewer {
       this.lastCameraVersion = this.camera.version;
       this.dirty = true;
     }
-
-    // Keep SSE LOD selection in sync with the rendered resolution.
-    // The clamp in computeDesiredSet (max(renderScale, 0.5)) prevents the
-    // LOD-collapse at low render scales.
-    this.streamingManager.renderScale = this.renderer.renderScale;
 
     // Always run streaming (may trigger onDirty via resetAccumulation)
     const streamingActive = this.streamingManager.update(this.camera, this.canvas);

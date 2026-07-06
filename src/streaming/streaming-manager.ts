@@ -141,9 +141,6 @@ export class StreamingManager {
   // Higher = lower quality, fewer bricks loaded
   public maxPixelError = 8.0;
 
-  // SSE is computed against the *rendered* resolution, not the canvas
-  public renderScale = 1.0;
-
   // Camera FOV in radians (must match camera.getProjectionMatrix)
   private readonly cameraFovRad = Math.PI / 4; // 45 degrees
 

@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Redirecting…</title>
+<!--
+  Back-compat stub: the multichannel viewer moved from /multichannel/ to
+  /app/multichannel/ in the site restructure. Old share links land here and are
+  forwarded, preserving the query string + hash. The redirect is RELATIVE
+  (../app/multichannel/) so it resolves correctly at the production root AND
+  under branch-preview base prefixes.
+-->
+<script>
+  location.replace('../app/multichannel/' + location.search + location.hash);
+</script>
+<meta http-equiv="refresh" content="0; url=../app/multichannel/">
+</head>
+<body>
+<p>The multichannel viewer has moved to <a href="../app/multichannel/">/app/multichannel/</a>. Redirecting…</p>
+</body>
+</html>

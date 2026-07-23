@@ -18,6 +18,7 @@ import type {
 import { UnsupportedDatasetError } from './data-provider.js';
 import { NetworkTracker } from './network-tracker.js';
 import { extractMultiscales, normalizeAxes, validateZarrSupport } from './zarr-validator.js';
+import { estimateBrickChunkFanout } from './chunk-math.js';
 
 /** OME-NGFF multiscales metadata (from group attributes) */
 export interface OmeMultiscales {
@@ -340,15 +341,10 @@ export abstract class BaseZarrProvider implements DataProvider {
     // brick footprint can touch (worst case, independent of brick position),
     // per channel. See docs/audits/kiln-render - fetch_patterns.md.
     lodParams.forEach((p, lod) => {
-      const span = (dim: number, cs: number, scale: number) =>
-        Math.max(1, Math.min(Math.ceil(dim / cs), Math.floor(((PHYSICAL_BRICK_SIZE - 1) * scale) / cs) + 1));
-      const spanX = span(p.actualDimX, p.csx, p.scaleX);
-      const spanY = span(p.actualDimY, p.csy, p.scaleY);
-      const spanZ = span(p.actualDimZ, p.csz, p.scaleZ);
-      const fanout = spanX * spanY * spanZ;
+      const fanout = estimateBrickChunkFanout(p, PHYSICAL_BRICK_SIZE);
       console.log(
-        `[Kiln] LOD ${lod}: chunk shape ${p.csx}×${p.csy}×${p.csz}, fanout ${spanX}×${spanY}×${spanZ} ` +
-        `= ${fanout} chunks/brick/channel (×${numChannels}ch = ${fanout * numChannels} chunk fetches/brick)`,
+        `[Kiln] LOD ${lod}: chunk shape ${p.csx}×${p.csy}×${p.csz}, fanout ${fanout} ` +
+        `chunks/brick/channel (×${numChannels}ch = ${fanout * numChannels} chunk fetches/brick)`,
       );
       if (lod === 0 && fanout * numChannels > 16) {
         console.warn(

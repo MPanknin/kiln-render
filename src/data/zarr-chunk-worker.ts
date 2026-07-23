@@ -11,6 +11,7 @@ import zstd from 'numcodecs/zstd';
 import { TolerantFetchStore } from './tolerant-fetch-store.js';
 import { float32ToFloat16Bits, getUint16ToFloat16Lut } from '../utils/float16.js';
 import { SharedFetchRegistry } from './shared-fetch.js';
+import { computeBrickChunkFootprint, clampedLutEntry } from './chunk-math.js';
 
 // Static codec imports — zarrita's dynamic imports fail in Vite dev workers.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -338,26 +339,13 @@ async function assembleBrick(
   const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx } = params;
   const physSize = PHYSICAL_SIZE;
 
-  // Virtual brick voxel range (in uniformly downsampled space)
-  const vStartX = bx * LOGICAL_SIZE - 1;
-  const vStartY = by * LOGICAL_SIZE - 1;
-  const vStartZ = bz * LOGICAL_SIZE - 1;
-
-  // Map virtual range to actual Zarr array range for chunk prefetching
-  const aStartX = Math.max(0, Math.floor(Math.max(0, vStartX) * scaleX));
-  const aStartY = Math.max(0, Math.floor(Math.max(0, vStartY) * scaleY));
-  const aStartZ = Math.max(0, Math.floor(Math.max(0, vStartZ) * scaleZ));
-  const aEndX = Math.min(actualDimX - 1, Math.floor((vStartX + physSize - 1) * scaleX));
-  const aEndY = Math.min(actualDimY - 1, Math.floor((vStartY + physSize - 1) * scaleY));
-  const aEndZ = Math.min(actualDimZ - 1, Math.floor((vStartZ + physSize - 1) * scaleZ));
-
-  // Determine which Zarr chunks overlap
-  const minCx = Math.floor(aStartX / csx);
-  const minCy = Math.floor(aStartY / csy);
-  const minCz = Math.floor(aStartZ / csz);
-  const maxCx = Math.floor(aEndX / csx);
-  const maxCy = Math.floor(aEndY / csy);
-  const maxCz = Math.floor(aEndZ / csz);
+  // Virtual brick voxel range (in uniformly downsampled space) and which
+  // Zarr chunks overlap it.
+  const { vStartX, vStartY, vStartZ, minCx, maxCx, minCy, maxCy, minCz, maxCz } =
+    computeBrickChunkFootprint(
+      { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz },
+      bx, by, bz, LOGICAL_SIZE, physSize,
+    );
 
   // --- Stage 1: chunk fetch (HTTP + zarr decompression, parallel, with cache + dedup) ---
   const t0 = performance.now();
@@ -467,21 +455,20 @@ async function assembleBrick(
   const lutOffY = new Int32Array(physSize);
   const lutOffZ = new Int32Array(physSize);
 
+  // clampedLutEntry clamps into the fetched chunk range — round-vs-floor
+  // mismatch can otherwise index outside it on non-integer scales.
   for (let i = 0; i < physSize; i++) {
-    const gx = Math.max(0, Math.min(actualDimX - 1, Math.round((vStartX + i) * scaleX)));
-    const cxI = Math.floor(gx / csx);
-    lutChunkX[i] = cxI - minCx;
-    lutOffX[i] = gx - cxI * csx;
+    const ex = clampedLutEntry(vStartX + i, scaleX, actualDimX, csx, minCx, maxCx);
+    lutChunkX[i] = ex.chunkIdx;
+    lutOffX[i] = ex.offset;
 
-    const gy = Math.max(0, Math.min(actualDimY - 1, Math.round((vStartY + i) * scaleY)));
-    const cyI = Math.floor(gy / csy);
-    lutChunkY[i] = cyI - minCy;
-    lutOffY[i] = gy - cyI * csy;
+    const ey = clampedLutEntry(vStartY + i, scaleY, actualDimY, csy, minCy, maxCy);
+    lutChunkY[i] = ey.chunkIdx;
+    lutOffY[i] = ey.offset;
 
-    const gz = Math.max(0, Math.min(actualDimZ - 1, Math.round((vStartZ + i) * scaleZ)));
-    const czI = Math.floor(gz / csz);
-    lutChunkZ[i] = czI - minCz;
-    lutOffZ[i] = gz - czI * csz;
+    const ez = clampedLutEntry(vStartZ + i, scaleZ, actualDimZ, csz, minCz, maxCz);
+    lutChunkZ[i] = ez.chunkIdx;
+    lutOffZ[i] = ez.offset;
   }
 
   const t1 = performance.now();

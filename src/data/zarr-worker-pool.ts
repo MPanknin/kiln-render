@@ -1,11 +1,6 @@
-/**
- * ZarrWorkerPool - Pool of Web Workers for parallel brick loading. Each worker
- * runs fetch + decompress + assemble; main thread only uploads to GPU.
- * Worker selection uses spatial-hash routing (see workerIndexFor) so a
- * brick's chunks land on the same worker's cache, falling back to
- * round-robin when per-LOD params aren't available — see
- * docs/audits/kiln-render - fetch_patterns.md (P2).
- */
+/** ZarrWorkerPool - Pool of Web Workers for parallel brick loading; main
+ *  thread only uploads to GPU. workerIndexFor hashes on spatial+channel
+ *  footprint so a brick's channels spread across workers, not one. */
 
 import type { ZarrWorkerRequest, ZarrWorkerResponse } from './zarr-chunk-worker.js';
 import type { PipelineTimings } from './data-provider.js';
@@ -213,35 +208,37 @@ export class ZarrWorkerPool {
     await Promise.all(promises);
   }
 
-  /**
-   * Deterministic worker index for a brick's spatial footprint (independent of
-   * channel), so all channels of one brick — and neighboring bricks sharing
-   * the same Zarr chunks — land on the same worker's cache. Falls back to -1
-   * (round-robin) if lodParams weren't provided at init time.
-   *
-   * minChunk mirrors the chunk-range math in zarr-chunk-worker.ts's
-   * assembleBrick (aStartX/minCx) so the routing key matches what the worker
-   * will actually fetch.
-   */
-  private workerIndexFor(lod: number, bx: number, by: number, bz: number): number {
+  /** Deterministic worker index for one brick+channel; -1 (round-robin) if
+   *  lodParams are missing. Hashes channelIndex too, so a brick's channels
+   *  spread across workers instead of piling onto one. */
+  private workerIndexFor(lod: number, bx: number, by: number, bz: number, channelIndex: number): number {
     const params = this.lodParams?.[lod];
     if (!params || this.workers.length === 0) return -1;
     const { scaleX, scaleY, scaleZ, csx, csy, csz } = params;
     const minChunk = (b: number, scale: number, cs: number): number =>
       Math.floor(Math.max(0, Math.floor(Math.max(0, b * this.logicalBrickSize - 1) * scale)) / cs);
-    const cx = minChunk(bx, scaleX, csx);
-    const cy = minChunk(by, scaleY, csy);
-    const cz = minChunk(bz, scaleZ, csz);
-    let h = (cx * 73856093) ^ (cy * 19349663) ^ (cz * 83492791) ^ ((lod + 1) * 2654435761);
-    h = ((h ^ (h >>> 13)) * 0x5bd1e995) >>> 0;
+    return this.workerIndexForChunk(lod, minChunk(bx, scaleX, csx), minChunk(by, scaleY, csy), minChunk(bz, scaleZ, csz), channelIndex);
+  }
+
+  /** Hash-from-chunk-coords half of workerIndexFor, so routing stays one
+   *  shared implementation. `channelIndex` defaults to 0 for callers with no channel axis. */
+  private workerIndexForChunk(lod: number, cx: number, cy: number, cz: number, channelIndex = 0): number {
+    if (this.workers.length === 0) return -1;
+    let h = (cx * 73856093) ^ (cy * 19349663) ^ (cz * 83492791) ^ ((lod + 1) * 2654435761) ^ (channelIndex * 2246822519);
+    // Math.imul, not `*`: plain float64 multiply overflows MAX_SAFE_INTEGER and
+    // loses low bits before `>>> 0`, collapsing most coords onto worker 0.
+    h = Math.imul(h ^ (h >>> 13), 0x5bd1e995);
+    // Second avalanche step (MurmurHash2 finalizer) for low-bit mixing; must
+    // pair with `>>> 0` — signed `h ^ (h>>>15)` + negative `%` would index workers OOB.
+    h = (h ^ (h >>> 15)) >>> 0;
     return h % this.workers.length;
   }
 
-  /** Load a 66³ brick, routed to a worker by spatial footprint. Supports AbortSignal cancellation. */
+  /** Load a 66³ brick, routed to a worker by spatial+channel footprint. Supports AbortSignal cancellation. */
   loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0, signal?: AbortSignal): Promise<BrickResult> {
     return new Promise((resolve, reject) => {
       const id = this.requestId++;
-      let workerIdx = this.workerIndexFor(lod, bx, by, bz);
+      let workerIdx = this.workerIndexFor(lod, bx, by, bz, channelIndex);
       if (workerIdx < 0) {
         workerIdx = this.nextWorkerIndex;
         this.nextWorkerIndex = (this.nextWorkerIndex + 1) % this.workers.length;

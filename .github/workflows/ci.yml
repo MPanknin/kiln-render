@@ -1,0 +1,30 @@
+name: CI
+
+# Type check + unit tests on every push and PR. publish-check.yml guards the
+# package shape separately; deploy*.yml publish the site.
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    name: Type check & unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npx vitest run

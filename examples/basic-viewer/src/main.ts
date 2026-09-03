@@ -196,6 +196,9 @@ async function main() {
   document.getElementById('spinner')?.classList.add('active');
   const viewer = await KilnViewer.create(canvas, dataset, options);
   document.getElementById('spinner')?.classList.remove('active');
+  // Test hook: the Playwright WebGPU smoke test (test/e2e) polls this to know
+  // when the viewer exists and to read streaming stats. Not part of the API.
+  (window as unknown as { __kiln?: KilnViewer }).__kiln = viewer;
   topBar?.setDatasetName(viewer.metadata.name);
 
   trackEvent('webgpu-ok', 'WebGPU initialized');

@@ -10,3 +10,7 @@ docs/.vitepress/dist/
 
 public/volumes/
 public/datasets/
+
+# Playwright
+test-results/
+playwright-report/

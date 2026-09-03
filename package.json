@@ -50,12 +50,15 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit",
     "lint:publish": "npm run build:lib && npx --yes publint && npx --yes @arethetypeswrong/cli --pack ."
   },
   "dependencies": {
     "@webgpu/types": "^0.1.69"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "fflate": "^0.8.2",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",

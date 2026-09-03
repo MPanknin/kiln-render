@@ -12,7 +12,7 @@ export default defineConfig({
   plugins: [copyFavicons()],
   server: {
     port: 3000,
-    open: true,
+    open: !process.env.CI,
   },
   build: {
     target: 'esnext',

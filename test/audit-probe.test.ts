@@ -42,18 +42,18 @@ describe('Audit probes: assertions describe current behavior, not desired behavi
     console.log('SLAB',JSON.stringify({chunks:35,decodedMiB:35*2048*2048*2/2**20,usefulCoreMiB:64*64*35*2/2**20,workers}));
     expect(pool.workerIndexFor(0,0,0,0,0)).toBe(pool.workerIndexFor(0,31,31,0,0));
   });
-  it('reproduces incorrect non-multiple-of-64 AABB', () => {
+  it('FIXED: non-multiple-of-64 AABB ends at voxel 64, not at the volume centre (was 0)', () => {
     const s:any=Object.create(StreamingManager.prototype);
     s.config=new DatasetConfig([100,100,100]);s.levelsByLod=[{brickGrid:[2,2,2]}];
     const a=s.getBrickAABB(0,0,0,0);
     console.log('AABB',JSON.stringify({current:a.max[0],expected:64/100-0.5}));
-    expect(a.max[0]).toBe(0);
+    expect(a.max[0]).toBeCloseTo(64/100-0.5);
   });
-  it('reproduces anisotropic SSE error', () => {
+  it('FIXED: anisotropic SSE uses the largest physical voxel (was 10x too small)', () => {
     const s:any=Object.create(StreamingManager.prototype);
     s.config=new DatasetConfig([2048,2048,35],[1,1,10]);s.metadata={dimensions:[2048,2048,35]};
     console.log('SSE',JSON.stringify({current:s.getVoxelWorldSize(0),largestVoxel:10/2048,ratio:(10/2048)/s.getVoxelWorldSize(0)}));
-    expect((10/2048)/s.getVoxelWorldSize(0)).toBe(10);
+    expect((10/2048)/s.getVoxelWorldSize(0)).toBeCloseTo(1);
   });
   it('shows fixed isotropic virtual z resamples an XY-only pyramid', () => {
     const coords=Array.from({length:5},(_,i)=>clampedLutEntry(i,7,35,1,0,34).chunkIdx);

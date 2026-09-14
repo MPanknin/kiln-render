@@ -10,7 +10,7 @@ import type { VolumeResources } from '../core/volume-resources.js';
 import type { DataProvider, VolumeMetadata, BrickLoadResult, LodLevel } from '../data/data-provider.js';
 import { AtlasSlot } from './atlas-allocator.js';
 import { BrickCache } from './brick-cache.js';
-import { PHYSICAL_BRICK_SIZE } from '../core/config.js';
+import { LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE } from '../core/config.js';
 import type { DatasetConfig } from '../core/config.js';
 import { writeToCanvas } from '../core/volume.js';
 import { getFloat16ToFloat32Lut } from '../utils/float16.js';
@@ -1146,28 +1146,23 @@ export class StreamingManager {
     bz: number,
     lod: number
   ): { min: [number, number, number]; max: [number, number, number] } {
-    const level = this.levelsByLod[lod];
-    if (!level) return { min: [0, 0, 0], max: [0, 0, 0] };
+    if (!this.levelsByLod[lod]) return { min: [0, 0, 0], max: [0, 0, 0] };
 
+    // Same convention as the shader's voxelToNormalized: only the last brick per axis is truncated
+    const span = LOGICAL_BRICK_SIZE << lod;
+    const dims = this.config.dimensions;
     const normalizedSize = this.config.normalizedSize;
-    const [gridX, gridY, gridZ] = level.brickGrid;
-    const brickSize: [number, number, number] = [
-      normalizedSize[0] / gridX,
-      normalizedSize[1] / gridY,
-      normalizedSize[2] / gridZ,
-    ];
+    const toWorld = (voxel: number, axis: number) => (voxel / dims[axis]! - 0.5) * normalizedSize[axis]!;
 
-    const min: [number, number, number] = [
-      -normalizedSize[0] * 0.5 + bx * brickSize[0],
-      -normalizedSize[1] * 0.5 + by * brickSize[1],
-      -normalizedSize[2] * 0.5 + bz * brickSize[2],
-    ];
-    const max: [number, number, number] = [
-      min[0] + brickSize[0],
-      min[1] + brickSize[1],
-      min[2] + brickSize[2],
-    ];
-
+    const min: [number, number, number] = [0, 0, 0];
+    const max: [number, number, number] = [0, 0, 0];
+    const index = [bx, by, bz];
+    for (let axis = 0; axis < 3; axis++) {
+      const v0 = index[axis]! * span;
+      const v1 = Math.min(v0 + span, dims[axis]!);
+      min[axis] = toWorld(v0, axis);
+      max[axis] = toWorld(v1, axis);
+    }
     return { min, max };
   }
 
@@ -1193,17 +1188,16 @@ export class StreamingManager {
    * Get the world-space size of one voxel at a given LOD level
    * At LOD N, each voxel represents 2^N original voxels
    */
+  /** Conservative SSE voxel size: the largest physical voxel extent across axes, scaled by 2^lod. */
   private getVoxelWorldSize(lod: number): number {
     const normalizedSize = this.config.normalizedSize;
-    const dims = this.metadata.dimensions;
-
-    // Base voxel size in normalized space (LOD 0)
-    // Use the largest dimension for consistent error metric
-    const maxDim = Math.max(dims[0], dims[1], dims[2]);
-    const baseVoxelSize = Math.max(normalizedSize[0], normalizedSize[1], normalizedSize[2]) / maxDim;
-
-    // At LOD N, each voxel represents 2^N original voxels
-    return baseVoxelSize * (1 << lod);
+    const dims = this.config.dimensions;
+    const largestVoxel = Math.max(
+      normalizedSize[0] / dims[0],
+      normalizedSize[1] / dims[1],
+      normalizedSize[2] / dims[2],
+    );
+    return largestVoxel * (1 << lod);
   }
 
   /**

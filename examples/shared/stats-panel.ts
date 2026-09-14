@@ -7,6 +7,7 @@
 
 import type { StreamingManager } from '@kiln/streaming/streaming-manager.js';
 import type { VolumeMetadata } from '@kiln/data/data-provider.js';
+import type { LoadMilestones } from '@kiln/core/milestones.js';
 import { createPanel, createSection, createRow } from './controls/widgets.js';
 
 export interface DatasetInfoOptions {
@@ -25,6 +26,7 @@ export class StatsPanel {
   private frameTimes: number[] = [];
   private lastFrameTime = 0;
   private streamingManager: StreamingManager | null = null;
+  private milestones: (() => LoadMilestones) | null = null;
   private statsUpdateInterval: number | null = null;
 
   private stripDot: HTMLElement | null = null;
@@ -55,7 +57,7 @@ export class StatsPanel {
     body.appendChild(perf);
     this.addRow(perf, 'fps', 'FPS');
     this.addRow(perf, 'frameTime', 'Frame');
-    this.addRow(perf, 'timeToFirstRender', 'First Render');
+    this.addRow(perf, 'firstContent', 'First Content');
 
     const dataset = createSection('Dataset');
     body.appendChild(dataset);
@@ -151,9 +153,10 @@ export class StatsPanel {
     if (this.stripDatasetText) this.stripDatasetText.textContent = stripSummary;
   }
 
-  /** Wires the streaming manager and starts the 4×/s update loop. */
-  bindStreaming(manager: StreamingManager): void {
+  /** Wires the streaming manager (and optional milestone source) and starts the 4×/s update loop. */
+  bindStreaming(manager: StreamingManager, milestones?: () => LoadMilestones): void {
     this.streamingManager = manager;
+    this.milestones = milestones ?? null;
     if (this.statsUpdateInterval !== null) return;
     this.statsUpdateInterval = window.setInterval(() => this.updateStats(), 250); // 4x/s
   }
@@ -195,9 +198,11 @@ export class StatsPanel {
       const hitRatio = pt.chunkCacheHitRatio;
       this.rows.chunkCacheHit!.textContent = hitRatio !== undefined ? `${(hitRatio * 100).toFixed(1)}%` : '—';
 
-      // Time to first render
-      this.rows.timeToFirstRender!.textContent = stats.timeToFirstRender !== null
-        ? `${stats.timeToFirstRender.toFixed(0)} ms`
+      // Dataset open → first frame with resident data (presentation proxy, else submit)
+      const m = this.milestones?.();
+      const firstContent = m?.firstContentFrame ?? m?.firstContentSubmit ?? null;
+      this.rows.firstContent!.textContent = m && firstContent !== null
+        ? `${(firstContent - m.datasetOpenStart).toFixed(0)} ms`
         : 'Loading...';
 
       // Status strip — always-on subset (IA-5). The center spinner only covers

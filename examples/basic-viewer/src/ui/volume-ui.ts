@@ -387,7 +387,7 @@ export class VolumeUI {
       this.onBaseLodLoaded(brickData);
     });
 
-    this.stats.bindStreaming(manager);
+    this.stats.bindStreaming(manager, () => this.viewer.milestones);
   }
 
   /**

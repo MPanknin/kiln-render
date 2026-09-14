@@ -130,9 +130,6 @@ function parseURLParams(): {
   };
 }
 
-// Capture page load start time for time-to-first-render metric
-const PAGE_LOAD_START = performance.now();
-
 async function main() {
   const canvas = document.querySelector('canvas') as HTMLCanvasElement | null;
   if (!canvas) throw new Error('Canvas not found');
@@ -185,7 +182,6 @@ async function main() {
     showSliceZ: urlParams.sliceVis?.[2],
     showWireframe: urlParams.wireframe,
     showAxis: urlParams.axis,
-    pageLoadStart: PAGE_LOAD_START,
   };
 
   // ── Create viewer ──────────────────────────────────────────────────────────

@@ -6,6 +6,7 @@
  */
 
 import { mat4 } from 'wgpu-matrix';
+import type { LoadMilestones } from './core/milestones.js';
 import { Renderer, VolumeRenderMode } from './core/renderer.js';
 import { VolumeResources } from './core/volume-resources.js';
 import { TransferFunction, TFPreset } from './core/transfer-function.js';
@@ -45,8 +46,8 @@ export interface EngineOptions {
   tfPreset?: TFPreset;
   /** Transfer function opacity control points (overrides preset defaults) */
   tfPoints?: Array<{ x: number; y: number }>;
-  /** performance.now() at page load, used for time-to-first-render metric */
-  pageLoadStart?: number;
+  /** performance.now() when the host obtained the GPU device (for load milestones) */
+  deviceReadyAt?: number;
   /** Slice plane positions, normalised 0–1 */
   sliceX?: number;
   sliceY?: number;
@@ -64,6 +65,8 @@ export interface EngineOptions {
 
 /** How long after the last view change the camera still counts as interacting (ms). */
 const INTERACTION_HOLD_MS = 200;
+
+type SetupMilestones = Pick<LoadMilestones, 'datasetOpenStart' | 'deviceReady' | 'metadataReady' | 'gpuReady'>;
 
 export class KilnEngine {
   readonly device: GPUDevice;
@@ -91,6 +94,10 @@ export class KilnEngine {
   private hasLastVP = false;
   private lastMoveTime = 0;
 
+  private readonly setupMilestones: SetupMilestones;
+  private firstContentSubmit: number | null = null;
+  private firstContentFrame: number | null = null;
+
   private constructor(
     device: GPUDevice,
     renderer: Renderer,
@@ -100,7 +107,9 @@ export class KilnEngine {
     dataProvider: DataProvider,
     metadata: VolumeMetadata,
     config: DatasetConfig,
+    setupMilestones: SetupMilestones,
   ) {
+    this.setupMilestones = setupMilestones;
     this.device = device;
     this.renderer = renderer;
     this.resources = resources;
@@ -135,6 +144,12 @@ export class KilnEngine {
     dataset: string | DataProvider,
     options: EngineOptions = {},
   ): Promise<KilnEngine> {
+    const milestones: SetupMilestones = {
+      datasetOpenStart: performance.now(),
+      deviceReady: options.deviceReadyAt ?? null,
+      metadataReady: null,
+      gpuReady: null,
+    };
     const format = options.outputFormat ?? navigator.gpu.getPreferredCanvasFormat();
 
     // Data provider
@@ -152,6 +167,7 @@ export class KilnEngine {
 
     // Metadata and texture format detection
     const metadata = await dataProvider.initialize();
+    milestones.metadataReady = performance.now();
     const sourceBitDepth = metadata.bitDepth;
 
     let textureFormat: GPUTextureFormat;
@@ -197,6 +213,7 @@ export class KilnEngine {
     // Construct subsystems
     const resources = new VolumeResources(device, effectiveBitDepth, textureFormat, config, metadata.numChannels, gridSize);
     const renderer = new Renderer(device, format, resources, config);
+    milestones.gpuReady = performance.now();
 
     // Apply 16-bit window/level defaults from metadata
     if (effectiveBitDepth === 16) {
@@ -297,7 +314,6 @@ export class KilnEngine {
       device,
       config,
       () => renderer.resetAccumulation(),
-      options.pageLoadStart,
     );
 
     if (options.maxPixelError !== undefined) {
@@ -305,7 +321,7 @@ export class KilnEngine {
     }
 
     const engine = new KilnEngine(
-      device, renderer, resources, transferFunction, streamingManager, dataProvider, metadata, config,
+      device, renderer, resources, transferFunction, streamingManager, dataProvider, metadata, config, milestones,
     );
 
     // When base LOD derives float/channel ranges, update renderer + metadata.
@@ -405,6 +421,24 @@ export class KilnEngine {
   render(colorView: GPUTextureView, view: ViewParams): void {
     if (this.disposed) return;
     this.renderer.render(colorView, view);
+    if (this.firstContentSubmit === null && this.streamingManager.milestones.firstAtlasCommit !== null) {
+      this.firstContentSubmit = performance.now();
+    }
+  }
+
+  /** Host hook: call at the start of each animation frame to record the presentation proxy. */
+  noteAnimationFrame(now = performance.now()): void {
+    if (this.firstContentSubmit !== null && this.firstContentFrame === null) this.firstContentFrame = now;
+  }
+
+  /** Load milestones, all as performance.now() timestamps since navigation start. */
+  get milestones(): LoadMilestones {
+    return {
+      ...this.setupMilestones,
+      ...this.streamingManager.milestones,
+      firstContentSubmit: this.firstContentSubmit,
+      firstContentFrame: this.firstContentFrame,
+    };
   }
 
   dispose(): void {

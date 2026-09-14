@@ -22,6 +22,8 @@
  *   ?report=<url>         POST the JSON report here when done
  */
 
+import type { LoadMilestones } from '@kiln/core/milestones.js';
+
 interface BenchStats {
   desiredCount: number;
   loadedCount: number;
@@ -34,7 +36,6 @@ interface BenchStats {
   bricksDiscarded: number;
   evictedCount: number;
   avgBrickLatencyMs: number;
-  timeToFirstRender: number | null;
   pipelineTimings: {
     avgQueueMs: number;
     avgFetchMs: number;
@@ -49,6 +50,7 @@ export interface BenchViewer {
   renderer: { isConverged: boolean; numChannels: number };
   streamingManager: { baseLodLoaded: boolean; getStats(): BenchStats };
   metadata: { name: string };
+  milestones: LoadMilestones;
 }
 
 export interface BenchReport {
@@ -57,10 +59,13 @@ export interface BenchReport {
   query: string;
   dataset: string;
   numChannels: number;
-  /** ms from page open to converged (the headline number). */
+  /** ms from navigation start to converged (the headline number). */
   convergeMs: number;
-  /** ms from load start to first rendered frame, from the streaming manager. */
-  timeToFirstRenderMs: number | null;
+  /** Same origin as convergeMs; null if never reached. See LoadMilestones. */
+  firstContentSubmitMs: number | null;
+  firstContentFrameMs: number | null;
+  baseCompleteMs: number | null;
+  milestones: LoadMilestones;
   timedOut: boolean;
   requestCount: number;
   bytesDownloaded: number;
@@ -107,14 +112,18 @@ async function waitForConverged(v: BenchViewer, timeoutMs: number, stablePolls: 
 
 function formatReport(r: BenchReport): string {
   const mb = (b: number) => (b / 1e6).toFixed(1);
+  const ms = (v: number | null) => (v === null ? 'n/a' : Math.round(v) + ' ms');
   const pad = (label: string) => (label + ':').padEnd(20);
+  const m = r.milestones;
   return [
     '=== KILN BENCH ===',
     `${pad('dataset')}${r.dataset} (${r.numChannels}ch)`,
     `${pad('label')}${r.label}`,
     `${pad('flags')}${r.query || '(none)'}`,
     `${pad('time to converge')}${Math.round(r.convergeMs)} ms${r.timedOut ? '  ⚠ TIMED OUT (did not converge)' : ''}`,
-    `${pad('time to 1st render')}${r.timeToFirstRenderMs === null ? 'n/a' : Math.round(r.timeToFirstRenderMs) + ' ms'}`,
+    `${pad('setup')}open ${ms(m.datasetOpenStart)} · device ${ms(m.deviceReady)} · metadata ${ms(m.metadataReady)} · gpu ${ms(m.gpuReady)}`,
+    `${pad('first content')}submit ${ms(r.firstContentSubmitMs)} · frame ${ms(r.firstContentFrameMs)}`,
+    `${pad('base coverage')}50% ${ms(m.baseCoverage50)} · 90% ${ms(m.baseCoverage90)} · done ${ms(r.baseCompleteMs)}`,
     `${pad('requests')}${r.requestCount}`,
     `${pad('downloaded')}${mb(r.bytesDownloaded)} MB`,
     `${pad('bricks')}dispatched ${r.bricksDispatched} · committed ${r.bricksCommitted} · cancelled ${r.bricksCancelled} · discarded ${r.bricksDiscarded}`,
@@ -144,6 +153,7 @@ export async function maybeRunBench(viewer: BenchViewer): Promise<void> {
   // open→converge wall-clock (WebGPU init + metadata + base load + refinement).
   const convergeMs = performance.now();
   const s = viewer.streamingManager.getStats();
+  const m = viewer.milestones;
 
   const report: BenchReport = {
     label,
@@ -151,7 +161,10 @@ export async function maybeRunBench(viewer: BenchViewer): Promise<void> {
     dataset: viewer.metadata.name,
     numChannels: viewer.renderer.numChannels,
     convergeMs,
-    timeToFirstRenderMs: s.timeToFirstRender,
+    firstContentSubmitMs: m.firstContentSubmit,
+    firstContentFrameMs: m.firstContentFrame,
+    baseCompleteMs: m.baseComplete,
+    milestones: m,
     timedOut: !settled,
     requestCount: s.requestCount,
     bytesDownloaded: s.totalBytesDownloaded,

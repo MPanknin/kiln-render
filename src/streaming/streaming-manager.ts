@@ -16,6 +16,8 @@ import { writeToCanvas } from '../core/volume.js';
 import { getFloat16ToFloat32Lut } from '../utils/float16.js';
 import type { PipelineTimings } from '../data/data-provider.js';
 import { RollingAvg } from '../data/network-tracker.js';
+import { createBrickMilestones, stampBaseCoverage } from '../core/milestones.js';
+import type { BrickMilestones } from '../core/milestones.js';
 
 // Content commits coalesce for a quiet period, but a redraw is never delayed past the max wait
 const RESET_QUIET_MS = 100;
@@ -46,8 +48,6 @@ export interface StreamingStats {
   totalBytesDownloaded: number;
   bytesPerSecond: number;
   requestCount: number;
-  // Timing
-  timeToFirstRender: number | null; // ms, null if not yet loaded
   // Evictions since last stats reset
   evictedCount: number;
   // Allocation refusals under atlas pressure
@@ -85,9 +85,8 @@ export class StreamingManager {
 
   baseLodLoaded = false;
 
-  // Timing for first render
-  private loadStartTime: number = 0;
-  timeToFirstRender: number | null = null;
+  /** Base-load milestones (performance.now() timestamps); reset by clear(). */
+  readonly milestones: BrickMilestones = createBrickMilestones();
 
   // Current desired set (keys) - updated each computeDesiredSet
   private desiredKeys = new Set<string>();
@@ -174,7 +173,6 @@ export class StreamingManager {
     totalBytesDownloaded: 0,
     bytesPerSecond: 0,
     requestCount: 0,
-    timeToFirstRender: null,
     evictedCount: 0,
     allocationsRefused: 0,
     pipelineTimings: { avgQueueMs: 0, avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0 },
@@ -207,7 +205,6 @@ export class StreamingManager {
     device: GPUDevice,
     config: DatasetConfig,
     onResetAccumulation: () => void,
-    pageLoadStartTime?: number
   ) {
     this.resources = resources;
     this.onResetAccumulation = onResetAccumulation;
@@ -224,9 +221,6 @@ export class StreamingManager {
     const numChannels = resources.numChannels;
     this.maxConcurrentRequests = numChannels > 1 ? 12 : 8;
     this.brickCache = new BrickCache(numChannels * 256 * 1024 * 1024);
-
-    // Use page load start time if provided for true time-to-first-render
-    this.loadStartTime = pageLoadStartTime ?? performance.now();
 
     // Load coarsest LOD immediately as base layer
     this.loadBaseLod();
@@ -347,7 +341,7 @@ export class StreamingManager {
     // Uses an async worker-pool pattern: spawn `concurrency` runners that each pull
     // from the shared queue until empty.
     const allBrickData: (Uint8Array | Uint16Array)[] = [];
-    let firstBrickMs: number | null = null;
+    const resolved = new Set<string>(); // bricks that reached resident or empty
     let sumIsEmptyMs = 0, sumFetchMs = 0, sumUploadMs = 0, brickCount = 0;
 
     // Range accumulators — derive float data range and per-channel
@@ -383,6 +377,7 @@ export class StreamingManager {
       sumFetchMs += performance.now() - tFetch;
 
       if (!channelResults[0]) return; // ch0 mandatory; skip brick entirely if it failed
+      if (this.milestones.firstBrickDecoded === null) this.milestones.firstBrickDecoded = performance.now();
 
       // Accumulate per-channel stats for range derivation
       for (let ch = 0; ch < numChannels; ch++) {
@@ -440,14 +435,15 @@ export class StreamingManager {
       this.pinnedBricks.add(key);
       allBrickData.push(channelResults[0].data);
       brickCount++;
-
-      if (firstBrickMs === null) {
-        firstBrickMs = performance.now() - this.loadStartTime;
-      }
+      if (this.milestones.firstAtlasCommit === null) this.milestones.firstAtlasCommit = performance.now();
 
       this.notifyContentChanged();
       } finally {
         this.baseLodPending = Math.max(0, this.baseLodPending - 1);
+        if (this.loadedBricks.has(key) || this.emptyBricks.has(key)) {
+          resolved.add(key);
+          stampBaseCoverage(this.milestones, resolved.size, bricks.length, performance.now());
+        }
       }
     };
 
@@ -482,12 +478,14 @@ export class StreamingManager {
       }
     }
 
-    const totalMs = performance.now() - t0;
-    const firstBrickMsValue = firstBrickMs as number | null;
-    const firstBrickStr = firstBrickMsValue !== null ? firstBrickMsValue.toFixed(0) : 'n/a';
+    const now = performance.now();
+    const totalMs = now - t0;
+    const firstCommit = this.milestones.firstAtlasCommit;
+    const firstBrickStr = firstCommit !== null ? (firstCommit - t0).toFixed(0) : 'n/a';
     this.baseLodPending = 0;
     this.baseLodLoaded = true;
-    this.timeToFirstRender = firstBrickMsValue ?? totalMs;
+    stampBaseCoverage(this.milestones, bricks.length, bricks.length, now);
+    this.milestones.baseComplete = now;
 
     // Show the completed base LOD right away, even if the camera never moves again
     this.flushAccumulationReset();
@@ -630,6 +628,7 @@ export class StreamingManager {
     this.inFlightStaleTime.clear();
     this.dispatchTimestamps.clear();
     this.cancelAccumulationReset();
+    Object.assign(this.milestones, createBrickMilestones());
 
     // reset the allocator wholesale instead of freeing slot-by-slot.
     // The old per-slot free loop left every pinned base-LOD slot in the
@@ -665,7 +664,6 @@ export class StreamingManager {
       totalBytesDownloaded: networkStats.totalBytesDownloaded,
       bytesPerSecond: networkStats.recentBytesPerSecond,
       requestCount: networkStats.requestCount,
-      timeToFirstRender: this.timeToFirstRender,
       pipelineTimings: {
         avgQueueMs: providerTimings.avgQueueMs,
         avgFetchMs: providerTimings.avgFetchMs,
@@ -881,7 +879,6 @@ export class StreamingManager {
       totalBytesDownloaded: 0,
       bytesPerSecond: 0,
       requestCount: 0,
-      timeToFirstRender: null, // Actual value comes from getStats()
       evictedCount: this.lastStats.evictedCount,
       allocationsRefused: this.lastStats.allocationsRefused,
       pipelineTimings: { avgQueueMs: 0, avgFetchMs: 0, avgAssemblyMs: 0, avgUploadMs: 0, sampleCount: 0 },

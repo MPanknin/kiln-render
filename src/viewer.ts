@@ -10,6 +10,7 @@ import { Camera, UpAxis } from './core/camera.js';
 import type { TransferFunction, TFPreset } from './core/transfer-function.js';
 import type { StreamingManager } from './streaming/streaming-manager.js';
 import type { DataProvider, VolumeMetadata } from './data/data-provider.js';
+import type { LoadMilestones } from './core/milestones.js';
 
 export interface ViewerOptions extends EngineOptions {
   /** Camera up axis */
@@ -90,11 +91,12 @@ export class KilnViewer {
     options: ViewerOptions = {},
   ): Promise<KilnViewer> {
     const device = await KilnEngine.createDevice();
+    const deviceReadyAt = performance.now();
     const format = navigator.gpu.getPreferredCanvasFormat();
     const context = canvas.getContext('webgpu')!;
     context.configure({ device, format });
 
-    const engine = await KilnEngine.create(device, dataset, { ...options, outputFormat: format });
+    const engine = await KilnEngine.create(device, dataset, { ...options, outputFormat: format, deviceReadyAt });
 
     const camera = new Camera(canvas);
     if (options.upAxis !== undefined) camera.setUpAxis(options.upAxis);
@@ -111,6 +113,7 @@ export class KilnViewer {
   get streamingManager(): StreamingManager { return this.engine.streamingManager; }
   get device(): GPUDevice { return this.engine.device; }
   get metadata(): VolumeMetadata { return this.engine.metadata; }
+  get milestones(): LoadMilestones { return this.engine.milestones; }
 
   // Render state convenience API
   get mode(): VolumeRenderMode { return this.renderer.volumeRenderMode; }
@@ -211,6 +214,7 @@ export class KilnViewer {
 
   private frame(): void {
     if (this.disposed) return;
+    this.engine.noteAnimationFrame();
 
     const view = this.camera.getViewParams(this.canvas.width, this.canvas.height);
 

@@ -499,7 +499,7 @@ export class MultichannelUI {
     this.stats.setDatasetInfo(metadata, this.renderer.canvas.format, {
       fileSizeChannelMultiplier: metadata.numChannels,
     });
-    this.stats.bindStreaming(manager);
+    this.stats.bindStreaming(manager, () => this.viewer.milestones);
   }
 
   /**

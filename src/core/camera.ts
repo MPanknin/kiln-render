@@ -1,6 +1,7 @@
 /** Arcball camera — mouse (orbit/pan/wheel) and touch (orbit/pinch/pan). */
 
 import { mat4 } from 'wgpu-matrix';
+import type { ViewParams } from './view.js';
 
 export type UpAxis = 'x' | 'y' | 'z' | '-x' | '-y' | '-z';
 
@@ -11,6 +12,9 @@ const MAX_DISTANCE = 10;
 
 export class Camera {
   position: Float32Array;
+
+  /** Vertical field of view in radians. */
+  readonly fovY = Math.PI / 4;
 
   private target: [number, number, number] = [0, 0, 0];  // Pan target
   private distance = 3.0;  // Distance from target in normalized units
@@ -353,7 +357,20 @@ export class Camera {
   }
 
   getProjectionMatrix(aspect: number): Float32Array {
-    return mat4.perspective(Math.PI / 4, aspect, 0.01, 100, this.projScratch) as Float32Array;
+    return mat4.perspective(this.fovY, aspect, 0.01, 100, this.projScratch) as Float32Array;
+  }
+
+  /** Snapshot for the engine: matrices, position and interaction state for a viewport. */
+  getViewParams(width: number, height: number): ViewParams {
+    return {
+      position: this.position,
+      view: this.getViewMatrix(),
+      proj: this.getProjectionMatrix(width / height),
+      fovY: this.fovY,
+      width,
+      height,
+      interacting: this.isInteracting(),
+    };
   }
 }
 

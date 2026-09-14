@@ -5,6 +5,11 @@
 export { KilnViewer } from './viewer.js';
 export type { ViewerOptions, ViewerState } from './viewer.js';
 
+// Headless engine (bring your own device, camera and frame loop)
+export { KilnEngine } from './engine.js';
+export type { EngineOptions } from './engine.js';
+export type { ViewParams } from './core/view.js';
+
 // Render state enums/types (needed to construct ViewerOptions)
 export type { VolumeRenderMode } from './core/renderer.js';
 export type { TFPreset, OpacityPoint } from './core/transfer-function.js';

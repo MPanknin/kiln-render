@@ -14,6 +14,7 @@ import { mat4 } from 'wgpu-matrix';
 import { StreamingManager } from '../src/streaming/streaming-manager.js';
 import { DatasetConfig } from '../src/core/config.js';
 import type { DataProvider, VolumeMetadata, NetworkStats } from '../src/data/data-provider.js';
+import type { ViewParams } from '../src/core/view.js';
 
 // Only WebGPU-touching call during base LOD loading.
 vi.mock('../src/core/volume.js', () => ({ writeToCanvas: vi.fn() }));
@@ -61,18 +62,17 @@ function makeResources() {
   };
 }
 
-// Camera test double: supplies exactly the matrices/position computeDesiredSet
+// View test double: supplies exactly the matrices/position computeDesiredSet
 // reads. Not the logic under test — just an input fixture.
-function stubCamera(pos: [number, number, number]) {
-  const view = mat4.lookAt(pos, [0, 0, 0], [0, 1, 0]);
+function stubView(pos: [number, number, number]): ViewParams {
+  const width = 800, height = 600, fovY = Math.PI / 4;
   return {
     position: new Float32Array(pos),
-    getViewMatrix: () => view,
-    getProjectionMatrix: (aspect: number) => mat4.perspective(Math.PI / 4, aspect, 0.01, 100),
+    view: mat4.lookAt(pos, [0, 0, 0], [0, 1, 0]) as Float32Array,
+    proj: mat4.perspective(fovY, width / height, 0.01, 100) as Float32Array,
+    fovY, width, height,
   };
 }
-
-const canvas = { width: 800, height: 600 } as unknown as HTMLCanvasElement;
 
 // Construct an SM, wait for the constructor's base-LOD load, then wipe the
 // residual base-load state so each SSE scenario starts from a clean slate.
@@ -110,7 +110,7 @@ describe('SSE — voxel world size', () => {
 describe('SSE — LOD selection vs. camera distance', () => {
   async function minLodAt(dist: number): Promise<number> {
     const sm = await freshSM();
-    sm.forceUpdate(stubCamera([0, 0, dist]), canvas);
+    sm.forceUpdate(stubView([0, 0, dist]));
     return Math.min(...desiredLods(sm));
   }
 
@@ -149,13 +149,13 @@ describe('SSE — hysteresis band', () => {
     const DIST = 1.7;
 
     const without = await freshSM();
-    without.forceUpdate(stubCamera([0, 0, DIST]), canvas);
+    without.forceUpdate(stubView([0, 0, DIST]));
     expect(Math.min(...desiredLods(without))).toBe(3); // no resident child → stays coarse
 
     const withChild = await freshSM();
     (withChild as unknown as { loadedBricks: Map<string, unknown> })
       .loadedBricks.set('lod2:0/0/0', { slot: { x: 0, y: 0, z: 0 }, slotIndex: 0 });
-    withChild.forceUpdate(stubCamera([0, 0, DIST]), canvas);
+    withChild.forceUpdate(stubView([0, 0, DIST]));
     expect(Math.min(...desiredLods(withChild))).toBeLessThan(3); // resident child → splits
   });
 });

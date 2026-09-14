@@ -3,7 +3,7 @@
  */
 
 import { mat4 } from 'wgpu-matrix';
-import { Camera } from './camera.js';
+import type { ViewParams } from './view.js';
 import { createBox, createAxis } from '../utils/geometry.js';
 import { TransferFunction } from './transfer-function.js';
 import { VolumeResources } from './volume-resources.js';
@@ -611,13 +611,10 @@ export class Renderer {
     this.device.queue.writeBuffer(this.sliceUniformBuffer, 0, d as Float32Array<ArrayBuffer>);
   }
 
-  render(colorView: GPUTextureView, camera: Camera) {
-    const aspect = this.depthTexture.width / this.depthTexture.height;
-    const view = camera.getViewMatrix();
-    const proj = camera.getProjectionMatrix(aspect);
-    mat4.multiply(proj, view, this.vpScratch);
+  render(colorView: GPUTextureView, view: ViewParams) {
+    mat4.multiply(view.proj, view.view, this.vpScratch);
 
-    this.renderCompute(colorView, camera, this.vpScratch);
+    this.renderCompute(colorView, view, this.vpScratch);
 
     this.frameIndex++;
   }
@@ -637,16 +634,13 @@ export class Renderer {
   }
 
   /** Get view-projection matrix for external renderers */
-  getViewProjMatrix(camera: Camera): Float32Array {
-    const aspect = this.depthTexture.width / this.depthTexture.height;
-    const view = camera.getViewMatrix();
-    const proj = camera.getProjectionMatrix(aspect);
+  getViewProjMatrix(view: ViewParams): Float32Array {
     const out = new Float32Array(16);
-    mat4.multiply(proj, view, out);
+    mat4.multiply(view.proj, view.view, out);
     return out;
   }
 
-  private renderCompute(colorView: GPUTextureView, camera: Camera, vp: Float32Array) {
+  private renderCompute(colorView: GPUTextureView, view: ViewParams, vp: Float32Array) {
     // Detect camera movement for temporal accumulation reset
     let vpChanged = true;
     if (this.prevVP) {
@@ -669,7 +663,7 @@ export class Renderer {
     const d = this.computeUniformScratch;
     const dv = this.computeUniformView;
     d.set(this.invVPScratch, o.inverseViewProj / 4);
-    d.set(camera.position, o.cameraPos / 4);
+    d.set(view.position, o.cameraPos / 4);
     d[o.useIndirection / 4] = this.useIndirection ? 1.0 : 0.0;
     d.set(this.config.dimensions, o.datasetSize / 4);
     dv.setInt32(o.renderMode, this.getRenderModeInt(), true);

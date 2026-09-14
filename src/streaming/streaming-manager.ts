@@ -4,7 +4,8 @@
  */
 
 import { mat4 } from 'wgpu-matrix';
-import { Camera, extractFrustumPlanes, isAABBInFrustum } from '../core/camera.js';
+import { extractFrustumPlanes, isAABBInFrustum } from '../core/camera.js';
+import type { ViewParams } from '../core/view.js';
 import type { VolumeResources } from '../core/volume-resources.js';
 import type { DataProvider, VolumeMetadata, BrickLoadResult, LodLevel } from '../data/data-provider.js';
 import { AtlasSlot } from './atlas-allocator.js';
@@ -140,9 +141,6 @@ export class StreamingManager {
   // Lower = higher quality, more bricks loaded
   // Higher = lower quality, fewer bricks loaded
   public maxPixelError = 8.0;
-
-  // Camera FOV in radians (must match camera.getProjectionMatrix)
-  private readonly cameraFovRad = Math.PI / 4; // 45 degrees
 
   // Precomputed projection factor (updated each frame)
   private projectionFactor = 0;
@@ -552,13 +550,13 @@ export class StreamingManager {
    * Main update loop - call every frame
    * Returns true if any work was done
    */
-  update(camera: Camera, canvas: HTMLCanvasElement): void {
+  update(view: ViewParams): void {
     this.frameCount++;
 
     const cameraPos: [number, number, number] = [
-      camera.position[0]!,
-      camera.position[1]!,
-      camera.position[2]!,
+      view.position[0]!,
+      view.position[1]!,
+      view.position[2]!,
     ];
 
     // Detect camera movement
@@ -589,13 +587,13 @@ export class StreamingManager {
 
     if (regularUpdate || cameraJustStopped) {
       this.lastUpdateFrame = this.frameCount;
-      this.computeDesiredSet(camera, canvas);
+      this.computeDesiredSet(view);
     }
 
     // Gate new dispatches during interaction — keep recomputing the desired
     // set (so cancellation stays fresh) but don't start new loads that will
     // likely be stale in 100ms. Stream full detail when the camera settles.
-    if (!camera.isInteracting()) {
+    if (view.interacting !== true) {
       this.processLoadQueue();
     }
   }
@@ -614,9 +612,9 @@ export class StreamingManager {
   /**
    * Force immediate recomputation of desired set
    */
-  forceUpdate(camera: Camera, canvas: HTMLCanvasElement): void {
+  forceUpdate(view: ViewParams): void {
     this.lastUpdateFrame = this.frameCount;
-    this.computeDesiredSet(camera, canvas);
+    this.computeDesiredSet(view);
   }
 
   /**
@@ -686,26 +684,23 @@ export class StreamingManager {
    * Compute the desired set of bricks based on camera position and frustum
    * Uses Screen-Space Error (SSE) for LOD selection
    */
-  private computeDesiredSet(camera: Camera, canvas: HTMLCanvasElement): void {
+  private computeDesiredSet(view: ViewParams): void {
     const cameraPos: [number, number, number] = [
-      camera.position[0]!,
-      camera.position[1]!,
-      camera.position[2]!,
+      view.position[0]!,
+      view.position[1]!,
+      view.position[2]!,
     ];
 
     // a fresh desired set is the retry point for refused allocations.
     this.allocationStalled = false;
 
     // Get frustum planes
-    const aspect = canvas.width / canvas.height;
-    const viewMatrix = camera.getViewMatrix();
-    const projMatrix = camera.getProjectionMatrix(aspect);
-    const viewProj = mat4.multiply(projMatrix, viewMatrix);
+    const viewProj = mat4.multiply(view.proj, view.view);
     const frustum = extractFrustumPlanes(viewProj);
 
-    // projectionFactor targets full canvas resolution — LOD selection pre-loads
+    // projectionFactor targets full viewport resolution — LOD selection pre-loads
     // fine bricks during interaction; dispatch gating prevents wasted loads.
-    this.projectionFactor = canvas.height / (2 * Math.tan(this.cameraFovRad / 2));
+    this.projectionFactor = view.height / (2 * Math.tan(view.fovY / 2));
 
     // Get LOD range from metadata
     const maxLod = this.maxLod;

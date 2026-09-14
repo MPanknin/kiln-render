@@ -65,11 +65,21 @@ export function computeBrickChunkFootprint(
   };
 }
 
+/** Max chunks a footprint of `len` voxels can straddle along one axis of `dim`
+ *  voxels in `cs`-sized chunks, at the worst alignment (e.g. 66 over 64 → 3). */
+function worstCaseChunkSpan(len: number, dim: number, cs: number): number {
+  const straddled = len < 2 ? 1 : Math.floor((len - 2) / cs) + 2;
+  return Math.max(1, Math.min(Math.ceil(dim / cs), straddled));
+}
+
 /** Worst-case chunks one brick footprint can touch at this LOD, per channel —
- *  shared by the P1 fanout diagnostic and the (graduated) dynamic cache budget. */
+ *  shared by the fanout diagnostic and the (graduated) dynamic cache budget. */
 export function estimateBrickChunkFanout(params: LodChunkParams, physSize: number): number {
-  const span = (dim: number, cs: number, scale: number) =>
-    Math.max(1, Math.min(Math.ceil(dim / cs), Math.floor(((physSize - 1) * scale) / cs) + 1));
+  const span = (dim: number, cs: number, scale: number) => {
+    // Footprint length in actual voxels; non-integer scales get +1 for endpoint rounding
+    const len = Math.ceil((physSize - 1) * scale) + (Number.isInteger(scale) ? 1 : 2);
+    return worstCaseChunkSpan(len, dim, cs);
+  };
   const spanX = span(params.actualDimX, params.csx, params.scaleX);
   const spanY = span(params.actualDimY, params.csy, params.scaleY);
   const spanZ = span(params.actualDimZ, params.csz, params.scaleZ);

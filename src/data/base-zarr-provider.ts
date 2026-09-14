@@ -335,18 +335,16 @@ export abstract class BaseZarrProvider implements DataProvider {
       dataRange,
     };
 
-    // --- P1 diagnostic (zero behavior change) ---------------------------------
-    // Confirms the fetch-fanout hypothesis from the audit before any patch
-    // touches real behavior: for each LOD, estimate how many Zarr chunks one
-    // brick footprint can touch (worst case, independent of brick position),
-    // per channel. See docs/audits/kiln-render - fetch_patterns.md.
+    // Fanout diagnostic: worst-case chunks per brick footprint and channel, per LOD.
+    // The re-chunking hint only helps when a chunk axis is thinner than a brick.
     lodParams.forEach((p, lod) => {
       const fanout = estimateBrickChunkFanout(p, PHYSICAL_BRICK_SIZE);
       console.log(
         `[Kiln] LOD ${lod}: chunk shape ${p.csx}×${p.csy}×${p.csz}, fanout ${fanout} ` +
         `chunks/brick/channel (×${numChannels}ch = ${fanout * numChannels} chunk fetches/brick)`,
       );
-      if (lod === 0 && fanout * numChannels > 16) {
+      const thinChunks = Math.min(p.csx, p.csy, p.csz) < LOGICAL_BRICK_SIZE;
+      if (lod === 0 && thinChunks && fanout * numChannels > 16) {
         console.warn(
           `[Kiln] LOD 0 fanout×channels = ${fanout * numChannels} — each brick may require this many ` +
           `chunk fetches. If load times are a problem, consider re-chunking the source dataset to ` +

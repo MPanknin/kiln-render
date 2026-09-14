@@ -90,13 +90,41 @@ describe('estimateBrickChunkFanout / estimateDatasetFanoutMultiplier', () => {
     expect(estimateBrickChunkFanout(params, PHYSICAL)).toBe(35);
   });
 
-  it('cubic, well-chunked dataset (chunk size = brick size) — evaluates to exactly 8, matching the old fixed multiplier', () => {
+  it('cubic, chunk size = brick size — 27: the 66-voxel ghost footprint straddles 3 chunks per axis for interior bricks', () => {
     const params: LodChunkParams = {
       scaleX: 1, scaleY: 1, scaleZ: 1,
       actualDimX: 1024, actualDimY: 1024, actualDimZ: 1024,
       csx: 64, csy: 64, csz: 64,
     };
-    expect(estimateBrickChunkFanout(params, PHYSICAL)).toBe(8);
+    expect(estimateBrickChunkFanout(params, PHYSICAL)).toBe(27);
+  });
+
+  it('cubic, chunks larger than a brick (96³, 128³) — 8: at most 2 chunks per axis', () => {
+    for (const cs of [96, 128]) {
+      const params: LodChunkParams = {
+        scaleX: 1, scaleY: 1, scaleZ: 1,
+        actualDimX: 1024, actualDimY: 1024, actualDimZ: 1024,
+        csx: cs, csy: cs, csz: cs,
+      };
+      expect(estimateBrickChunkFanout(params, PHYSICAL)).toBe(8);
+    }
+  });
+
+  it('is never below the exact footprint at any aligned brick position', () => {
+    for (const cs of [32, 64, 65, 66, 96, 128]) {
+      const params: LodChunkParams = {
+        scaleX: 1, scaleY: 1, scaleZ: 1,
+        actualDimX: 1024, actualDimY: 1024, actualDimZ: 1024,
+        csx: cs, csy: cs, csz: cs,
+      };
+      let exactMax = 0;
+      for (let b = 0; b < 16; b++) {
+        const f = computeBrickChunkFootprint(params, b, b, b, LOGICAL, PHYSICAL);
+        exactMax = Math.max(exactMax,
+          (f.maxCx - f.minCx + 1) * (f.maxCy - f.minCy + 1) * (f.maxCz - f.minCz + 1));
+      }
+      expect(estimateBrickChunkFanout(params, PHYSICAL)).toBeGreaterThanOrEqual(exactMax);
+    }
   });
 
   it('estimateDatasetFanoutMultiplier picks the max across LODs, not the first or last', () => {

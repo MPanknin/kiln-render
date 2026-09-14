@@ -60,16 +60,17 @@ describe('Audit probes: assertions describe current behavior, not desired behavi
     console.log('Z_CORE_SAMPLES',JSON.stringify(coords));
     expect(coords).toEqual([0,7,14,21,28]);
   });
-  it('reproduces reset debounce starvation under continuous arrivals', () => {
-    vi.useFakeTimers();
+  it('FIXED: continuous arrivals cannot postpone the redraw notification past the max wait (was 5050 ms)', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
     try {
       const s:any=Object.create(StreamingManager.prototype);
-      s.resetAccumulationTimer=null;s.onResetAccumulation=vi.fn();
-      for(let i=0;i<100;i++){s.scheduleAccumulationReset();vi.advanceTimersByTime(50);}
-      expect(s.onResetAccumulation).not.toHaveBeenCalled();
-      vi.advanceTimersByTime(50);
-      expect(s.onResetAccumulation).toHaveBeenCalledTimes(1);
-      console.log('DEBOUNCE',JSON.stringify({arrivals:100,spacingMs:50,firstCallbackMs:5050}));
+      s.resetAccumulationTimer=null;s.firstPendingResetAt=null;s.contentVersionCounter=0;
+      const times:number[]=[];s.onResetAccumulation=vi.fn(()=>times.push(performance.now()));
+      for(let i=0;i<100;i++){s.notifyContentChanged();vi.advanceTimersByTime(50);}
+      console.log('DEBOUNCE',JSON.stringify({arrivals:100,spacingMs:50,firstCallbackMs:times[0],callbacks:times.length}));
+      expect(times[0]).toBeLessThanOrEqual(250);
+      expect(times.length).toBe(20);
+      expect(s.contentVersion).toBe(100);
     } finally {vi.useRealTimers();}
   });
   it('shows live desired slots remain unevictable indefinitely', () => {

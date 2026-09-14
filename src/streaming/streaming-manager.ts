@@ -17,6 +17,10 @@ import { getFloat16ToFloat32Lut } from '../utils/float16.js';
 import type { PipelineTimings } from '../data/data-provider.js';
 import { RollingAvg } from '../data/network-tracker.js';
 
+// Content commits coalesce for a quiet period, but a redraw is never delayed past the max wait
+const RESET_QUIET_MS = 100;
+const RESET_MAX_WAIT_MS = 250;
+
 export interface BrickRequest {
   lod: number;
   bx: number;
@@ -122,8 +126,10 @@ export class StreamingManager {
   // Frame counter for LRU
   private frameCount = 0;
 
-  // Debounced accumulation reset (wait for streaming to settle)
+  // Coalesced accumulation reset; see notifyContentChanged()
   private resetAccumulationTimer: number | null = null;
+  private firstPendingResetAt: number | null = null;
+  private contentVersionCounter = 0;
 
   // GPU upload timing (writeTexture, measured on main thread for all providers)
   private uploadAvg = new RollingAvg();
@@ -439,10 +445,7 @@ export class StreamingManager {
         firstBrickMs = performance.now() - this.loadStartTime;
       }
 
-      // arriving base bricks must trigger a re-render — otherwise the
-      // viewer converges on a near-empty scene and freezes while the base LOD
-      // silently streams in. The 100 ms debounce coalesces the burst.
-      this.scheduleAccumulationReset();
+      this.notifyContentChanged();
       } finally {
         this.baseLodPending = Math.max(0, this.baseLodPending - 1);
       }
@@ -486,10 +489,8 @@ export class StreamingManager {
     this.baseLodLoaded = true;
     this.timeToFirstRender = firstBrickMsValue ?? totalMs;
 
-    // guarantee the completed base LOD is displayed even if the camera
-    // never moves again (the debounced per-brick resets may have already
-    // fired before the last bricks arrived). Direct call, not debounced.
-    this.onResetAccumulation();
+    // Show the completed base LOD right away, even if the camera never moves again
+    this.flushAccumulationReset();
 
     console.log(
       `[Kiln] loadBaseLod done: ${brickCount}/${bricks.length} bricks loaded in ${totalMs.toFixed(0)}ms` +
@@ -628,6 +629,7 @@ export class StreamingManager {
     this.inFlightRequests.clear();
     this.inFlightStaleTime.clear();
     this.dispatchTimestamps.clear();
+    this.cancelAccumulationReset();
 
     // reset the allocator wholesale instead of freeing slot-by-slot.
     // The old per-slot free loop left every pinned base-LOD slot in the
@@ -959,9 +961,8 @@ export class StreamingManager {
     if (isEmpty) {
       this.emptyBricks.add(key);
       this.resources.indirection.setEmpty(bx, by, bz, lod);
-      // This may overwrite a coarse parent fallback that was already on screen —
-      // the region needs to redraw as empty rather than staying on the stale frame.
-      this.scheduleAccumulationReset();
+      // May replace a coarse parent already on screen — the region must redraw
+      this.notifyContentChanged();
       return;
     }
 
@@ -995,8 +996,7 @@ export class StreamingManager {
       if (maxAcrossChannels < threshold) {
         this.emptyBricks.add(key);
         this.resources.indirection.setEmpty(bx, by, bz, lod);
-        // Same as above: may overwrite a coarse parent fallback already on screen.
-        this.scheduleAccumulationReset();
+        this.notifyContentChanged();
         return;
       }
     }
@@ -1106,18 +1106,39 @@ export class StreamingManager {
       this.brickLatencyAvg.add(performance.now() - dispatchTime);
     }
 
-    // Schedule accumulation reset to prevent constant flickering during streaming bursts
+    this.notifyContentChanged();
+  }
+
+  /** Bumped on every visible content commit (brick upload or empty marker). */
+  get contentVersion(): number {
+    return this.contentVersionCounter;
+  }
+
+  /** Record a content commit and schedule the accumulation reset that displays it. */
+  private notifyContentChanged(): void {
+    this.contentVersionCounter++;
     this.scheduleAccumulationReset();
   }
 
   private scheduleAccumulationReset(): void {
-    if (this.resetAccumulationTimer !== null) {
-      clearTimeout(this.resetAccumulationTimer);
-    }
-    this.resetAccumulationTimer = setTimeout(() => {
-      this.onResetAccumulation();
-      this.resetAccumulationTimer = null;
-    }, 100) as unknown as number;
+    const now = performance.now();
+    const firstPending = this.firstPendingResetAt ?? now;
+    this.firstPendingResetAt = firstPending;
+    const delay = Math.max(0, Math.min(RESET_QUIET_MS, RESET_MAX_WAIT_MS - (now - firstPending)));
+    if (this.resetAccumulationTimer !== null) clearTimeout(this.resetAccumulationTimer);
+    this.resetAccumulationTimer = setTimeout(() => this.flushAccumulationReset(), delay) as unknown as number;
+  }
+
+  /** Fire a pending (or immediate) accumulation reset now. */
+  private flushAccumulationReset(): void {
+    this.cancelAccumulationReset();
+    this.onResetAccumulation();
+  }
+
+  private cancelAccumulationReset(): void {
+    if (this.resetAccumulationTimer !== null) clearTimeout(this.resetAccumulationTimer);
+    this.resetAccumulationTimer = null;
+    this.firstPendingResetAt = null;
   }
 
   // Helper functions

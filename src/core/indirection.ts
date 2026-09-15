@@ -206,6 +206,11 @@ export class IndirectionTable {
   /**
    * Clear all mappings
    */
+  /** Destroy the GPU texture (the device is external). */
+  dispose(): void {
+    this.texture.destroy();
+  }
+
   clearAll() {
     this.data.fill(0);
     this.updateFullGPU();

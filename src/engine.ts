@@ -453,9 +453,14 @@ export class KilnEngine {
     };
   }
 
+  /** Stop streaming and release engine-owned GPU resources; the device stays with its owner. */
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.streamingManager.dispose();
+    this.renderer.dispose();
+    this.transferFunction.dispose();
+    this.resources.dispose();
     this.dataProvider.dispose();
   }
 }

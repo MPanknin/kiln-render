@@ -41,6 +41,11 @@ export class TransferFunction {
     this.setPreset('grayscale');
   }
 
+  /** Destroy the GPU texture (the device is external). */
+  dispose(): void {
+    this.texture.destroy();
+  }
+
   setPreset(preset: TFPreset): void {
     this.preset = preset;
 

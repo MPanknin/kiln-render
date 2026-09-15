@@ -319,6 +319,8 @@ export class ZarrWorkerPool {
       worker.terminate();
     }
     this.workers = [];
+    // Settle every pending promise so callers never hang on a dead worker
+    for (const pending of this.pendingRequests.values()) pending.reject(new DOMException('Aborted', 'AbortError'));
     this.pendingRequests.clear();
     this.requestToWorker.clear();
     this.abortListeners.clear();

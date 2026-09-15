@@ -147,6 +147,7 @@ export class Renderer {
 
   // Frame counter for temporal jitter
   private frameIndex = 0;
+  private disposed = false;
 
   private readonly config: DatasetConfig;
 
@@ -439,6 +440,7 @@ export class Renderer {
   }
 
   resize(width: number, height: number) {
+    if (this.disposed) return;
     this.screenWidth = width;
     this.screenHeight = height;
 
@@ -517,6 +519,20 @@ export class Renderer {
   private destroyScaleSet(set: ScaleSet): void {
     set.outputTexture.destroy();
     for (const tex of set.accumTextures) tex.destroy();
+  }
+
+  /** Destroy renderer-owned GPU textures and buffers (device, atlas and TF texture are external). */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const set of this.scaleSets.values()) this.destroyScaleSet(set);
+    this.scaleSets.clear();
+    this.depthTexture.destroy();
+    const buffers = [
+      this.sliceUniformBuffer, this.computeUniformBuffer, this.accumUniformBuffer, this.vertexBuffer,
+      this.wireframeIndexBuffer, this.wireframeUniformBuffer, this.axisVertexBuffer, this.axisUniformBuffer,
+    ];
+    for (const buffer of buffers) buffer.destroy();
   }
 
   private rebuildScaleSetBindGroups(set: ScaleSet): void {
@@ -612,6 +628,7 @@ export class Renderer {
   }
 
   render(colorView: GPUTextureView, view: ViewParams) {
+    if (this.disposed) return;
     mat4.multiply(view.proj, view.view, this.vpScratch);
 
     this.renderCompute(colorView, view, this.vpScratch);

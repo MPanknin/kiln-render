@@ -132,7 +132,7 @@ describe('StreamingManager — multi-channel base LOD loading', () => {
     await vi.waitFor(() => { expect(sm.baseLodLoaded).toBe(true); });
 
     expect(provider.loadBrick).toHaveBeenCalledTimes(1);
-    expect(provider.loadBrick).toHaveBeenCalledWith(0, 0, 0, 0, 0);
+    expect(provider.loadBrick).toHaveBeenCalledWith(0, 0, 0, 0, 0, expect.any(AbortSignal));
   });
 
   it('calls loadBrick twice for a 2-channel dataset, once per channel', async () => {
@@ -151,8 +151,8 @@ describe('StreamingManager — multi-channel base LOD loading', () => {
     await vi.waitFor(() => { expect(sm.baseLodLoaded).toBe(true); });
 
     expect(provider.loadBrick).toHaveBeenCalledTimes(2);
-    expect(provider.loadBrick).toHaveBeenCalledWith(0, 0, 0, 0, 0); // ch 0
-    expect(provider.loadBrick).toHaveBeenCalledWith(0, 0, 0, 0, 1); // ch 1
+    expect(provider.loadBrick).toHaveBeenCalledWith(0, 0, 0, 0, 0, expect.any(AbortSignal)); // ch 0
+    expect(provider.loadBrick).toHaveBeenCalledWith(0, 0, 0, 0, 1, expect.any(AbortSignal)); // ch 1
   });
 
   it('calls loadBrick for all 4 channels of a 4-channel dataset', async () => {
@@ -172,7 +172,7 @@ describe('StreamingManager — multi-channel base LOD loading', () => {
 
     expect(provider.loadBrick).toHaveBeenCalledTimes(4);
     for (let ch = 0; ch < 4; ch++) {
-      expect(provider.loadBrick).toHaveBeenCalledWith(0, 0, 0, 0, ch);
+      expect(provider.loadBrick).toHaveBeenCalledWith(0, 0, 0, 0, ch, expect.any(AbortSignal));
     }
   });
 

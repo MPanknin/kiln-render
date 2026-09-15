@@ -94,6 +94,7 @@ export class DecompressionPool {
       worker.terminate();
     }
     this.workers = [];
+    for (const pending of this.pendingRequests.values()) pending.reject(new DOMException('Aborted', 'AbortError'));
     this.pendingRequests.clear();
   }
 }

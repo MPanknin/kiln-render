@@ -54,6 +54,13 @@ export class VolumeResources {
     this.allocator = new AtlasAllocator(gridSize);
   }
 
+  /** Destroy the atlas, dummy and indirection textures (the device is external). */
+  dispose(): void {
+    for (const canvas of this.canvases) canvas.texture.destroy();
+    this.dummyTexture.destroy();
+    this.indirection.dispose();
+  }
+
   /** View for atlas channel ch (dummy if ch >= numChannels) */
   atlasView(ch: number): GPUTextureView {
     return ch < this.numChannels

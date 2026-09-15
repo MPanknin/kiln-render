@@ -199,6 +199,7 @@ export class KilnViewer {
     clearTimeout(this.resizeTimer);
     this.resizeObserver.disconnect();
     this.engine.dispose();
+    this.context.unconfigure();
   }
 
   private resize(): void {

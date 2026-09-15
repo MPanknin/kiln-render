@@ -98,6 +98,11 @@ export class StreamingManager {
   // Currently in-flight requests with AbortControllers
   private inFlightRequests = new Map<string, AbortController>();
 
+  // Generation boundary: bumped by loadBaseLod/clear/dispose so stale completions never mutate state
+  private generation = 0;
+  private baseLoadAbort: AbortController | null = null;
+  private disposed = false;
+
   // Cancellation grace period — tracks when each in-flight request first left
   // the desired set. Only abort after CANCEL_GRACE_MS, so requests that briefly
   // leave the desired set (LOD oscillation during gestures) survive and warm
@@ -312,6 +317,12 @@ export class StreamingManager {
     const level = this.levelsByLod[maxLod];
     if (!level) return;
 
+    const gen = ++this.generation;
+    const stale = () => gen !== this.generation;
+    this.baseLoadAbort?.abort();
+    const abort = new AbortController();
+    this.baseLoadAbort = abort;
+
     const [gridX, gridY, gridZ] = level.brickGrid;
     const numChannels = this.resources.numChannels;
 
@@ -363,6 +374,7 @@ export class StreamingManager {
       const tIsEmpty = performance.now();
       const isEmpty = await this.dataProvider.isBrickEmpty(maxLod, bx, by, bz, this.config.emptyBrickThreshold);
       sumIsEmptyMs += performance.now() - tIsEmpty;
+      if (stale()) return;
 
       if (isEmpty) {
         this.emptyBricks.add(key);
@@ -374,10 +386,11 @@ export class StreamingManager {
       const tFetch = performance.now();
       const channelResults = await Promise.all(
         Array.from({ length: numChannels }, (_, ch) =>
-          this.dataProvider.loadBrick(maxLod, bx, by, bz, ch)
+          this.dataProvider.loadBrick(maxLod, bx, by, bz, ch, abort.signal)
         )
       );
       sumFetchMs += performance.now() - tFetch;
+      if (stale()) return;
 
       if (!channelResults[0]) return; // ch0 mandatory; skip brick entirely if it failed
       if (this.milestones.firstBrickDecoded === null) this.milestones.firstBrickDecoded = performance.now();
@@ -442,10 +455,12 @@ export class StreamingManager {
 
       this.notifyContentChanged();
       } finally {
-        this.baseLodPending = Math.max(0, this.baseLodPending - 1);
-        if (this.loadedBricks.has(key) || this.emptyBricks.has(key)) {
-          resolved.add(key);
-          stampBaseCoverage(this.milestones, resolved.size, bricks.length, performance.now());
+        if (!stale()) {
+          this.baseLodPending = Math.max(0, this.baseLodPending - 1);
+          if (this.loadedBricks.has(key) || this.emptyBricks.has(key)) {
+            resolved.add(key);
+            stampBaseCoverage(this.milestones, resolved.size, bricks.length, performance.now());
+          }
         }
       }
     };
@@ -454,11 +469,12 @@ export class StreamingManager {
     await Promise.all(
       Array.from({ length: concurrency }, async () => {
         let brick;
-        while ((brick = queue.shift()) !== undefined) {
+        while ((brick = queue.shift()) !== undefined && !stale()) {
           await processBrick(brick);
         }
       })
     );
+    if (stale()) return;
 
     // Retry any bricks that failed (ch0 network error)
     const failed = bricks.filter(b => !this.loadedBricks.has(b.key) && !this.emptyBricks.has(b.key));
@@ -468,6 +484,7 @@ export class StreamingManager {
         await processBrick(brick);
       }
     }
+    if (stale()) return;
 
     // Bricks that still failed stay unloaded (w=0 renders as nothing, like empty) and
     // are retried by the regular refinement path. Failure is not emptiness.
@@ -549,6 +566,7 @@ export class StreamingManager {
    * Returns true if any work was done
    */
   update(view: ViewParams): void {
+    if (this.disposed) return;
     this.frameCount++;
 
     const cameraPos: [number, number, number] = [
@@ -611,6 +629,7 @@ export class StreamingManager {
    * Force immediate recomputation of desired set
    */
   forceUpdate(view: ViewParams): void {
+    if (this.disposed) return;
     this.lastUpdateFrame = this.frameCount;
     this.computeDesiredSet(view);
   }
@@ -618,7 +637,20 @@ export class StreamingManager {
   /**
    * Clear all state
    */
+  /** Abort all work and drop timers; the manager is inert afterwards. GPU resources are owned by VolumeResources. */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.generation++;
+    this.baseLoadAbort?.abort();
+    for (const controller of this.inFlightRequests.values()) controller.abort();
+    this.inFlightRequests.clear();
+    this.loadQueue = [];
+    this.cancelAccumulationReset();
+  }
+
   clear(): void {
+    if (this.disposed) return;
     // Cancel all in-flight requests
     for (const controller of this.inFlightRequests.values()) {
       controller.abort();

@@ -5,6 +5,8 @@
 
 import { DecompressionPool } from './decompression-pool.js';
 import { NetworkTracker, RollingAvg } from './network-tracker.js';
+import { convertBrickBytes, brickElementView } from './brick-convert.js';
+import type { TargetFormat } from './brick-convert.js';
 import type {
   DataProvider,
   VolumeMetadata,
@@ -67,8 +69,10 @@ export class ShardedDataProvider implements DataProvider {
   private rawMetadata: ShardedVolumeJson | null = null;
   private metadata: VolumeMetadata | null = null;
   private lodIndices = new Map<number, ShardedLodIndex>();
+  private lodIndexLoads = new Map<number, Promise<ShardedLodIndex>>();
   private networkTracker = new NetworkTracker();
   private pool: DecompressionPool | null = null;
+  private targetFormat: TargetFormat = 'r16unorm';
   private fetchAvg = new RollingAvg();
   private assemblyAvg = new RollingAvg();
 
@@ -76,18 +80,10 @@ export class ShardedDataProvider implements DataProvider {
     this.basePath = basePath;
   }
 
-  /**
-   * Set the target texture format for decompressed brick data.
-   * Must be called before the first brick load.
-   */
-  setTargetFormat(format: 'r8unorm' | 'r16unorm' | 'r16float'): void {
-    if (this.pool) {
-      this.pool.setTargetFormat(format);
-    } else {
-      // Pool not yet created — store the format so we can apply it on first use
-      this.pool = new DecompressionPool();
-      this.pool.setTargetFormat(format);
-    }
+  /** Set the target texture format for brick data. Must be called before the first brick load. */
+  setTargetFormat(format: TargetFormat): void {
+    this.targetFormat = format;
+    this.pool?.setTargetFormat(format);
   }
 
   /**
@@ -96,15 +92,21 @@ export class ShardedDataProvider implements DataProvider {
   async initialize(): Promise<VolumeMetadata> {
     if (this.metadata) return this.metadata;
 
-    const response = await fetch(`${this.basePath}/volume.json`);
-    if (!response.ok) {
-      throw new Error(`Failed to load volume metadata: ${response.statusText}`);
-    }
-
-    this.rawMetadata = await response.json();
-    this.metadata = this.convertMetadata(this.rawMetadata!);
+    this.rawMetadata = await this.fetchJson<ShardedVolumeJson>(`${this.basePath}/volume.json`, 'volume metadata');
+    this.metadata = this.convertMetadata(this.rawMetadata);
 
     return this.metadata;
+  }
+
+  /** GET a JSON document, counting it in the network stats. */
+  private async fetchJson<T>(url: string, what: string): Promise<T> {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to load ${what}: ${response.statusText}`);
+    }
+    const text = await response.text();
+    this.networkTracker.record(text.length);
+    return JSON.parse(text) as T;
   }
 
   /**
@@ -156,28 +158,29 @@ export class ShardedDataProvider implements DataProvider {
   /**
    * Load the index for a LOD level
    */
-  private async loadLodIndex(lod: number): Promise<ShardedLodIndex> {
-    if (this.lodIndices.has(lod)) {
-      return this.lodIndices.get(lod)!;
-    }
+  /** Loads each LOD index once; concurrent callers share the in-flight request. */
+  private loadLodIndex(lod: number): Promise<ShardedLodIndex> {
+    const cached = this.lodIndices.get(lod);
+    if (cached) return Promise.resolve(cached);
+    const inFlight = this.lodIndexLoads.get(lod);
+    if (inFlight) return inFlight;
 
     if (!this.rawMetadata) {
-      throw new Error('Metadata not loaded');
+      return Promise.reject(new Error('Metadata not loaded'));
     }
-
     const level = this.rawMetadata.levels.find(l => l.lod === lod);
     if (!level) {
-      throw new Error(`LOD level ${lod} not found`);
+      return Promise.reject(new Error(`LOD level ${lod} not found`));
     }
 
-    const response = await fetch(`${this.basePath}/${level.indexFile}`);
-    if (!response.ok) {
-      throw new Error(`Failed to load LOD index: ${response.statusText}`);
-    }
-
-    const index: ShardedLodIndex = await response.json();
-    this.lodIndices.set(lod, index);
-    return index;
+    const load = this.fetchJson<ShardedLodIndex>(`${this.basePath}/${level.indexFile}`, `LOD ${lod} index`)
+      .then(index => {
+        this.lodIndices.set(lod, index);
+        return index;
+      })
+      .finally(() => this.lodIndexLoads.delete(lod));
+    this.lodIndexLoads.set(lod, load);
+    return load;
   }
 
   /**
@@ -244,32 +247,34 @@ export class ShardedDataProvider implements DataProvider {
         signal,
       });
 
-      if (!response.ok && response.status !== 206) {
-        console.warn(`Failed to fetch brick ${brickKey}: ${response.status}`);
+      if (!this.isValidRangeResponse(response, entry)) {
+        console.warn(`Brick ${brickKey}: server did not honour the byte range (status ${response.status})`);
+        void response.body?.cancel();
         return null;
       }
 
       const buffer = await response.arrayBuffer();
       this.networkTracker.record(buffer.byteLength);
       this.fetchAvg.add(performance.now() - tFetch);
-
-      // Assembly: decompress + typed array conversion
-      const tAssembly = performance.now();
-      const isCompressed = index.compressed ?? this.rawMetadata.compressed ?? false;
-
-      let rawData: Uint8Array;
-      if (isCompressed) {
-        if (!this.pool) this.pool = new DecompressionPool();
-        rawData = await this.pool.decompress(buffer);
-      } else {
-        rawData = new Uint8Array(buffer);
+      if (buffer.byteLength !== entry.size) {
+        console.warn(`Brick ${brickKey}: expected ${entry.size} bytes, received ${buffer.byteLength}`);
+        return null;
       }
 
+      // Assembly: decompress + dtype conversion to the target texture format
+      const tAssembly = performance.now();
+      const isCompressed = index.compressed ?? this.rawMetadata.compressed ?? false;
+      const source = this.rawMetadata.format;
+
       let data: BrickData;
-      if (this.rawMetadata.format === 'uint16') {
-        data = new Uint16Array(rawData.buffer, rawData.byteOffset, rawData.byteLength / 2);
+      if (isCompressed) {
+        if (!this.pool) {
+          this.pool = new DecompressionPool();
+          this.pool.setTargetFormat(this.targetFormat);
+        }
+        data = brickElementView(await this.pool.decompress(buffer, source), source, this.targetFormat);
       } else {
-        data = rawData;
+        data = convertBrickBytes(new Uint8Array(buffer), source, this.targetFormat);
       }
       this.assemblyAvg.add(performance.now() - tAssembly);
 
@@ -279,6 +284,21 @@ export class ShardedDataProvider implements DataProvider {
       console.warn(`Error loading brick lod${lod}:${bx}-${by}-${bz}:`, e);
       return null;
     }
+  }
+
+  /** 206: Content-Range must match when readable (CORS often hides it; body length is checked after).
+   *  200: only acceptable if Content-Length is exactly the brick, i.e. the server ignored Range. */
+  private isValidRangeResponse(response: Response, entry: ShardedBrickEntry): boolean {
+    if (response.status === 206) {
+      const contentRange = response.headers.get('content-range');
+      if (contentRange === null) return true;
+      const match = /^bytes (\d+)-(\d+)\//.exec(contentRange);
+      return !!match && Number(match[1]) === entry.offset && Number(match[2]) === entry.offset + entry.size - 1;
+    }
+    if (response.status === 200) {
+      return Number(response.headers.get('content-length')) === entry.size;
+    }
+    return false;
   }
 
   getNetworkStats(): NetworkStats {
@@ -300,6 +320,7 @@ export class ShardedDataProvider implements DataProvider {
    */
   dispose(): void {
     this.lodIndices.clear();
+    this.lodIndexLoads.clear();
     this.pool?.terminate();
     this.pool = null;
   }

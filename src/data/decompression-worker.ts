@@ -1,13 +1,16 @@
 /** DecompressionWorker - Off-main-thread gzip decompression via fflate. */
 
 import { gunzipSync } from 'fflate';
-import { uint16ToFloat16 } from '../utils/float16.js';
+import { convertBrickBytes } from './brick-convert.js';
+import type { SourceFormat, TargetFormat } from './brick-convert.js';
 
 export interface DecompressRequest {
   id: number;
   data: ArrayBuffer;
+  /** Source voxel dtype; without it no conversion is applied. */
+  sourceFormat?: SourceFormat;
   /** Target texture format: r8unorm (8-bit), r16unorm (16-bit uint), r16float (16-bit float) */
-  targetFormat?: 'r8unorm' | 'r16unorm' | 'r16float';
+  targetFormat?: TargetFormat;
 }
 
 export interface DecompressResponse {
@@ -18,35 +21,16 @@ export interface DecompressResponse {
 
 // Worker message handler
 self.onmessage = (event: MessageEvent<DecompressRequest>) => {
-  const { id, data, targetFormat } = event.data;
+  const { id, data, sourceFormat, targetFormat } = event.data;
 
   try {
-    const compressed = new Uint8Array(data);
-    let decompressed: Uint8Array | Uint16Array = gunzipSync(compressed);
-
-    // Handle format conversions based on targetFormat
-    if (targetFormat === 'r8unorm' && decompressed.byteLength % 2 === 0) {
-      // 16-bit → 8-bit conversion (downsample for r8unorm fallback)
-      const uint16Data = new Uint16Array(decompressed.buffer, decompressed.byteOffset, decompressed.byteLength / 2);
-      const uint8Data = new Uint8Array(uint16Data.length);
-
-      for (let i = 0; i < uint16Data.length; i++) {
-        uint8Data[i] = (uint16Data[i] ?? 0) >> 8;
-      }
-
-      decompressed = uint8Data;
-    } else if (targetFormat === 'r16float' && decompressed.byteLength % 2 === 0) {
-      // 16-bit uint → float16 conversion (for r16float texture format)
-      const uint16Data = new Uint16Array(decompressed.buffer, decompressed.byteOffset, decompressed.byteLength / 2);
-      const float16Data = uint16ToFloat16(uint16Data);
-      decompressed = float16Data;
-    }
-    // else: r16unorm or already 8-bit - no conversion needed
+    const decompressed = gunzipSync(new Uint8Array(data));
+    const converted = convertBrickBytes(decompressed, sourceFormat ?? 'uint8', targetFormat ?? 'r16unorm');
 
     // Get the underlying ArrayBuffer for transfer
-    const buffer = decompressed.buffer instanceof ArrayBuffer
-      ? decompressed.buffer
-      : decompressed.buffer.slice(0);
+    const buffer = converted.buffer instanceof ArrayBuffer
+      ? converted.buffer
+      : converted.buffer.slice(0);
 
     // Transfer ownership back to main thread (zero-copy)
     const response: DecompressResponse = {

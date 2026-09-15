@@ -4,6 +4,7 @@
  */
 
 import type { DecompressRequest, DecompressResponse } from './decompression-worker.js';
+import type { SourceFormat, TargetFormat } from './brick-convert.js';
 import DecompressionWorker from './decompression-worker.ts?worker&inline';
 
 interface PendingRequest {
@@ -17,13 +18,10 @@ export class DecompressionPool {
   private requestId = 0;
   private pendingRequests = new Map<number, PendingRequest>();
   enabled = true;
-  private targetFormat: 'r8unorm' | 'r16unorm' | 'r16float' = 'r16unorm';
+  private targetFormat: TargetFormat = 'r16unorm';
 
-  /**
-   * Set target texture format for decompressed data
-   * Format determines output: r8unorm (8-bit), r16unorm (16-bit uint), r16float (16-bit float)
-   */
-  setTargetFormat(format: 'r8unorm' | 'r16unorm' | 'r16float'): void {
+  /** Target texture format for decompressed data: r8unorm, r16unorm or r16float. */
+  setTargetFormat(format: TargetFormat): void {
     this.targetFormat = format;
   }
 
@@ -58,11 +56,8 @@ export class DecompressionPool {
 
   }
 
-  /**
-   * Decompress a gzip-compressed buffer
-   * Returns a promise that resolves to the decompressed Uint8Array
-   */
-  decompress(compressedData: ArrayBuffer): Promise<Uint8Array> {
+  /** Decompress a gzip buffer of `sourceFormat` voxels, converted to the target format. */
+  decompress(compressedData: ArrayBuffer, sourceFormat: SourceFormat): Promise<Uint8Array> {
     return new Promise((resolve, reject) => {
       const id = this.requestId++;
       const worker = this.workers[this.nextWorkerIndex]!;
@@ -73,7 +68,8 @@ export class DecompressionPool {
       const request: DecompressRequest = {
         id,
         data: compressedData,
-        targetFormat: this.targetFormat
+        sourceFormat,
+        targetFormat: this.targetFormat,
       };
       // Transfer ownership to worker (zero-copy)
       worker.postMessage(request, [compressedData]);

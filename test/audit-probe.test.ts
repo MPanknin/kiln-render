@@ -121,26 +121,26 @@ describe('Audit probes: assertions describe current behavior, not desired behavi
     const actual=result.data[1*66*66+1*66+2];
     console.log('STRIDE',JSON.stringify({actual,expected:1}));expect(actual).toBe(1);
   });
-  it('reproduces concurrent duplicate binary index requests', async () => {
+  it('FIXED: concurrent index consumers share one fetch (was 8)', async () => {
     const p:any=new ShardedDataProvider('https://fixture.invalid');
     p.rawMetadata={levels:[{lod:0,indexFile:'i.json'}]};
     let release!:()=>void; const gate=new Promise<void>(r=>release=r);
-    const fetch=vi.fn(async()=>{await gate;return {ok:true,json:async()=>({entries:{}})};});vi.stubGlobal('fetch',fetch);
+    const fetch=vi.fn(async()=>{await gate;return {ok:true,text:async()=>'{"entries":{}}'};});vi.stubGlobal('fetch',fetch);
     try{
       const jobs=Array.from({length:8},()=>p.getBrickStats(0,0,0,0));
-      expect(fetch).toHaveBeenCalledTimes(8);release();await Promise.all(jobs);
+      expect(fetch).toHaveBeenCalledTimes(1);release();await Promise.all(jobs);
       console.log('INDEX_FETCHES',JSON.stringify({concurrentCallers:8,actual:fetch.mock.calls.length,desired:1}));
     }finally{vi.unstubAllGlobals();}
   });
-  it('reproduces corruption of even-length gzip uint8 data', async () => {
+  it('FIXED: even-length gzip uint8 data keeps its values (was read as uint16 → [2,4])', async () => {
     const postMessage=vi.fn();const worker:any={postMessage};vi.stubGlobal('self',worker);
     try {
       await import('../src/data/decompression-worker.js');
       const compressed=gzipSync(new Uint8Array([1,2,3,4]));
-      worker.onmessage({data:{id:1,data:compressed.buffer,targetFormat:'r8unorm'}});
+      worker.onmessage({data:{id:1,data:compressed.buffer,sourceFormat:'uint8',targetFormat:'r8unorm'}});
       const data=Array.from(new Uint8Array(postMessage.mock.calls[0][0].data));
       console.log('UINT8_GZIP',JSON.stringify({actual:data,expected:[1,2,3,4]}));
-      expect(data).toEqual([2,4]);
+      expect(data).toEqual([1,2,3,4]);
     }finally{vi.unstubAllGlobals();}
   });
 });

@@ -100,3 +100,40 @@ describe('legacyPyramid and levelSpan', () => {
     expect(levelSpan(l1!, 64)).toEqual([128, 128, 64]);
   });
 });
+
+describe('buildPyramid — review fixes', () => {
+  const level = (dims: Vec3, scale?: Vec3, translation?: Vec3): PyramidLevelInput => ({ dims, scale, translation });
+
+  it('group scale does not distort factor ratios across levels', () => {
+    const b = buildPyramid(
+      [level([64, 64, 64], [1, 1, 1]), level([32, 32, 32], [2, 2, 2])],
+      [0.5, 0.5, 2],
+    );
+    expect(b.issues).toEqual([]);
+    expect(b.levels[1]!.exponent).toEqual([1, 1, 1]);
+    expect(b.levels[1]!.spacing).toEqual([1, 1, 4]);
+  });
+
+  it('an absent translation is the identity, same as an explicit zero', () => {
+    const absent = buildPyramid([level([64, 64, 64], [1, 1, 1]), level([32, 32, 32], [2, 2, 2])]);
+    const zero = buildPyramid([level([64, 64, 64], [1, 1, 1], [0, 0, 0]), level([32, 32, 32], [2, 2, 2], [0, 0, 0])]);
+    expect(absent.issues).toEqual([]);
+    expect(absent.levels[1]!.origin).toEqual([0, 0, 0]);
+    expect(absent.levels[1]!.origin).toEqual(zero.levels[1]!.origin);
+  });
+
+  it('an absent translation still picks up the group translation', () => {
+    const b = buildPyramid([level([64, 64, 64], [1, 1, 1])], undefined, [5, 6, 7]);
+    expect(b.levels[0]!.origin).toEqual([5, 6, 7]);
+  });
+
+  it('rejects zero or fractional dimensions, non-positive scales and non-finite translations', () => {
+    expect(buildPyramid([level([0, 0, 0], [0, 0, 0])]).issues).toEqual([
+      'level 0: dimensions must be positive integers, got [0,0,0]',
+      'level 0: scale must be finite and positive, got [0,0,0]',
+    ]);
+    expect(buildPyramid([level([10.5, 10, 10])]).issues.join()).toMatch(/positive integers/);
+    expect(buildPyramid([level([10, 10, 10], [1, 1, 1], [NaN, 0, 0])]).issues.join()).toMatch(/translation must be finite/);
+    expect(buildPyramid([level([10, 10, 10], [1, 1, Infinity])]).issues.join()).toMatch(/scale must be finite/);
+  });
+});

@@ -49,6 +49,13 @@ export interface LodParams {
   channelChunkSize: number;
 }
 
+/** OMERO colours are "RRGGBB" hex strings; returns 0–1 RGB or undefined if malformed. */
+function parseHexColor(hex: unknown): [number, number, number] | undefined {
+  if (typeof hex !== 'string' || !/^[0-9a-fA-F]{6}$/.test(hex)) return undefined;
+  const n = parseInt(hex, 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+
 /** Detect the compression codec from zarr v2 (.zarray) or v3 (zarr.json) metadata. */
 export async function detectCompression(
   store: { get: (key: any) => Promise<Uint8Array | undefined> },
@@ -298,15 +305,27 @@ export abstract class BaseZarrProvider implements DataProvider {
       };
     });
 
-    // Extract OMERO window metadata if available (per-channel and backward-compat single)
+    // OMERO windows: v0.5 under attrs.ome.omero, v0.4 at the top level
     type WindowEntry = { start: number; end: number; min: number; max: number };
     let windowMeta: WindowEntry | undefined;
     let channelWindows: Array<WindowEntry | undefined> | undefined;
-    const omeroAttr = omeAttr?.omero;
+    let channels: VolumeMetadata['channels'];
+    const omeroAttr = omeAttr?.omero ?? (attrs['omero'] as NonNullable<typeof omeAttr>['omero']);
     if (Array.isArray(omeroAttr?.channels) && omeroAttr.channels.length > 0) {
+      // Integer voxels are stored as raw / dtypeMax, so windows must be normalised by the dtype range too
+      const dtypeMax = bitDepth === 8 ? 255 : 65535;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      channelWindows = omeroAttr.channels.map((ch: any) => ch?.window as WindowEntry | undefined);
+      channelWindows = omeroAttr.channels.map((ch: any) => {
+        const w = ch?.window as WindowEntry | undefined;
+        return w && !isFloat ? { ...w, min: 0, max: dtypeMax } : w;
+      });
       windowMeta = channelWindows[0];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      channels = omeroAttr.channels.map((ch: any) => ({
+        label: typeof ch?.label === 'string' ? ch.label : undefined,
+        color: parseHexColor(ch?.color),
+        active: ch?.active !== false,
+      }));
     }
 
     // For float data, derive initial dataRange from OMERO window (absolute min/max).
@@ -327,6 +346,7 @@ export abstract class BaseZarrProvider implements DataProvider {
       bitDepth,
       window: windowMeta,
       channelWindows,
+      channels,
       numChannels,
       isFloat,
       dataRange,

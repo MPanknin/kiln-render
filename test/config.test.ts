@@ -7,6 +7,7 @@ import {
   GRID_SIZE,
   TOTAL_BRICK_SLOTS,
   DatasetConfig,
+  emptyBrickThresholdFor,
 } from '../src/core/config.js';
 
 describe('Config Constants', () => {
@@ -142,5 +143,25 @@ describe('DatasetConfig', () => {
       expect(cfg.dimensions[0]).toBe(512);
       expect(cfg.voxelSpacing[0]).toBe(1);
     });
+  });
+});
+
+describe('emptyBrickThresholdFor', () => {
+  it('is ~0.15% of the dtype range: 100 for 16-bit, 1 for 8-bit', () => {
+    expect(emptyBrickThresholdFor(16)).toBe(100);
+    expect(emptyBrickThresholdFor(8)).toBe(1);
+  });
+
+  it('never exceeds the smallest display-window start', () => {
+    expect(emptyBrickThresholdFor(16, [{ start: 40 }, { start: 900 }])).toBe(40);
+    expect(emptyBrickThresholdFor(16, [undefined, { start: 900 }])).toBe(100);
+  });
+
+  it('floors at 1 so all-zero bricks still count as empty', () => {
+    expect(emptyBrickThresholdFor(16, [{ start: 0 }])).toBe(1);
+  });
+
+  it('float stats are normalised to 16-bit range and ignore raw window starts', () => {
+    expect(emptyBrickThresholdFor(16, [{ start: 0.001 }], true)).toBe(100);
   });
 });

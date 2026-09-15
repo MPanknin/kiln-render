@@ -78,14 +78,10 @@ fn fs(@location(0) voxelPos: vec3f) -> @location(0) vec4f {
     }
 
     if (uniforms.numChannels > 1u) {
-        // Multi-channel opacity-weighted average (VTK.js ImageMapper approach):
-        // each channel contributes color weighted by its windowed intensity,
-        // normalized by total weight so relative proportions are preserved
-        // without being too dim (additive) or too sensitive (maxDensity norm).
-        var weightedColor = vec3f(0.0);
-        var totalWeight: f32 = 0.0;
-        // Normalise raw float samples to [0,1] before per-channel windowing
-        // (identity for uint data where floatMin=0 / floatMax=1)
+        // Multi-channel additive blend, same composite as MIP: colour scales with
+        // windowed intensity; alpha only marks coverage (pipeline blends src-alpha over).
+        var rgb = vec3f(0.0);
+        var peak: f32 = 0.0;
         let floatInvRange = 1.0 / max(uniforms.floatMax - uniforms.floatMin, 0.0001);
         for (var ch = 0u; ch < uniforms.numChannels; ch++) {
             let rawSample = sampleAtlasCh(ch, voxelPos, indirection, lodScale);
@@ -94,14 +90,10 @@ fn fs(@location(0) voxelPos: vec3f) -> @location(0) vec4f {
             let ww = max(uniforms.channelWindowWidth[ch], 0.0001);
             let intensity = clamp((raw - (wc - ww * 0.5)) / ww, 0.0, 1.0);
             let chColor = uniforms.channelColors[ch];
-            let weight = intensity * chColor.a;
-            weightedColor += chColor.rgb * weight;
-            totalWeight += weight;
+            rgb += chColor.rgb * intensity * chColor.a;
+            peak = max(peak, intensity * step(0.001, chColor.a));
         }
-        if (totalWeight > 0.001) {
-            weightedColor /= totalWeight;
-        }
-        return vec4f(weightedColor, step(0.001, totalWeight));
+        return vec4f(min(rgb, vec3f(1.0)), step(0.001, peak));
     } else {
         // Single channel: TF-based with windowing and float normalisation
         let rawDensity = sampleAtlas(voxelPos, indirection, lodScale);

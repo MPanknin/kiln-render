@@ -74,6 +74,8 @@ export interface VolumeMetadata {
   };
   /** Per-channel window/level metadata (optional, from OMERO or similar) */
   channelWindows?: Array<{ start: number; end: number; min: number; max: number } | undefined>;
+  /** Per-channel display hints from OMERO: label, colour (0–1 RGB) and whether shown by default */
+  channels?: Array<{ label?: string; color?: [number, number, number]; active: boolean }>;
   /** Number of channels in the volume (1 for single-channel, N for multi-channel) */
   numChannels: number;
   /** Whether source data is floating-point (float32/float64) */

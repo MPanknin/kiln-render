@@ -99,13 +99,13 @@ describe('Audit probes: assertions describe current behavior, not desired behavi
     expect(result.data[0]).toBe(99);
     console.log('PACKED_CHANNEL',JSON.stringify({actual:result.data[0],expected:99,requested:getChunk.mock.calls[0]}));
   });
-  it('shows fine empty markers retain already-loaded coarse data', () => {
+  it('FIXED: a fine empty marker supersedes a coarser mapping (was left at w=2)', () => {
     vi.stubGlobal('GPUTextureUsage',{TEXTURE_BINDING:4,COPY_DST:2});
     try {
       const d:any={createTexture:()=>({}),queue:{writeTexture:()=>{}}};
       const t:any=new IndirectionTable(d,new DatasetConfig([128,128,128]));
       t.setBrick(0,0,0,0,0,0,1);t.setEmpty(0,0,0,0);
-      expect(t.data[3]).toBe(2);
+      expect(t.data[3]).toBe(255);
       console.log('EMPTY_FINE',JSON.stringify({actualW:t.data[3],emptyW:255}));
     }finally{vi.unstubAllGlobals();}
   });

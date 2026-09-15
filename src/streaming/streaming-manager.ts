@@ -59,6 +59,7 @@ export interface StreamingStats {
   bricksCommitted: number;
   bricksCancelled: number;
   bricksDiscarded: number; // fetched but no longer desired (stale-on-arrival)
+  bricksFailed: number; // channel 0 load failed; left unloaded (never marked empty) and retried
   // End-to-end latency: dispatch → committed (rolling avg ms)
   avgBrickLatencyMs: number;
 }
@@ -138,6 +139,7 @@ export class StreamingManager {
   private bricksCommitted = 0;
   private bricksCancelled = 0;
   private bricksDiscarded = 0;
+  private bricksFailed = 0;
   private brickLatencyAvg = new RollingAvg();
   private dispatchTimestamps = new Map<string, number>();
 
@@ -180,6 +182,7 @@ export class StreamingManager {
     bricksCommitted: 0,
     bricksCancelled: 0,
     bricksDiscarded: 0,
+    bricksFailed: 0,
     avgBrickLatencyMs: 0,
   };
 
@@ -466,16 +469,12 @@ export class StreamingManager {
       }
     }
 
-    // Any base bricks that still failed after retry must not leave cells at w=0
-    // (unloaded → shader treats as invalid → permanent black hole). Mark them as
-    // empty so the shader cleanly skips them instead of rendering a broken hole.
+    // Bricks that still failed stay unloaded (w=0 renders as nothing, like empty) and
+    // are retried by the regular refinement path. Failure is not emptiness.
     const stillFailed = bricks.filter(b => !this.loadedBricks.has(b.key) && !this.emptyBricks.has(b.key));
     if (stillFailed.length > 0) {
-      console.error(`[Kiln] loadBaseLod: ${stillFailed.length} bricks permanently failed — marking empty to prevent holes`);
-      for (const { bx, by, bz, key } of stillFailed) {
-        this.emptyBricks.add(key);
-        this.resources.indirection.setEmpty(bx, by, bz, maxLod);
-      }
+      this.bricksFailed += stillFailed.length;
+      console.error(`[Kiln] loadBaseLod: ${stillFailed.length} bricks failed after retry — left unloaded`);
     }
 
     const now = performance.now();
@@ -676,6 +675,7 @@ export class StreamingManager {
       bricksCommitted: this.bricksCommitted,
       bricksCancelled: this.bricksCancelled,
       bricksDiscarded: this.bricksDiscarded,
+      bricksFailed: this.bricksFailed,
       avgBrickLatencyMs: this.brickLatencyAvg.value,
     };
   }
@@ -886,6 +886,7 @@ export class StreamingManager {
       bricksCommitted: 0,
       bricksCancelled: 0,
       bricksDiscarded: 0,
+      bricksFailed: 0,
       avgBrickLatencyMs: 0,
     };
   }
@@ -983,7 +984,10 @@ export class StreamingManager {
     if (signal.aborted) return;
 
     // ch0 mandatory; other channels degrade gracefully (retry re-fetches missing ones).
-    if (!channelResults[0]) return;
+    if (!channelResults[0]) {
+      this.bricksFailed++;
+      return;
+    }
 
     // Emptiness check via inline stats. Skipped for cache-served bricks
     // (sentinel stats would false-positive; cached bricks are already proven non-empty).

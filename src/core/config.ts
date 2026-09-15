@@ -76,6 +76,20 @@ function computeNormalizedSize(
   ];
 }
 
+/** Raw-stat threshold below which a brick is empty: ~0.15% of the dtype range (1 for 8-bit),
+ *  lowered to the smallest display-window start so windowed signal is never culled. */
+export function emptyBrickThresholdFor(
+  bitDepth: 8 | 16,
+  windows?: Array<{ start: number } | undefined>,
+  isFloat = false,
+): number {
+  const base = bitDepth === 8 ? 1 : 100;
+  if (isFloat || !windows) return base;
+  const starts = windows.filter((w): w is { start: number } => !!w).map(w => w.start);
+  if (starts.length === 0) return base;
+  return Math.max(1, Math.min(base, ...starts));
+}
+
 /**
  * Immutable value object describing dataset geometry.
  * Computed from VolumeMetadata and injected into subsystems at construction.

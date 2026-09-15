@@ -148,3 +148,19 @@ describe('IndirectionTable — clearBrick', () => {
     expect(cell(table, 0, 0, 0)).toEqual({ ax: 1, ay: 2, az: 3, w: 3 });
   });
 });
+
+describe('IndirectionTable — empty markers and LOD precedence', () => {
+  it('a finer empty marker supersedes a coarser mapping', () => {
+    table.setBrick(0, 0, 0, 1, 1, 1, 1);   // LOD 1 covers the 2×2×2 block at the finest grid
+    table.setEmpty(0, 0, 0, 0);            // LOD 0 cell inside it is empty
+    expect(cell(table, 0, 0, 0).w).toBe(255);
+    expect(cell(table, 1, 0, 0).w).toBe(2); // the rest of the coarse block is untouched
+  });
+
+  it('a coarser empty marker never clobbers finer data', () => {
+    table.setBrick(1, 0, 0, 4, 4, 4, 0);
+    table.setEmpty(0, 0, 0, 1);
+    expect(cell(table, 1, 0, 0)).toEqual({ ax: 4, ay: 4, az: 4, w: 1 });
+    expect(cell(table, 0, 0, 0).w).toBe(255);
+  });
+});

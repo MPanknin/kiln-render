@@ -433,3 +433,51 @@ describe('parseOmeMetadata — OMERO window', () => {
     expect(metadata.window).toBeUndefined();
   });
 });
+
+describe('parseOmeMetadata — OMERO windows (v0.4 and normalisation)', () => {
+  const provider = new TestProvider();
+  const simpleArr = [arr([64, 64, 64], [64, 64, 64])];
+
+  it('reads v0.4 top-level omero windows', () => {
+    const window = { start: 200, end: 3000, min: 0, max: 65535 };
+    const attrs = {
+      multiscales: [{ datasets: [{ path: '0' }], axes: ['z', 'y', 'x'] }],
+      omero: { channels: [{ window }] },
+    };
+    const { metadata } = provider.parse(attrs, simpleArr);
+    expect(metadata.window).toEqual(window);
+  });
+
+  it('normalises integer window min/max to the dtype range, keeping start/end raw', () => {
+    const attrs = {
+      multiscales: [{ datasets: [{ path: '0' }], axes: ['z', 'y', 'x'] }],
+      omero: { channels: [{ window: { start: 50, end: 900, min: 0, max: 4095 } }] },
+    };
+    const { metadata } = provider.parse(attrs, simpleArr);
+    expect(metadata.window).toEqual({ start: 50, end: 900, min: 0, max: 65535 });
+  });
+});
+
+describe('parseOmeMetadata — OMERO channel display hints', () => {
+  const provider = new TestProvider();
+  const attrs = {
+    multiscales: [{ datasets: [{ path: '0' }], axes: ['c', 'z', 'y', 'x'] }],
+    omero: {
+      channels: [
+        { label: 'DAPI', color: '00FFFF', active: true, window: { start: 1, end: 2, min: 0, max: 65535 } },
+        { label: 'TRANS', color: 'FFFFFF', active: false, window: { start: 1, end: 2, min: 0, max: 65535 } },
+        { window: { start: 1, end: 2, min: 0, max: 65535 } },
+      ],
+    },
+  };
+  const { metadata } = provider.parse(attrs, [arr([3, 64, 64, 64], [1, 64, 64, 64])]);
+
+  it('reads label, colour and active flag', () => {
+    expect(metadata.channels?.[0]).toEqual({ label: 'DAPI', color: [0, 1, 1], active: true });
+    expect(metadata.channels?.[1]).toEqual({ label: 'TRANS', color: [1, 1, 1], active: false });
+  });
+
+  it('defaults to active with no colour when hints are absent', () => {
+    expect(metadata.channels?.[2]).toEqual({ label: undefined, color: undefined, active: true });
+  });
+});

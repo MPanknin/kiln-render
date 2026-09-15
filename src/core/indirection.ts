@@ -132,11 +132,10 @@ export class IndirectionTable {
 
           const idx = (x + y * this.gridX + z * this.gridX * this.gridY) * 4;
 
-          // Never overwrite loaded data with the empty marker.
-          // Any cell with a real brick (w in 1..254) must keep its data —
-          // even coarser LOD fallback is better than marking the cell empty.
+          // Keep data that is as fine as or finer than this marker; a coarser
+          // fallback is superseded by the knowledge that the region is empty.
           const existingLod = this.data[idx + 3] ?? 0;
-          if (existingLod > 0 && existingLod < 255) {
+          if (existingLod > 0 && existingLod < 255 && existingLod - 1 <= lod) {
             continue;
           }
 

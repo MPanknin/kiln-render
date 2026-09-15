@@ -179,9 +179,10 @@ export class MultichannelUI {
             b: Math.round(
               (this.renderer.channelColors[base + 2] ?? defaults.b / 255) * 255,
             ),
-            a: this.renderer.channelColors[base + 3] ?? 1.0,
+            a: 1.0,
           },
-          visible: true,
+          // Alpha 0 means the engine hid the channel (OMERO active=false)
+          visible: (this.renderer.channelColors[base + 3] ?? 1.0) > 0,
           level: { min, max },
         });
         this.renderer.setChannelWindow(

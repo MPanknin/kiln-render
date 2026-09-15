@@ -11,7 +11,7 @@ import { Renderer, VolumeRenderMode } from './core/renderer.js';
 import { VolumeResources } from './core/volume-resources.js';
 import { TransferFunction, TFPreset } from './core/transfer-function.js';
 import { StreamingManager } from './streaming/streaming-manager.js';
-import { DatasetConfig, computeAtlasGrid } from './core/config.js';
+import { DatasetConfig, computeAtlasGrid, emptyBrickThresholdFor } from './core/config.js';
 import { detectBest16BitFormat } from './core/volume.js';
 import type { ViewParams } from './core/view.js';
 import type { DataProvider, VolumeMetadata } from './data/data-provider.js';
@@ -201,7 +201,10 @@ export class KilnEngine {
     }
 
     // Build DatasetConfig
-    const config = new DatasetConfig(metadata.dimensions, metadata.voxelSpacing);
+    const emptyThreshold = emptyBrickThresholdFor(
+      sourceBitDepth, metadata.channelWindows ?? (metadata.window ? [metadata.window] : undefined), metadata.isFloat,
+    );
+    const config = new DatasetConfig(metadata.dimensions, metadata.voxelSpacing, emptyThreshold);
 
     // Shrink the atlas grid with channel count so total atlas VRAM fits the
     // budget — a fixed 660³ × 4 channels (~2.3 GB) OOMs mobile GPUs at startup.
@@ -246,6 +249,15 @@ export class KilnEngine {
           renderer.setChannelWindow(ch, center, width);
         }
       }
+    }
+
+    // OMERO display hints: channel colour and default visibility (alpha 0 = hidden)
+    if (metadata.channels && metadata.numChannels > 1) {
+      metadata.channels.slice(0, 4).forEach((ch, i) => {
+        const base = i * 4;
+        const [r, g, b] = ch.color ?? [renderer.channelColors[base]!, renderer.channelColors[base + 1]!, renderer.channelColors[base + 2]!];
+        renderer.setChannelColor(i, r, g, b, ch.active ? 1 : 0);
+      });
     }
 
     // Pass float32 data range to renderer for GPU normalization.

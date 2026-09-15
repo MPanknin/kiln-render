@@ -88,15 +88,15 @@ describe('Audit probes: assertions describe current behavior, not desired behavi
     expect(bytes).toBeGreaterThan(128*2**20);
     console.log('BUDGET',JSON.stringify({...a,requestedMiB:128,actualMiB:bytes/2**20}));
   });
-  it('reproduces packed channel addressing using real local assembly', async () => {
+  it('FIXED: packed channel chunks address chunk 0 at the channel offset (was chunk 1, value 0)', async () => {
     const p:any=new LocalZarrDataProvider({name:'packed.zarr'} as any);
     p.metadata={name:'packed',dimensions:[1,1,1],brickSize:64,physicalBrickSize:66,maxLod:0,levels:[{lod:0,brickGrid:[1,1,1]}],bitDepth:8,numChannels:2};
-    p.lodParams=[{scaleX:1,scaleY:1,scaleZ:1,actualDimX:1,actualDimY:1,actualDimZ:1,csx:1,csy:1,csz:1,shapePrefixLength:1,channelAxisIdx:0}];
-    const getChunk=vi.fn(async (coords:number[])=>({shape:[2,1,1,1],data:coords[0]===0?new Uint8Array([11,99]):new Uint8Array([0,0])}));
+    p.lodParams=[{scaleX:1,scaleY:1,scaleZ:1,actualDimX:1,actualDimY:1,actualDimZ:1,csx:1,csy:1,csz:1,shapePrefixLength:1,channelAxisIdx:0,channelChunkSize:2}];
+    const getChunk=vi.fn(async (coords:number[])=>({shape:[2,1,1,1],stride:[1,1,1,1],data:coords[0]===0?new Uint8Array([11,99]):new Uint8Array([0,0])}));
     p.arrays=[{getChunk}];
     const result=await p.loadBrick(0,0,0,0,1);
-    expect(getChunk).toHaveBeenCalledWith([1,0,0,0]);
-    expect(result.data[0]).toBe(0);
+    expect(getChunk).toHaveBeenCalledWith([0,0,0,0]);
+    expect(result.data[0]).toBe(99);
     console.log('PACKED_CHANNEL',JSON.stringify({actual:result.data[0],expected:99,requested:getChunk.mock.calls[0]}));
   });
   it('shows fine empty markers retain already-loaded coarse data', () => {
@@ -109,17 +109,17 @@ describe('Audit probes: assertions describe current behavior, not desired behavi
       console.log('EMPTY_FINE',JSON.stringify({actualW:t.data[3],emptyW:255}));
     }finally{vi.unstubAllGlobals();}
   });
-  it('reproduces discarded native strides using a real Zarrita F-order array', async () => {
+  it('FIXED: native strides of a real Zarrita F-order array are honoured (was 100)', async () => {
     const store=new Map<string,Uint8Array>();const enc=new TextEncoder();
     store.set('/.zarray',enc.encode(JSON.stringify({zarr_format:2,shape:[2,2,2],chunks:[2,2,2],dtype:'|u1',compressor:null,fill_value:0,order:'F',filters:null})));
     store.set('/0.0.0',new Uint8Array([0,100,10,110,1,101,11,111]));
     const arr=await open(root(store),{kind:'array'});
     const p:any=new LocalZarrDataProvider({name:'f.zarr'} as any);
     p.metadata={name:'f',dimensions:[2,2,2],brickSize:64,physicalBrickSize:66,maxLod:0,levels:[{lod:0,brickGrid:[1,1,1]}],bitDepth:8,numChannels:1};
-    p.lodParams=[{scaleX:1,scaleY:1,scaleZ:1,actualDimX:2,actualDimY:2,actualDimZ:2,csx:2,csy:2,csz:2,shapePrefixLength:0,channelAxisIdx:-1}];p.arrays=[arr];
+    p.lodParams=[{scaleX:1,scaleY:1,scaleZ:1,actualDimX:2,actualDimY:2,actualDimZ:2,csx:2,csy:2,csz:2,shapePrefixLength:0,channelAxisIdx:-1,channelChunkSize:1}];p.arrays=[arr];
     const result=await p.loadBrick(0,0,0,0);
     const actual=result.data[1*66*66+1*66+2];
-    console.log('STRIDE',JSON.stringify({actual,expected:1}));expect(actual).toBe(100);
+    console.log('STRIDE',JSON.stringify({actual,expected:1}));expect(actual).toBe(1);
   });
   it('reproduces concurrent duplicate binary index requests', async () => {
     const p:any=new ShardedDataProvider('https://fixture.invalid');

@@ -45,6 +45,8 @@ export interface LodParams {
   shapePrefixLength: number;
   /** Index of the channel axis within the full shape array (-1 if no channel axis). */
   channelAxisIdx: number;
+  /** Channels stored per chunk along the channel axis (1 if none). */
+  channelChunkSize: number;
 }
 
 /** Detect the compression codec from zarr v2 (.zarray) or v3 (zarr.json) metadata. */
@@ -255,9 +257,6 @@ export abstract class BaseZarrProvider implements DataProvider {
     ];
 
     const lodParams: LodParams[] = [];
-    // Chunk size along the channel axis per LOD — diagnostic-only (see P1
-    // below), not part of LodParams since workers don't need it.
-    const cChunkSizes: number[] = [];
     const levels: LodLevel[] = arrays.map((arr, i) => {
       const shape = arr.shape;
       const actualDimX = shape[shape.length - 1]!;
@@ -270,9 +269,6 @@ export abstract class BaseZarrProvider implements DataProvider {
 
       const chunkShape = arr.chunks;
       const shapePrefixLength = shape.length - 3;
-      cChunkSizes.push(
-        channelAxisIdx >= 0 && channelAxisIdx < shapePrefixLength ? (chunkShape[channelAxisIdx] ?? 1) : 1,
-      );
       lodParams.push({
         scaleX: actualDimX / virtualDimX,
         scaleY: actualDimY / virtualDimY,
@@ -285,6 +281,7 @@ export abstract class BaseZarrProvider implements DataProvider {
         csz: chunkShape[chunkShape.length - 3]!,
         shapePrefixLength,
         channelAxisIdx,
+        channelChunkSize: channelAxisIdx >= 0 && channelAxisIdx < shapePrefixLength ? (chunkShape[channelAxisIdx] ?? 1) : 1,
       });
 
       const brickGrid: [number, number, number] = [
@@ -349,19 +346,6 @@ export abstract class BaseZarrProvider implements DataProvider {
           `[Kiln] LOD 0 fanout×channels = ${fanout * numChannels} — each brick may require this many ` +
           `chunk fetches. If load times are a problem, consider re-chunking the source dataset to ` +
           `≥64 per axis (or Zarr v3 sharding).`,
-        );
-      }
-      // B3 (latent correctness bug): chunk-coordinate math assumes channel
-      // chunk size 1 (prefix[channelAxisIdx] = channelIndex). If a chunk packs
-      // more than one channel, this reads the wrong voxels for channels
-      // beyond the first in each chunk — silently, with no error thrown.
-      const cChunkSize = cChunkSizes[lod] ?? 1;
-      if (cChunkSize > 1) {
-        console.error(
-          `[Kiln] LOD ${lod}: channel chunk size is ${cChunkSize} (>1) — this dataset packs multiple ` +
-          `channels per chunk. Kiln's chunk-coordinate calculation assumes channel chunk size 1 and ` +
-          `will read the WRONG voxels for channels beyond the first in each chunk. Do not trust ` +
-          `rendered output for non-first channels on this dataset (known limitation, audit bug B3).`,
         );
       }
     });

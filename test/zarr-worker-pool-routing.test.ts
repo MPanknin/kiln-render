@@ -9,7 +9,7 @@ const LOD_PARAMS = [{
   scaleX: 1, scaleY: 1, scaleZ: 1,
   actualDimX: 512, actualDimY: 512, actualDimZ: 512,
   csx: 64, csy: 64, csz: 64,
-  shapePrefixLength: 1, channelAxisIdx: 0,
+  shapePrefixLength: 1, channelAxisIdx: 0, channelChunkSize: 1,
 }];
 
 /** The current (post-fix) hash, copied verbatim — NOT imported — so a
@@ -73,7 +73,7 @@ describe('ZarrWorkerPool — routing hash fix + channel-aware routing', () => {
       scaleX: 1, scaleY: 1, scaleZ: 1,
       actualDimX: 2048, actualDimY: 2048, actualDimZ: 25,
       csx: 2048, csy: 2048, csz: 1,
-      shapePrefixLength: 1, channelAxisIdx: 0,
+      shapePrefixLength: 1, channelAxisIdx: 0, channelChunkSize: 1,
     }];
     const pool = new ZarrWorkerPool(8);
     (pool as any).lodParams = FLAT_LOD_PARAMS;

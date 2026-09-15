@@ -243,3 +243,39 @@ describe('validateZarrSupport', () => {
     warnSpy.mockRestore();
   });
 });
+
+describe('validateZarrSupport — spatial layout', () => {
+  const ms = (axes: unknown) => ({ datasets: [{ path: '0' }], axes });
+
+  it('accepts [t, c, z, y, x] with spatial axes last', () => {
+    expect(validateZarrSupport(ms(['t', 'c', 'z', 'y', 'x']), [1, 2, 64, 64, 64], 'uint16')).toEqual([]);
+  });
+
+  it('accepts a 4-d array without axes metadata (legacy: prefix assumed non-spatial)', () => {
+    expect(validateZarrSupport(ms(undefined), [2, 64, 64, 64], 'uint8')).toEqual([]);
+  });
+
+  it('rejects a 2-d channel image', () => {
+    const reasons = validateZarrSupport(ms(['c', 'y', 'x']), [3, 512, 512], 'uint8');
+    expect(reasons.join()).toMatch(/3 spatial axes, found 2/);
+  });
+
+  it('rejects x, y, z order', () => {
+    const reasons = validateZarrSupport(ms(['x', 'y', 'z']), [64, 64, 64], 'uint8');
+    expect(reasons.join()).toMatch(/expected z, y, x/);
+  });
+
+  it('rejects a spatial axis in the prefix', () => {
+    const reasons = validateZarrSupport(ms(['z', 'c', 'y', 'x']), [64, 2, 64, 64], 'uint8');
+    expect(reasons.join()).toMatch(/last three/);
+  });
+
+  it('rejects axes metadata that does not match the array rank', () => {
+    const reasons = validateZarrSupport(ms(['z', 'y', 'x']), [2, 64, 64, 64], 'uint8');
+    expect(reasons.join()).toMatch(/lists 3 axes but the array has 4/);
+  });
+
+  it('rejects arrays with fewer than 3 dimensions', () => {
+    expect(validateZarrSupport(ms(undefined), [512, 512], 'uint8').join()).toMatch(/at least 3/);
+  });
+});

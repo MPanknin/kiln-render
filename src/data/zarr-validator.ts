@@ -54,6 +54,23 @@ export function extractMultiscales(attrs: Record<string, unknown>): MultiscalesE
   );
 }
 
+/** Assembly indexes the last three array dims as [z, y, x]; reject layouts that do not match. */
+function validateSpatialLayout(axes: NormalizedAxis[], axesProvided: boolean, rank: number): string[] {
+  if (rank < 3) return [`Array has ${rank} dimensions — a volume needs at least 3`];
+  if (!axesProvided) return [];
+  if (axes.length !== rank) return [`Axes metadata lists ${axes.length} axes but the array has ${rank} dimensions`];
+
+  const spatial = axes.map((a, i) => ({ ...a, i })).filter(a => a.type === 'space');
+  if (spatial.length !== 3) return [`Expected 3 spatial axes, found ${spatial.length}`];
+  if (spatial.some((a, k) => a.i !== rank - 3 + k)) return ['Spatial axes must be the last three array dimensions (…, z, y, x)'];
+
+  const names = spatial.map(a => a.name.toLowerCase());
+  if (names.every(n => 'xyz'.includes(n)) && names.join('') !== 'zyx') {
+    return [`Spatial axis order "${names.join(', ')}" is not supported (expected z, y, x)`];
+  }
+  return [];
+}
+
 /**
  * Validate whether a dataset is supported.
  * Returns a list of human-readable reasons; empty array means fully supported.
@@ -65,6 +82,7 @@ export function validateZarrSupport(
 ): string[] {
   const reasons: string[] = [];
   const axes = normalizeAxes(ms.axes);
+  reasons.push(...validateSpatialLayout(axes, Array.isArray(ms.axes) && ms.axes.length > 0, firstArrayShape.length));
 
   if (ms.version && ms.version !== '0.5') {
     console.warn(`[Kiln] OME-NGFF version "${ms.version}" detected — parsing best-effort`);

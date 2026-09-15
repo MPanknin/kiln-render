@@ -4,6 +4,8 @@ import {
   estimateBrickChunkFanout,
   estimateDatasetFanoutMultiplier,
   clampedLutEntry,
+  chunkCoords,
+  chunkLayout,
   type LodChunkParams,
   type ChunkRange,
 } from '../src/data/chunk-math.js';
@@ -247,5 +249,34 @@ describe('clampedLutEntry (data-integrity fix)', () => {
     expect(above.chunkIdx).toBe(15); // clamped to maxC=20 → 20-5=15
     expect(above.offset).toBeGreaterThanOrEqual(0);
     expect(above.offset).toBeLessThan(10);
+  });
+});
+
+describe('chunkCoords / chunkLayout (storage order and packed channels)', () => {
+  it('chunk coordinate on the channel axis is channel / channelChunkSize', () => {
+    expect(chunkCoords(2, 1, 1, 3, 4, 5, 6)).toEqual([0, 3, 4, 5, 6]);
+    expect(chunkCoords(2, 1, 2, 3, 4, 5, 6)).toEqual([0, 1, 4, 5, 6]);
+    expect(chunkCoords(0, -1, 1, 0, 4, 5, 6)).toEqual([4, 5, 6]);
+  });
+
+  it('C-order chunk without explicit strides: x=1, y=w, z=w·h, base 0', () => {
+    const l = chunkLayout({ shape: [4, 8, 16] }, -1, 1, 0);
+    expect(l).toEqual({ base: 0, strideX: 1, strideY: 16, strideZ: 128 });
+  });
+
+  it('F-order strides are taken from the chunk, not derived from its shape', () => {
+    const l = chunkLayout({ shape: [4, 8, 16], stride: [1, 4, 32] }, -1, 1, 0);
+    expect(l).toEqual({ base: 0, strideX: 32, strideY: 4, strideZ: 1 });
+  });
+
+  it('packed channels: base offset is (channel mod chunkSize) × channel stride', () => {
+    const shape = [2, 4, 8, 16]; // [c, z, y, x], C order → channel stride 512
+    expect(chunkLayout({ shape }, 0, 2, 0).base).toBe(0);
+    expect(chunkLayout({ shape }, 0, 2, 1).base).toBe(512);
+    expect(chunkLayout({ shape }, 0, 2, 3).base).toBe(512); // channel 3 lives in chunk 1 at offset 1
+  });
+
+  it('unpacked channel chunks never add a base offset', () => {
+    expect(chunkLayout({ shape: [1, 4, 8, 16] }, 0, 1, 3).base).toBe(0);
   });
 });

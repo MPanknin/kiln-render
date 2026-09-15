@@ -11,7 +11,7 @@ import zstd from 'numcodecs/zstd';
 import { TolerantFetchStore } from './tolerant-fetch-store.js';
 import { float32ToFloat16Bits, getUint16ToFloat16Lut } from '../utils/float16.js';
 import { SharedFetchRegistry } from './shared-fetch.js';
-import { computeBrickChunkFootprint, clampedLutEntry } from './chunk-math.js';
+import { computeBrickChunkFootprint, clampedLutEntry, chunkCoords, chunkLayout } from './chunk-math.js';
 
 // Static codec imports — zarrita's dynamic imports fail in Vite dev workers.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -43,6 +43,7 @@ export interface ZarrWorkerRequest {
     csx: number; csy: number; csz: number;
     shapePrefixLength: number;
     channelAxisIdx: number;
+    channelChunkSize: number;
   }[];
   /** Channel index to load (for datasets with a channel axis) */
   channelIndex?: number;
@@ -124,7 +125,8 @@ let dynamicCacheBudget = false; // ?p3=1
 let refcountedAborts = false; // ?p4=1
 
 // Per-worker chunk cache (LRU, bounded by byte count to prevent OOM)
-const chunkCache = new Map<string, { data: ArrayLike<number>; shape: number[]; bytes: number }>();
+interface DecodedChunk { data: ArrayLike<number>; shape: number[]; stride: number[] }
+const chunkCache = new Map<string, DecodedChunk & { bytes: number }>();
 let cacheBytes = 0;
 let largestChunkBytes = 0;
 const FIXED_CACHE_BYTES = 32 * 1024 * 1024; // 32 MB per worker — the ?p3=1 control value
@@ -142,11 +144,11 @@ function cacheBudgetBytes(): number {
 // Used only when refcountedAborts (?p4=1) is OFF — see fetchChunkShared/sharedFetches
 // for the ON path. Kept as a separate map (rather than reusing one for both) so the
 // control path is byte-for-byte unchanged regardless of the flag.
-const inflightFetches = new Map<string, Promise<{ data: ArrayLike<number>; shape: number[] }>>();
+const inflightFetches = new Map<string, Promise<DecodedChunk>>();
 
 // ?p4=1 only — see fetchChunkShared / SharedFetchRegistry (shared-fetch.ts)
 // for the concurrency/abort semantics this fixes (bug B4).
-const sharedFetches = new SharedFetchRegistry<{ data: ArrayLike<number>; shape: number[] }>();
+const sharedFetches = new SharedFetchRegistry<DecodedChunk>();
 
 /** Refcounted chunk fetch (?p4=1) — the zarr-specific fetch + cache wrapper around SharedFetchRegistry. */
 function fetchChunkShared(
@@ -154,16 +156,20 @@ function fetchChunkShared(
   coords: number[],
   key: string,
   signal?: AbortSignal,
-): Promise<{ data: ArrayLike<number>; shape: number[] }> {
+): Promise<DecodedChunk> {
   return sharedFetches.run(
     key,
     (fetchSignal) => arr.getChunk(coords, { signal: fetchSignal } as RequestInit).then(chunk => {
-      const result = { data: chunk.data as unknown as ArrayLike<number>, shape: chunk.shape };
-      cacheSet(key, result.data, result.shape);
-      return result;
+      const entry = toDecodedChunk(chunk);
+      cacheSet(key, entry);
+      return entry;
     }),
     signal,
   );
+}
+
+function toDecodedChunk(chunk: { data: unknown; shape: number[]; stride: number[] }): DecodedChunk {
+  return { data: chunk.data as ArrayLike<number>, shape: chunk.shape, stride: chunk.stride };
 }
 
 // Store reference
@@ -173,8 +179,9 @@ let workerStore: TolerantFetchStore | null = null;
 const cancelledRequests = new Set<number>();
 const activeControllers = new Map<number, AbortController>();
 
-function cacheKey(lod: number, cz: number, cy: number, cx: number, channelIndex: number): string {
-  return `${lod}:ch${channelIndex}:${cz}/${cy}/${cx}`;
+/** Keyed by the channel *chunk* coordinate so packed channels share one decoded chunk. */
+function cacheKey(lod: number, cz: number, cy: number, cx: number, channelChunk: number): string {
+  return `${lod}:ch${channelChunk}:${cz}/${cy}/${cx}`;
 }
 
 function estimateBytes(data: ArrayLike<number>): number {
@@ -185,8 +192,8 @@ function estimateBytes(data: ArrayLike<number>): number {
   return data.length * (is16bit ? 2 : 1); // fallback estimate
 }
 
-function cacheSet(key: string, data: ArrayLike<number>, shape: number[]): void {
-  const bytes = estimateBytes(data);
+function cacheSet(key: string, entry: DecodedChunk): void {
+  const bytes = estimateBytes(entry.data);
   if (bytes > largestChunkBytes) largestChunkBytes = bytes;
   if (chunkCache.has(key)) {
     cacheBytes -= chunkCache.get(key)!.bytes;
@@ -198,7 +205,7 @@ function cacheSet(key: string, data: ArrayLike<number>, shape: number[]): void {
     cacheBytes -= chunkCache.get(oldest)!.bytes;
     chunkCache.delete(oldest);
   }
-  chunkCache.set(key, { data, shape, bytes });
+  chunkCache.set(key, { ...entry, bytes });
   cacheBytes += bytes;
 }
 
@@ -336,8 +343,9 @@ async function assembleBrick(
 ): Promise<{ buffer: ArrayBuffer; min: number; max: number; avg: number; rawMin?: number; rawMax?: number; fetchMs: number; assemblyMs: number; chunkHits: number; chunkTotal: number }> {
   const arr = arrays[lod]!;
   const params = lodParams![lod]!;
-  const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx } = params;
+  const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx, channelChunkSize } = params;
   const physSize = PHYSICAL_SIZE;
+  const channelChunk = Math.floor(channelIndex / channelChunkSize);
 
   // Virtual brick voxel range (in uniformly downsampled space) and which
   // Zarr chunks overlap it.
@@ -356,15 +364,19 @@ async function assembleBrick(
   const ncy = maxCy - minCy + 1;
   const chunkCount = ncx * ncy * (maxCz - minCz + 1);
   const chunkDataArr: (ArrayLike<number> | null)[] = new Array(chunkCount).fill(null);
-  const chunkW = new Int32Array(chunkCount);  // per-chunk width (stride for Y)
-  const chunkWH = new Int32Array(chunkCount); // per-chunk W*H (stride for Z)
+  // Per-chunk flat-index layout: real strides plus packed-channel base offset
+  const chunkBase = new Int32Array(chunkCount);
+  const chunkStX = new Int32Array(chunkCount);
+  const chunkStY = new Int32Array(chunkCount);
+  const chunkStZ = new Int32Array(chunkCount);
 
-  const setChunkEntry = (fi: number, data: ArrayLike<number>, shape: number[]) => {
-    chunkDataArr[fi] = data;
-    const w = shape[shape.length - 1]!;
-    const h = shape[shape.length - 2]!;
-    chunkW[fi] = w;
-    chunkWH[fi] = w * h;
+  const setChunkEntry = (fi: number, entry: DecodedChunk) => {
+    chunkDataArr[fi] = entry.data;
+    const layout = chunkLayout(entry, channelAxisIdx, channelChunkSize, channelIndex);
+    chunkBase[fi] = layout.base;
+    chunkStX[fi] = layout.strideX;
+    chunkStY[fi] = layout.strideY;
+    chunkStZ[fi] = layout.strideZ;
   };
 
   let chunkHits = 0;
@@ -373,27 +385,21 @@ async function assembleBrick(
     for (let cy = minCy; cy <= maxCy; cy++) {
       for (let cx = minCx; cx <= maxCx; cx++) {
         const fi = (cz - minCz) * ncy * ncx + (cy - minCy) * ncx + (cx - minCx);
-        const key = cacheKey(lod, cz, cy, cx, channelIndex);
+        const key = cacheKey(lod, cz, cy, cx, channelChunk);
         const cached = chunkCache.get(key);
         if (cached) {
           // refresh recency: delete+re-set moves to end of map iteration order (LRU)
           chunkCache.delete(key);
           chunkCache.set(key, cached);
-          setChunkEntry(fi, cached.data, cached.shape);
+          setChunkEntry(fi, cached);
           chunkHits++;
         } else {
-          const prefix = new Array(shapePrefixLength).fill(0);
-          if (channelAxisIdx >= 0 && channelAxisIdx < shapePrefixLength) {
-            prefix[channelAxisIdx] = channelIndex;
-          }
-          const coords = [...prefix, cz, cy, cx];
+          const coords = chunkCoords(shapePrefixLength, channelAxisIdx, channelChunkSize, channelIndex, cz, cy, cx);
 
           if (refcountedAborts) {
             // ?p4=1 — see fetchChunkShared.
             fetchPromises.push(
-              fetchChunkShared(arr, coords, key, signal).then(entry => {
-                setChunkEntry(fi, entry.data, entry.shape);
-              }),
+              fetchChunkShared(arr, coords, key, signal).then(entry => setChunkEntry(fi, entry)),
             );
           } else {
             // Control (?p4 off) — original in-flight dedup, unchanged. If
@@ -402,8 +408,8 @@ async function assembleBrick(
             let chunkPromise = inflightFetches.get(key);
             if (!chunkPromise) {
               chunkPromise = arr.getChunk(coords, { signal } as RequestInit).then(chunk => {
-                const entry = { data: chunk.data as unknown as ArrayLike<number>, shape: chunk.shape };
-                cacheSet(key, entry.data, entry.shape);
+                const entry = toDecodedChunk(chunk);
+                cacheSet(key, entry);
                 return entry;
               }).finally(() => {
                 inflightFetches.delete(key);
@@ -411,20 +417,20 @@ async function assembleBrick(
               inflightFetches.set(key, chunkPromise);
             }
             fetchPromises.push(chunkPromise.then(entry => {
-              setChunkEntry(fi, entry.data, entry.shape);
+              setChunkEntry(fi, entry);
             }).catch(e => {
               // Dedup conflict: the shared fetch was aborted by another brick's
               // signal, but this brick is still active. Retry with our own signal.
               if (e instanceof DOMException && e.name === 'AbortError' && !signal?.aborted) {
                 const cached = chunkCache.get(key);
                 if (cached) {
-                  setChunkEntry(fi, cached.data, cached.shape);
+                  setChunkEntry(fi, cached);
                   return;
                 }
                 return arr.getChunk(coords, { signal } as RequestInit).then(chunk => {
-                  const entry = { data: chunk.data as unknown as ArrayLike<number>, shape: chunk.shape };
-                  cacheSet(key, entry.data, entry.shape);
-                  setChunkEntry(fi, entry.data, entry.shape);
+                  const entry = toDecodedChunk(chunk);
+                  cacheSet(key, entry);
+                  setChunkEntry(fi, entry);
                 });
               }
               throw e;
@@ -505,7 +511,7 @@ async function assembleBrick(
         const fi = yzBase + lutChunkX[lx]!;
         const data = chunkDataArr[fi];
         if (data) {
-          const idx = lcz * chunkWH[fi]! + lcy * chunkW[fi]! + lutOffX[lx]!;
+          const idx = chunkBase[fi]! + lcz * chunkStZ[fi]! + lcy * chunkStY[fi]! + lutOffX[lx]! * chunkStX[fi]!;
           const raw = data[idx]!;
 
           let brickVal: number;

@@ -12,7 +12,7 @@ import type { VolumeMetadata, BrickData, BrickLoadResult, BrickStats, PipelineTi
 import { UnsupportedDatasetError } from './data-provider.js';
 import { extractMultiscales } from './zarr-validator.js';
 import { RollingAvg } from './network-tracker.js';
-import { clampedLutEntry, computeBrickChunkFootprint } from './chunk-math.js';
+import { clampedLutEntry, computeBrickChunkFootprint, chunkCoords, chunkLayout } from './chunk-math.js';
 
 export class LocalZarrDataProvider extends BaseZarrProvider {
   private dirHandle: FileSystemDirectoryHandle;
@@ -134,7 +134,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
   private async assembleBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0): Promise<{ data: BrickData; stats: BrickStats; rawMin?: number; rawMax?: number }> {
     const arr = this.arrays[lod]!;
     const params = this.lodParams[lod]!;
-    const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx } = params;
+    const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx, channelChunkSize } = params;
     const physSize = this.metadata!.physicalBrickSize;
     const logicalSize = this.metadata!.brickSize;
 
@@ -159,26 +159,26 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     const ncy = maxCy - minCy + 1;
     const chunkCount = ncx * ncy * (maxCz - minCz + 1);
     const chunkDataArr: (ArrayLike<number> | null)[] = new Array(chunkCount).fill(null);
-    const chunkStY = new Int32Array(chunkCount);  // per-chunk width (stride for Y)
-    const chunkStZ = new Int32Array(chunkCount);  // per-chunk W*H (stride for Z)
+    // Per-chunk flat-index layout: real strides plus packed-channel base offset
+    const chunkBase = new Int32Array(chunkCount);
+    const chunkStX = new Int32Array(chunkCount);
+    const chunkStY = new Int32Array(chunkCount);
+    const chunkStZ = new Int32Array(chunkCount);
 
     const chunkFetches: Promise<void>[] = [];
     for (let cz = minCz; cz <= maxCz; cz++) {
       for (let cy = minCy; cy <= maxCy; cy++) {
         for (let cx = minCx; cx <= maxCx; cx++) {
           const fi = (cz - minCz) * ncy * ncx + (cy - minCy) * ncx + (cx - minCx);
-          const prefix = new Array(shapePrefixLength).fill(0);
-          if (channelAxisIdx >= 0 && channelAxisIdx < shapePrefixLength) {
-            prefix[channelAxisIdx] = channelIndex;
-          }
+          const coords = chunkCoords(shapePrefixLength, channelAxisIdx, channelChunkSize, channelIndex, cz, cy, cx);
           chunkFetches.push(
-            arr.getChunk([...prefix, cz, cy, cx]).then(chunk => {
-              const data = chunk.data as unknown as ArrayLike<number>;
-              const w = chunk.shape[chunk.shape.length - 1]!;
-              const h = chunk.shape[chunk.shape.length - 2]!;
-              chunkDataArr[fi] = data;
-              chunkStY[fi] = w;
-              chunkStZ[fi] = w * h;
+            arr.getChunk(coords).then(chunk => {
+              chunkDataArr[fi] = chunk.data as unknown as ArrayLike<number>;
+              const layout = chunkLayout(chunk, channelAxisIdx, channelChunkSize, channelIndex);
+              chunkBase[fi] = layout.base;
+              chunkStX[fi] = layout.strideX;
+              chunkStY[fi] = layout.strideY;
+              chunkStZ[fi] = layout.strideZ;
             })
           );
         }
@@ -250,7 +250,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
           const fi = yzBase + lutChunkX[lx]!;
           const data = chunkDataArr[fi];
           if (data) {
-            const idx = lcz * chunkStZ[fi]! + lcy * chunkStY[fi]! + lutOffX[lx]!;
+            const idx = chunkBase[fi]! + lcz * chunkStZ[fi]! + lcy * chunkStY[fi]! + lutOffX[lx]! * chunkStX[fi]!;
             const raw = data[idx]!;
 
             let brickVal: number;

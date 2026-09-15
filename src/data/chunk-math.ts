@@ -93,6 +93,52 @@ export function estimateDatasetFanoutMultiplier(lodParamsList: LodChunkParams[],
   return Math.max(1, ...lodParamsList.map(p => estimateBrickChunkFanout(p, physSize)));
 }
 
+/** Zarr chunk coordinates for `channel`; non-spatial prefix axes other than channel are pinned to 0. */
+export function chunkCoords(
+  prefixLength: number, channelAxisIdx: number, channelChunkSize: number,
+  channel: number, cz: number, cy: number, cx: number,
+): number[] {
+  const prefix = new Array<number>(prefixLength).fill(0);
+  if (channelAxisIdx >= 0 && channelAxisIdx < prefixLength) {
+    prefix[channelAxisIdx] = Math.floor(channel / channelChunkSize);
+  }
+  return [...prefix, cz, cy, cx];
+}
+
+/** Flat-index layout of a decoded chunk, valid for C, F and transposed storage orders. */
+export interface ChunkLayout {
+  /** Offset of `channel` inside a chunk that packs several channels (0 otherwise). */
+  base: number;
+  strideX: number;
+  strideY: number;
+  strideZ: number;
+}
+
+export function chunkLayout(
+  chunk: { shape: number[]; stride?: number[] },
+  channelAxisIdx: number, channelChunkSize: number, channel: number,
+): ChunkLayout {
+  const n = chunk.shape.length;
+  const stride = chunk.stride ?? cOrderStrides(chunk.shape);
+  const packedIdx = channelAxisIdx >= 0 && channelChunkSize > 1 ? channel % channelChunkSize : 0;
+  return {
+    base: packedIdx * (stride[channelAxisIdx] ?? 0),
+    strideX: stride[n - 1]!,
+    strideY: stride[n - 2]!,
+    strideZ: stride[n - 3]!,
+  };
+}
+
+function cOrderStrides(shape: number[]): number[] {
+  const strides = new Array<number>(shape.length);
+  let acc = 1;
+  for (let i = shape.length - 1; i >= 0; i--) {
+    strides[i] = acc;
+    acc *= shape[i]!;
+  }
+  return strides;
+}
+
 /** One axis of the assembly LUT: the footprint bounds maxC via FLOOR but
  *  per-voxel assembly ROUNDs, so the index can land outside [minC, maxC] on
  *  non-integer scales — clamp it into range. */

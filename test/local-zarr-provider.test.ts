@@ -32,6 +32,7 @@ describe('LocalZarrDataProvider', () => {
       csz: 1,
       shapePrefixLength: 0,
       channelAxisIdx: -1,
+      channelChunkSize: 1,
     }];
     (provider as any).arrays = [{ getChunk }];
 

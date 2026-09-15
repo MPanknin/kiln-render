@@ -146,4 +146,14 @@ export class DatasetConfig {
     const fine = this.levelExponent(fineLod);
     return coarse.map((e, a) => 1 << (e - fine[a]!)) as Vec3;
   }
+
+  /** Shader table: finest voxels per level voxel, one vec4 per LOD (w unused), `maxLevels` entries. */
+  lodScaleTable(maxLevels: number): Float32Array {
+    const table = new Float32Array(maxLevels * 4);
+    for (let lod = 0; lod < maxLevels; lod++) {
+      const span = this.levelSpanCells(lod);
+      table.set([span[0], span[1], span[2], 0], lod * 4);
+    }
+    return table;
+  }
 }

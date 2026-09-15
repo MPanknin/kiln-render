@@ -144,3 +144,15 @@ describe('StreamingManager traversal with a per-axis level model', () => {
     expect([...zs].every(z => z === 0 || z === 1)).toBe(true);
   });
 });
+
+describe('DatasetConfig.lodScaleTable', () => {
+  it('legacy: 2^lod on every axis, padded to the table length', () => {
+    const t = legacyConfig().lodScaleTable(4);
+    expect(Array.from(t)).toEqual([1, 1, 1, 0, 2, 2, 2, 0, 4, 4, 4, 0, 8, 8, 8, 0]);
+  });
+
+  it('native: per-axis spans, with 1 on the axis that keeps native resolution', () => {
+    const t = nativeConfig().lodScaleTable(2);
+    expect(Array.from(t)).toEqual([1, 1, 1, 0, 2, 2, 1, 0]);
+  });
+});

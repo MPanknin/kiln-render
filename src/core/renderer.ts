@@ -8,7 +8,7 @@ import { createBox, createAxis } from '../utils/geometry.js';
 import { TransferFunction } from './transfer-function.js';
 import { VolumeResources } from './volume-resources.js';
 import { wireframeShader, axisShader, buildComputeShader, blitShader, accumulateShader, buildSlicePlanesShader } from '../shaders/index.js';
-import { COMPUTE_UNIFORMS, SLICE_UNIFORMS } from '../shaders/uniform-layout.js';
+import { COMPUTE_UNIFORMS, SLICE_UNIFORMS, MAX_LOD_LEVELS } from '../shaders/uniform-layout.js';
 import type { DatasetConfig } from './config.js';
 
 // Volume render mode (shader-side)
@@ -176,6 +176,11 @@ export class Renderer {
     this.device = device;
     this.config = config;
     this.resources = resources;
+
+    // Per-level voxel scale table is static for the dataset; both uniform structs carry it
+    const lodScales = config.lodScaleTable(MAX_LOD_LEVELS);
+    this.computeUniformScratch.set(lodScales, COMPUTE_UNIFORMS.offsets.lodScales / 4);
+    this.sliceUniformScratch.set(lodScales, SLICE_UNIFORMS.offsets.lodScales / 4);
 
     // Create geometry (normalized proxy based on dataset aspect ratio)
     const box = createBox(config.normalizedSize);

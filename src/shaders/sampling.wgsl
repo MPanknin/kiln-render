@@ -5,15 +5,14 @@ fn lookupIndirection(brickIndex: vec3f) -> vec4u {
     return textureLoad(indirectionTexture, vec3i(brickIndex), 0);
 }
 
-// Get the scale factor for a LOD level
-fn getLodScale(indirection: vec4u) -> f32 {
+// Per-axis finest-voxels-per-level-voxel for a LOD, from the uniform table
+fn getLodScale(indirection: vec4u) -> vec3f {
     // w channel stores lod+1 (0 = not loaded, 1+ = lod level, 255 = empty)
-    let lodLevel = f32(indirection.w) - 1.0;
-    return exp2(lodLevel);
+    return uniforms.lodScales[indirection.w - 1u].xyz;
 }
 
 // Sample from the atlas texture using indirection mapping
-fn sampleAtlas(voxelPos: vec3f, indirection: vec4u, lodScale: f32) -> f32 {
+fn sampleAtlas(voxelPos: vec3f, indirection: vec4u, lodScale: vec3f) -> f32 {
     // Position within the logical brick [0, LOGICAL_BRICK_SIZE)
     let posInBrick = (voxelPos % (LOGICAL_BRICK_SIZE * lodScale)) / lodScale;
     // Compute atlas base from integer slot indices (exact, no precision loss)
@@ -27,7 +26,7 @@ fn sampleAtlas(voxelPos: vec3f, indirection: vec4u, lodScale: f32) -> f32 {
 }
 
 // Sample from a specific channel atlas using the shared indirection mapping
-fn sampleAtlasCh(ch: u32, voxelPos: vec3f, indirection: vec4u, lodScale: f32) -> f32 {
+fn sampleAtlasCh(ch: u32, voxelPos: vec3f, indirection: vec4u, lodScale: vec3f) -> f32 {
     let posInBrick = (voxelPos % (LOGICAL_BRICK_SIZE * lodScale)) / lodScale;
     let atlasBase = vec3f(indirection.xyz) * PHYSICAL_BRICK_SIZE / ATLAS_SIZE;
     let atlasPos = atlasBase + ((posInBrick + BORDER) / ATLAS_SIZE);
@@ -41,13 +40,13 @@ fn sampleAtlasCh(ch: u32, voxelPos: vec3f, indirection: vec4u, lodScale: f32) ->
 
 // hot-path atlas sampling using precomputed affine transform
 // atlasOffset and atlasScale are computed once per brick in setupBrick
-fn sampleAtlasAffine(voxelPos: vec3f, atlasOffset: vec3f, atlasScale: f32) -> f32 {
+fn sampleAtlasAffine(voxelPos: vec3f, atlasOffset: vec3f, atlasScale: vec3f) -> f32 {
     let atlasPos = atlasOffset + voxelPos * atlasScale;
     return textureSampleLevel(volumeTexture, volumeSampler, atlasPos, 0.0).r;
 }
 
 // multi-channel variant of the affine hot-path sampler.
-fn sampleAtlasChAffine(ch: u32, voxelPos: vec3f, atlasOffset: vec3f, atlasScale: f32) -> f32 {
+fn sampleAtlasChAffine(ch: u32, voxelPos: vec3f, atlasOffset: vec3f, atlasScale: vec3f) -> f32 {
     let atlasPos = atlasOffset + voxelPos * atlasScale;
     switch (ch) {
         case 0u: { return textureSampleLevel(volumeTexture,  volumeSampler, atlasPos, 0.0).r; }
@@ -79,7 +78,7 @@ fn sampleGradientOffset(
     offsetPos: vec3f,
     centerBrickIndex: vec3f,
     indirection: vec4u,
-    lodScale: f32,
+    lodScale: vec3f,
 ) -> f32 {
     let offsetBrickIndex = floor(offsetPos / LOGICAL_BRICK_SIZE);
     if (all(offsetBrickIndex == centerBrickIndex)) {
@@ -88,15 +87,15 @@ fn sampleGradientOffset(
     return sampleWithIndirection(offsetPos);
 }
 
-// Compute gradient at a position (for isosurface normals)
-fn computeGradient(voxelPos: vec3f, indirection: vec4u, lodScale: f32) -> vec3f {
+// Compute gradient at a position (for isosurface normals); central differences one level voxel apart per axis
+fn computeGradient(voxelPos: vec3f, indirection: vec4u, lodScale: vec3f) -> vec3f {
     let h = lodScale;
     let centerBrickIndex = floor(voxelPos / LOGICAL_BRICK_SIZE);
-    let dx = sampleGradientOffset(voxelPos + vec3f(h, 0.0, 0.0), centerBrickIndex, indirection, lodScale) -
-             sampleGradientOffset(voxelPos - vec3f(h, 0.0, 0.0), centerBrickIndex, indirection, lodScale);
-    let dy = sampleGradientOffset(voxelPos + vec3f(0.0, h, 0.0), centerBrickIndex, indirection, lodScale) -
-             sampleGradientOffset(voxelPos - vec3f(0.0, h, 0.0), centerBrickIndex, indirection, lodScale);
-    let dz = sampleGradientOffset(voxelPos + vec3f(0.0, 0.0, h), centerBrickIndex, indirection, lodScale) -
-             sampleGradientOffset(voxelPos - vec3f(0.0, 0.0, h), centerBrickIndex, indirection, lodScale);
+    let dx = sampleGradientOffset(voxelPos + vec3f(h.x, 0.0, 0.0), centerBrickIndex, indirection, lodScale) -
+             sampleGradientOffset(voxelPos - vec3f(h.x, 0.0, 0.0), centerBrickIndex, indirection, lodScale);
+    let dy = sampleGradientOffset(voxelPos + vec3f(0.0, h.y, 0.0), centerBrickIndex, indirection, lodScale) -
+             sampleGradientOffset(voxelPos - vec3f(0.0, h.y, 0.0), centerBrickIndex, indirection, lodScale);
+    let dz = sampleGradientOffset(voxelPos + vec3f(0.0, 0.0, h.z), centerBrickIndex, indirection, lodScale) -
+             sampleGradientOffset(voxelPos - vec3f(0.0, 0.0, h.z), centerBrickIndex, indirection, lodScale);
     return vec3f(dx, dy, dz);
 }

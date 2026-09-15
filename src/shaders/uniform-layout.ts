@@ -62,8 +62,11 @@ function defineUniformStruct<T extends string>(
   return { fields: lines.join('\n'), offsets, size: offset };
 }
 
+/** Per-level scale table length; datasets with more levels are rejected at load. */
+export const MAX_LOD_LEVELS = 12;
+
 // ---------------------------------------------------------------------------
-// Compute shader uniforms (272 bytes)
+// Compute shader uniforms (464 bytes)
 // ---------------------------------------------------------------------------
 export const COMPUTE_UNIFORMS = defineUniformStruct([
   { name: 'inverseViewProj', type: 'mat4x4f' },
@@ -87,10 +90,11 @@ export const COMPUTE_UNIFORMS = defineUniformStruct([
   { name: 'channelColors',   type: 'array<vec4f, 4>' },
   { name: 'channelWindowCenter', type: 'vec4f' },
   { name: 'channelWindowWidth',  type: 'vec4f' },
+  { name: 'lodScales',       type: `array<vec4f, ${MAX_LOD_LEVELS}>` },
 ]);
 
 // ---------------------------------------------------------------------------
-// Slice planes uniforms (240 bytes)
+// Slice planes uniforms (432 bytes)
 // ---------------------------------------------------------------------------
 export const SLICE_UNIFORMS = defineUniformStruct([
   { name: 'mvp',             type: 'mat4x4f' },
@@ -109,4 +113,5 @@ export const SLICE_UNIFORMS = defineUniformStruct([
   { name: 'channelColors',   type: 'array<vec4f, 4>' },
   { name: 'channelWindowCenter', type: 'vec4f' },
   { name: 'channelWindowWidth',  type: 'vec4f' },
+  { name: 'lodScales',       type: `array<vec4f, ${MAX_LOD_LEVELS}>` },
 ]);

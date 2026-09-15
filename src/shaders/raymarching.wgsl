@@ -3,7 +3,7 @@
 // Brick setup information
 struct BrickInfo {
     indirection: vec4u,
-    lodScale: f32,
+    lodScale: vec3f,
     tEnd: f32,
     numSteps: u32,
     stepSize: f32,
@@ -11,7 +11,7 @@ struct BrickInfo {
     // affine atlas transform: atlasPos = atlasOffset + voxelPos * atlasScale
     // precomputed per brick to replace fmod + divides in the hot loop
     atlasOffset: vec3f,
-    atlasScale: f32,
+    atlasScale: vec3f,
 }
 
 // Set up brick traversal parameters
@@ -44,11 +44,11 @@ fn setupBrick(
     if (info.valid) {
         info.lodScale = getLodScale(info.indirection);
 
-        // LOD-adaptive step size — coarse bricks use larger steps
-        // compositing uses exact Beer-Lambert (1 - exp2)
+        // LOD-adaptive step size — coarse bricks use larger steps (coarsest axis, as the
+        // legacy scalar did); compositing uses exact Beer-Lambert (1 - exp2)
         let brickWorldSize = length(brickMaxWorld - brickMinWorld);
         let brickLength = info.tEnd - t;
-        let lodStepMul = min(info.lodScale, 4.0);
+        let lodStepMul = min(max(info.lodScale.x, max(info.lodScale.y, info.lodScale.z)), 4.0);
         info.stepSize = (brickWorldSize / STEPS_PER_BRICK) * lodStepMul;
         info.numSteps = max(1u, u32(ceil(brickLength / info.stepSize)) + 1u);
 

@@ -12,7 +12,7 @@ import { COMPUTE_UNIFORMS, SLICE_UNIFORMS } from '../src/shaders/uniform-layout.
 
 describe('COMPUTE_UNIFORMS layout', () => {
   it('has the expected total size (multiple of 16)', () => {
-    expect(COMPUTE_UNIFORMS.size).toBe(272);
+    expect(COMPUTE_UNIFORMS.size).toBe(464);
     expect(COMPUTE_UNIFORMS.size % 16).toBe(0);
   });
 
@@ -27,6 +27,7 @@ describe('COMPUTE_UNIFORMS layout', () => {
       channelColors: 176,
       channelWindowCenter: 240,
       channelWindowWidth: 256,
+      lodScales: 272,
     });
   });
 
@@ -39,7 +40,7 @@ describe('COMPUTE_UNIFORMS layout', () => {
 
 describe('SLICE_UNIFORMS layout', () => {
   it('has the expected total size (multiple of 16)', () => {
-    expect(SLICE_UNIFORMS.size).toBe(240);
+    expect(SLICE_UNIFORMS.size).toBe(432);
     expect(SLICE_UNIFORMS.size % 16).toBe(0);
   });
 
@@ -52,6 +53,7 @@ describe('SLICE_UNIFORMS layout', () => {
       channelColors: 144,
       channelWindowCenter: 208,
       channelWindowWidth: 224,
+      lodScales: 240,
     });
   });
 });

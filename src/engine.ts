@@ -16,6 +16,8 @@ import { DatasetConfig, computeAtlasGrid, emptyBrickThresholdFor } from './core/
 import { detectBest16BitFormat } from './core/volume.js';
 import type { ViewParams } from './core/view.js';
 import type { DataProvider, VolumeMetadata } from './data/data-provider.js';
+import { UnsupportedDatasetError } from './data/data-provider.js';
+import { MAX_LOD_LEVELS } from './shaders/uniform-layout.js';
 import { ShardedDataProvider } from './data/sharded-provider.js';
 import { ZarrDataProvider } from './data/zarr-provider.js';
 
@@ -160,10 +162,6 @@ export class KilnEngine {
     };
     const format = options.outputFormat ?? navigator.gpu.getPreferredCanvasFormat();
     const pyramid: PyramidPolicy = options.pyramid ?? 'legacy';
-    if (pyramid === 'native') {
-      // Providers already support it; traversal, indirection and shaders still assume 2^lod
-      throw new Error('pyramid "native" is not connected to the renderer yet');
-    }
 
     // Data provider
     let dataProvider: DataProvider;
@@ -184,6 +182,9 @@ export class KilnEngine {
     milestones.metadataReady = performance.now();
     if ((metadata.pyramidPolicy ?? 'legacy') !== pyramid) {
       throw new Error(`Data provider uses pyramid "${metadata.pyramidPolicy ?? 'legacy'}" but the engine requested "${pyramid}"`);
+    }
+    if (metadata.levels.length > MAX_LOD_LEVELS) {
+      throw new UnsupportedDatasetError([`${metadata.levels.length} pyramid levels exceed the supported ${MAX_LOD_LEVELS}`]);
     }
     const sourceBitDepth = metadata.bitDepth;
 

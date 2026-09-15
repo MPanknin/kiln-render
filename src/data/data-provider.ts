@@ -3,6 +3,8 @@
  * Decouples the renderer from file formats (Zarr, sharded binary).
  */
 
+import type { PyramidLevel } from '../core/pyramid.js';
+
 /** Bit depth for volume data */
 export type BitDepth = 8 | 16;
 
@@ -63,6 +65,10 @@ export interface VolumeMetadata {
   maxLod: number;
   /** Information about each LOD level */
   levels: LodLevel[];
+  /** Validated native pyramid (per-axis factors from metadata); absent for providers without one */
+  pyramid?: PyramidLevel[];
+  /** Reasons the native pyramid is unsupported; empty or absent when valid */
+  pyramidIssues?: string[];
   /** Bit depth of volume data */
   bitDepth: BitDepth;
   /** Window/level metadata (optional, from OMERO or similar) — first channel */

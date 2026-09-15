@@ -61,6 +61,10 @@ describe('StreamingManager base load — failed bricks', () => {
     expect(priv.emptyBricks.size).toBe(0);
     expect(resources.indirection.setEmpty).not.toHaveBeenCalled();
     expect(sm.getStats().bricksFailed).toBe(2);
+    // 6 of 8 resolved = 75%: the 50% milestone is real, the 90% one must stay unset
+    expect(sm.milestones.baseCoverage50).not.toBeNull();
+    expect(sm.milestones.baseCoverage90).toBeNull();
+    expect(sm.milestones.baseComplete).not.toBeNull();
   });
 
   it('a clean base load reports zero failures', async () => {

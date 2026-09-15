@@ -500,7 +500,7 @@ export class StreamingManager {
     const firstBrickStr = firstCommit !== null ? (firstCommit - t0).toFixed(0) : 'n/a';
     this.baseLodPending = 0;
     this.baseLodLoaded = true;
-    stampBaseCoverage(this.milestones, bricks.length, bricks.length, now);
+    stampBaseCoverage(this.milestones, resolved.size, bricks.length, now);
     this.milestones.baseComplete = now;
 
     // Show the completed base LOD right away, even if the camera never moves again

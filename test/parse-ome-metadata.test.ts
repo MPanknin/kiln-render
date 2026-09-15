@@ -481,3 +481,38 @@ describe('parseOmeMetadata — OMERO channel display hints', () => {
     expect(metadata.channels?.[2]).toEqual({ label: undefined, color: undefined, active: true });
   });
 });
+
+describe('parseOmeMetadata — native pyramid', () => {
+  const provider = new TestProvider();
+
+  it('builds per-axis exponents for an XY-only v0.4 pyramid with per-dataset scales', () => {
+    const datasets = [0, 1, 2].map(i => ({
+      path: String(i),
+      coordinateTransformations: [{ type: 'scale', scale: [1, 0.2, 2 ** i, 2 ** i] }],
+    }));
+    const attrs = { multiscales: [{ datasets, axes: ['c', 'z', 'y', 'x'], version: '0.4' }] };
+    const arrays = [0, 1, 2].map(i => arr([4, 25, 2048 >> i, 2048 >> i], [1, 1, 2048 >> i, 2048 >> i]));
+    const { metadata } = provider.parse(attrs, arrays);
+    expect(metadata.pyramidIssues).toEqual([]);
+    expect(metadata.pyramid!.map(l => l.exponent)).toEqual([[0, 0, 0], [1, 1, 0], [2, 2, 0]]);
+    expect(metadata.pyramid![1]!.dims).toEqual([1024, 1024, 25]);
+    expect(metadata.pyramid![1]!.spacing).toEqual([2, 2, 0.2]);
+  });
+
+  it('reads v0.5 per-dataset scale + translation and accepts box-filter shifts', () => {
+    const s = 2e-5;
+    const datasets = [
+      { path: '0', coordinateTransformations: [{ type: 'scale', scale: [s, s, s] }, { type: 'translation', translation: [0, 0, 0] }] },
+      { path: '1', coordinateTransformations: [{ type: 'scale', scale: [2 * s, 2 * s, 2 * s] }, { type: 'translation', translation: [s / 2, s / 2, s / 2] }] },
+    ];
+    const { metadata } = provider.parse(v5Attrs(datasets), [arr([64, 64, 64], [32, 32, 32]), arr([32, 32, 32], [32, 32, 32])]);
+    expect(metadata.pyramidIssues).toEqual([]);
+    expect(metadata.pyramid![1]!.origin).toEqual([s / 2, s / 2, s / 2]);
+  });
+
+  it('keeps loading with the legacy model when the native pyramid is unsupported', () => {
+    const { metadata } = provider.parse(v5Attrs([{ path: '0' }, { path: '1' }]), [arr([900, 900, 900], [64, 64, 64]), arr([300, 300, 300], [64, 64, 64])]);
+    expect(metadata.pyramidIssues!.length).toBeGreaterThan(0);
+    expect(metadata.levels).toHaveLength(2);
+  });
+});

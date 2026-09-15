@@ -19,13 +19,17 @@ import { UnsupportedDatasetError } from './data-provider.js';
 import { NetworkTracker } from './network-tracker.js';
 import { extractMultiscales, normalizeAxes, validateZarrSupport } from './zarr-validator.js';
 import { estimateBrickChunkFanout } from './chunk-math.js';
+import { buildPyramid } from '../core/pyramid.js';
+import type { Vec3 } from '../core/pyramid.js';
+
+interface OmeTransform { type: string; scale?: number[]; translation?: number[] }
 
 /** OME-NGFF multiscales metadata (from group attributes) */
 export interface OmeMultiscales {
   // may be string[] (v0.4) or {name,type}[] (v0.5) or absent — use normalizeAxes()
   axes?: unknown;
-  datasets: { path: string; coordinateTransformations?: { type: string; scale?: number[] }[] }[];
-  coordinateTransformations?: { type: string; scale?: number[] }[]; // v0.4 group-level fallback
+  datasets: { path: string; coordinateTransformations?: OmeTransform[] }[];
+  coordinateTransformations?: OmeTransform[]; // group-level, composes after per-dataset transforms
   name?: string;
   version?: string;
 }
@@ -47,6 +51,12 @@ export interface LodParams {
   channelAxisIdx: number;
   /** Channels stored per chunk along the channel axis (1 if none). */
   channelChunkSize: number;
+}
+
+/** Zarr vectors are [..., z, y, x]; Kiln works in [x, y, z]. */
+function lastThreeAsXyz(v: number[] | undefined): Vec3 | undefined {
+  if (!v || v.length < 3) return undefined;
+  return [v[v.length - 1]!, v[v.length - 2]!, v[v.length - 3]!];
 }
 
 /** OMERO colours are "RRGGBB" hex strings; returns 0–1 RGB or undefined if malformed. */
@@ -263,6 +273,23 @@ export abstract class BaseZarrProvider implements DataProvider {
       lod0Shape[lod0Shape.length - 3]!, // z
     ];
 
+    // Native pyramid from per-level transforms; validated but not yet driving geometry
+    const pyramidBuild = buildPyramid(
+      arrays.map((arr, i) => {
+        const t = ms.datasets[i]?.coordinateTransformations ?? [];
+        return {
+          dims: lastThreeAsXyz(arr.shape)!,
+          scale: lastThreeAsXyz(t.find(x => x.type === 'scale')?.scale),
+          translation: lastThreeAsXyz(t.find(x => x.type === 'translation')?.translation),
+        };
+      }),
+      lastThreeAsXyz(ms.coordinateTransformations?.find(x => x.type === 'scale')?.scale),
+      lastThreeAsXyz(ms.coordinateTransformations?.find(x => x.type === 'translation')?.translation),
+    );
+    if (pyramidBuild.issues.length > 0) {
+      console.warn(`[Kiln] native pyramid unsupported, legacy 2:1 model in use: ${pyramidBuild.issues.join('; ')}`);
+    }
+
     const lodParams: LodParams[] = [];
     const levels: LodLevel[] = arrays.map((arr, i) => {
       const shape = arr.shape;
@@ -343,6 +370,8 @@ export abstract class BaseZarrProvider implements DataProvider {
       physicalBrickSize: PHYSICAL_BRICK_SIZE,
       maxLod: numScales - 1,
       levels,
+      pyramid: pyramidBuild.levels,
+      pyramidIssues: pyramidBuild.issues,
       bitDepth,
       window: windowMeta,
       channelWindows,

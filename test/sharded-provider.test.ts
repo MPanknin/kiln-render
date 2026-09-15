@@ -135,7 +135,7 @@ describe('ShardedDataProvider — pyramid policy', () => {
     expect(meta.pyramidIssues).toEqual([]);
     expect(meta.pyramid.map((l: any) => l.exponent)).toEqual([[0, 0, 0], [1, 1, 1], [2, 2, 2]]);
     expect(meta.pyramid[2].spacing).toEqual([4, 4, 8]);
-    expect(meta.pyramidPolicy).toBe('legacy');
+    expect(meta.pyramidPolicy).toBe('native');
   });
 
   it('native mode rejects unsupported level steps', () => {

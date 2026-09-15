@@ -42,7 +42,7 @@ function parseURLParams(): {
   up?: string;
   sse?: number;
   scale?: number;
-  pyramid?: 'native';
+  pyramid?: 'legacy' | 'native';
   cam?: [number, number, number] | [number, number, number, number, number, number];
   clipMin?: [number, number, number];
   clipMax?: [number, number, number];
@@ -120,7 +120,7 @@ function parseURLParams(): {
     up: params.get('up') ?? undefined,
     sse: params.has('sse') ? Number(params.get('sse')) : undefined,
     scale: params.has('scale') ? Number(params.get('scale')) : undefined,
-    pyramid: params.get('pyramid') === 'native' ? ('native' as const) : undefined,
+    pyramid: params.get('pyramid') === 'legacy' ? 'legacy' : params.get('pyramid') === 'native' ? 'native' : undefined,
     cam,
     clipMin,
     clipMax,

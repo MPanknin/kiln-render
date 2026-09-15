@@ -64,7 +64,7 @@ export interface EngineOptions {
   showAxis?: boolean;
   /** Format of the colour view passed to render() (default: preferred canvas format) */
   outputFormat?: GPUTextureFormat;
-  /** Level model: 'legacy' uniform 2:1 virtual pyramid (default) or 'native' per-axis factors. Temporary rollout switch. */
+  /** Level model: 'native' per-axis factors from metadata (default) or 'legacy' uniform 2:1 virtual pyramid. Comparison switch. */
   pyramid?: PyramidPolicy;
 }
 
@@ -161,7 +161,7 @@ export class KilnEngine {
       gpuReady: null,
     };
     const format = options.outputFormat ?? navigator.gpu.getPreferredCanvasFormat();
-    const pyramid: PyramidPolicy = options.pyramid ?? 'legacy';
+    const pyramid: PyramidPolicy = options.pyramid ?? 'native';
 
     // Data provider
     let dataProvider: DataProvider;

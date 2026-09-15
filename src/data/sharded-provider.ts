@@ -10,6 +10,7 @@ import type { TargetFormat } from './brick-convert.js';
 import { buildPyramid } from '../core/pyramid.js';
 import type { PyramidPolicy } from '../core/pyramid.js';
 import { UnsupportedDatasetError } from './data-provider.js';
+import { LEGACY_HINT } from './base-zarr-provider.js';
 import type {
   DataProvider,
   VolumeMetadata,
@@ -76,7 +77,7 @@ export class ShardedDataProvider implements DataProvider {
   private networkTracker = new NetworkTracker();
   private pool: DecompressionPool | null = null;
   private targetFormat: TargetFormat = 'r16unorm';
-  private pyramidPolicy: PyramidPolicy = 'legacy';
+  private pyramidPolicy: PyramidPolicy = 'native';
   private fetchAvg = new RollingAvg();
   private assemblyAvg = new RollingAvg();
 
@@ -136,7 +137,7 @@ export class ShardedDataProvider implements DataProvider {
       raw.levels.map((level, i) => ({ dims: level.dimensions, scale: i === 0 ? raw.voxelSpacing : undefined })),
     );
     if (this.pyramidPolicy === 'native' && pyramidBuild.issues.length > 0) {
-      throw new UnsupportedDatasetError(pyramidBuild.issues);
+      throw new UnsupportedDatasetError([...pyramidBuild.issues, LEGACY_HINT]);
     }
 
     return {

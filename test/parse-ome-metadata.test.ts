@@ -139,9 +139,11 @@ describe('parseOmeMetadata — bit depth', () => {
 describe('parseOmeMetadata — LOD levels', () => {
   const provider = new TestProvider();
 
-  it('computes virtual dimensions as strict 2:1 halving of lod0 regardless of actual array shape', () => {
-    // lod0: 256, lod1: actual=120 but virtual should be ceil(256/2)=128
-    const { metadata } = provider.parse(
+  it('legacy: virtual dimensions are strict 2:1 halving of lod0 regardless of actual array shape', () => {
+    // lod0: 256, lod1: actual=120 but virtual should be ceil(256/2)=128 (native would reject this layout)
+    const legacy = new TestProvider();
+    legacy.setPyramidPolicy('legacy');
+    const { metadata } = legacy.parse(
       v5Attrs([{ path: '0' }, { path: '1' }]),
       [
         arr([256, 256, 256], [64, 64, 64]),
@@ -197,10 +199,12 @@ describe('parseOmeMetadata — LOD levels', () => {
 describe('parseOmeMetadata — lodParams', () => {
   const provider = new TestProvider();
 
-  it('computes scale factors as actual/virtual', () => {
+  it('legacy: scale factors are actual/virtual', () => {
     // lod0: actual=256, virtual=256 → scale=1.0
-    // lod1: actual=120, virtual=128 → scale=120/128
-    const { lodParams } = provider.parse(
+    // lod1: actual=120, virtual=128 → scale=120/128 (native would reject this layout)
+    const legacy = new TestProvider();
+    legacy.setPyramidPolicy('legacy');
+    const { lodParams } = legacy.parse(
       v5Attrs([{ path: '0' }, { path: '1' }]),
       [
         arr([256, 256, 256], [64, 64, 64]),
@@ -510,8 +514,10 @@ describe('parseOmeMetadata — native pyramid', () => {
     expect(metadata.pyramid![1]!.origin).toEqual([s / 2, s / 2, s / 2]);
   });
 
-  it('keeps loading with the legacy model when the native pyramid is unsupported', () => {
-    const { metadata } = provider.parse(v5Attrs([{ path: '0' }, { path: '1' }]), [arr([900, 900, 900], [64, 64, 64]), arr([300, 300, 300], [64, 64, 64])]);
+  it('legacy keeps loading when the native pyramid is unsupported', () => {
+    const legacy = new TestProvider();
+    legacy.setPyramidPolicy('legacy');
+    const { metadata } = legacy.parse(v5Attrs([{ path: '0' }, { path: '1' }]), [arr([900, 900, 900], [64, 64, 64]), arr([300, 300, 300], [64, 64, 64])]);
     expect(metadata.pyramidIssues!.length).toBeGreaterThan(0);
     expect(metadata.levels).toHaveLength(2);
   });
@@ -528,18 +534,19 @@ describe('parseOmeMetadata — pyramid policy', () => {
     return { attrs, arrays };
   };
 
-  it('legacy (default) keeps the uniform 2:1 virtual levels', () => {
+  it('legacy keeps the uniform 2:1 virtual levels', () => {
     const { attrs, arrays } = xyOnly();
-    const { metadata, lodParams } = new TestProvider().parse(attrs, arrays);
+    const provider = new TestProvider();
+    provider.setPyramidPolicy('legacy');
+    const { metadata, lodParams } = provider.parse(attrs, arrays);
     expect(metadata.pyramidPolicy).toBe('legacy');
     expect(metadata.levels[1]!.dimensions).toEqual([1024, 1024, 13]);
     expect(lodParams[1]!.scaleZ).toBeCloseTo(25 / 13);
   });
 
-  it('native uses the stored level dims, so assembly scale is 1 on every axis', () => {
+  it('native (default) uses the stored level dims, so assembly scale is 1 on every axis', () => {
     const { attrs, arrays } = xyOnly();
     const provider = new TestProvider();
-    provider.setPyramidPolicy('native');
     const { metadata, lodParams } = provider.parse(attrs, arrays);
     expect(metadata.pyramidPolicy).toBe('native');
     expect(metadata.levels[1]!.dimensions).toEqual([1024, 1024, 25]);

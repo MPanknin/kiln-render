@@ -24,6 +24,8 @@ import type { Vec3, PyramidPolicy } from '../core/pyramid.js';
 
 interface OmeTransform { type: string; scale?: number[]; translation?: number[] }
 
+export const LEGACY_HINT = 'load with pyramid "legacy" to fall back to the uniform 2:1 model';
+
 /** OME-NGFF multiscales metadata (from group attributes) */
 export interface OmeMultiscales {
   // may be string[] (v0.4) or {name,type}[] (v0.5) or absent — use normalizeAxes()
@@ -106,7 +108,7 @@ export abstract class BaseZarrProvider implements DataProvider {
 
   protected metadata: VolumeMetadata | null = null;
   protected brickStatsCache = new Map<string, BrickStats>();
-  protected pyramidPolicy: PyramidPolicy = 'legacy';
+  protected pyramidPolicy: PyramidPolicy = 'native';
   private networkTracker = new NetworkTracker();
 
   /** Must be called before initialize(); the policy shapes levels, brick grids and worker mappings. */
@@ -297,7 +299,7 @@ export abstract class BaseZarrProvider implements DataProvider {
     );
     const native = this.pyramidPolicy === 'native';
     if (native && pyramidBuild.issues.length > 0) {
-      throw new UnsupportedDatasetError(pyramidBuild.issues);
+      throw new UnsupportedDatasetError([...pyramidBuild.issues, LEGACY_HINT]);
     }
     if (!native && pyramidBuild.issues.length > 0) {
       console.warn(`[Kiln] native pyramid unsupported, legacy 2:1 model in use: ${pyramidBuild.issues.join('; ')}`);

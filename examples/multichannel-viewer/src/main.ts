@@ -41,7 +41,7 @@ function parseURLParams(): {
   dataset: string;
   up?: string;
   scale?: number;
-  pyramid?: 'native';
+  pyramid?: 'legacy' | 'native';
   mode?: string;
   cam?: [number, number, number] | [number, number, number, number, number, number];
   channels?: ChannelState[];
@@ -79,7 +79,7 @@ function parseURLParams(): {
     dataset: params.get('dataset') ?? DEFAULT_VOLUME_SOURCE,
     up: params.get('up') ?? undefined,
     scale: params.has('scale') ? Number(params.get('scale')) : undefined,
-    pyramid: params.get('pyramid') === 'native' ? ('native' as const) : undefined,
+    pyramid: params.get('pyramid') === 'legacy' ? 'legacy' : params.get('pyramid') === 'native' ? 'native' : undefined,
     mode: params.get('mode') ?? undefined,
     cam,
     channels,

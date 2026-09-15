@@ -3,7 +3,7 @@
  * Decouples the renderer from file formats (Zarr, sharded binary).
  */
 
-import type { PyramidLevel } from '../core/pyramid.js';
+import type { PyramidLevel, PyramidPolicy } from '../core/pyramid.js';
 
 /** Bit depth for volume data */
 export type BitDepth = 8 | 16;
@@ -69,6 +69,8 @@ export interface VolumeMetadata {
   pyramid?: PyramidLevel[];
   /** Reasons the native pyramid is unsupported; empty or absent when valid */
   pyramidIssues?: string[];
+  /** Level model this metadata was built with; absent means legacy */
+  pyramidPolicy?: PyramidPolicy;
   /** Bit depth of volume data */
   bitDepth: BitDepth;
   /** Window/level metadata (optional, from OMERO or similar) — first channel */
@@ -136,6 +138,12 @@ export class UnsupportedDatasetError extends Error {
 
 /** Abstract interface for volume data providers. */
 export interface DataProvider {
+  /**
+   * Select the level model before initialize(); it shapes level geometry and worker
+   * mappings. Providers without a pyramid may omit it (they are legacy-only).
+   */
+  setPyramidPolicy?(policy: PyramidPolicy): void;
+
   /**
    * Initialize the provider and load volume metadata
    * Must be called before any other methods

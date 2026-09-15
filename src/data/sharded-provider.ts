@@ -7,6 +7,9 @@ import { DecompressionPool } from './decompression-pool.js';
 import { NetworkTracker, RollingAvg } from './network-tracker.js';
 import { convertBrickBytes, brickElementView } from './brick-convert.js';
 import type { TargetFormat } from './brick-convert.js';
+import { buildPyramid } from '../core/pyramid.js';
+import type { PyramidPolicy } from '../core/pyramid.js';
+import { UnsupportedDatasetError } from './data-provider.js';
 import type {
   DataProvider,
   VolumeMetadata,
@@ -73,6 +76,7 @@ export class ShardedDataProvider implements DataProvider {
   private networkTracker = new NetworkTracker();
   private pool: DecompressionPool | null = null;
   private targetFormat: TargetFormat = 'r16unorm';
+  private pyramidPolicy: PyramidPolicy = 'legacy';
   private fetchAvg = new RollingAvg();
   private assemblyAvg = new RollingAvg();
 
@@ -112,6 +116,14 @@ export class ShardedDataProvider implements DataProvider {
   /**
    * Convert format-specific metadata to generic VolumeMetadata
    */
+  /** Must be called before initialize(). Sharded levels are pre-baked 2:1, so both policies share one geometry. */
+  setPyramidPolicy(policy: PyramidPolicy): void {
+    if (this.metadata && (this.metadata.pyramidPolicy ?? 'legacy') !== policy) {
+      throw new Error(`Pyramid policy cannot change after initialize() (already "${this.metadata.pyramidPolicy}")`);
+    }
+    this.pyramidPolicy = policy;
+  }
+
   private convertMetadata(raw: ShardedVolumeJson): VolumeMetadata {
     const levels: LodLevel[] = raw.levels.map(level => ({
       lod: level.lod,
@@ -120,7 +132,17 @@ export class ShardedDataProvider implements DataProvider {
       brickCount: level.brickCount,
     }));
 
+    const pyramidBuild = buildPyramid(
+      raw.levels.map((level, i) => ({ dims: level.dimensions, scale: i === 0 ? raw.voxelSpacing : undefined })),
+    );
+    if (this.pyramidPolicy === 'native' && pyramidBuild.issues.length > 0) {
+      throw new UnsupportedDatasetError(pyramidBuild.issues);
+    }
+
     return {
+      pyramid: pyramidBuild.levels,
+      pyramidIssues: pyramidBuild.issues,
+      pyramidPolicy: this.pyramidPolicy,
       name: raw.name,
       dimensions: raw.originalDimensions,
       voxelSpacing: raw.voxelSpacing,

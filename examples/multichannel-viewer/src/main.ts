@@ -41,6 +41,7 @@ function parseURLParams(): {
   dataset: string;
   up?: string;
   scale?: number;
+  pyramid?: 'native';
   mode?: string;
   cam?: [number, number, number] | [number, number, number, number, number, number];
   channels?: ChannelState[];
@@ -78,6 +79,7 @@ function parseURLParams(): {
     dataset: params.get('dataset') ?? DEFAULT_VOLUME_SOURCE,
     up: params.get('up') ?? undefined,
     scale: params.has('scale') ? Number(params.get('scale')) : undefined,
+    pyramid: params.get('pyramid') === 'native' ? ('native' as const) : undefined,
     mode: params.get('mode') ?? undefined,
     cam,
     channels,
@@ -115,6 +117,7 @@ async function main() {
     upAxis: urlParams.up as UpAxis | undefined,
     cam: urlParams.cam,
     renderScale: urlParams.scale,
+    pyramid: urlParams.pyramid,
   };
 
   // Show spinner during metadata fetch + any pre-scans (cause 1: main-thread

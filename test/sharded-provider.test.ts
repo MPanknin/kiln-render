@@ -121,3 +121,26 @@ describe('ShardedDataProvider.loadBrick — Range validation and conversion', ()
     expect(p.getNetworkStats().requestCount).toBe(2);
   });
 });
+
+describe('ShardedDataProvider — pyramid policy', () => {
+  const raw = (dims: number[][]) => ({
+    name: 'p', originalDimensions: dims[0], voxelSpacing: [1, 1, 2], brickSize: 64, physicalSize: 66, maxLod: dims.length - 1,
+    format: 'uint8', packed: true, createdAt: '',
+    levels: dims.map((d, lod) => ({ lod, dimensions: d, bricks: [1, 1, 1], brickCount: 1, binFile: 'b', indexFile: 'i' })),
+  });
+
+  it('builds a validated pyramid from the pre-baked level dims and spacing', () => {
+    const p: any = new ShardedDataProvider('https://fixture.invalid');
+    const meta = p.convertMetadata(raw([[1024, 1024, 1080], [512, 512, 540], [256, 256, 270]]));
+    expect(meta.pyramidIssues).toEqual([]);
+    expect(meta.pyramid.map((l: any) => l.exponent)).toEqual([[0, 0, 0], [1, 1, 1], [2, 2, 2]]);
+    expect(meta.pyramid[2].spacing).toEqual([4, 4, 8]);
+    expect(meta.pyramidPolicy).toBe('legacy');
+  });
+
+  it('native mode rejects unsupported level steps', () => {
+    const p: any = new ShardedDataProvider('https://fixture.invalid');
+    p.setPyramidPolicy('native');
+    expect(() => p.convertMetadata(raw([[900, 900, 900], [300, 300, 300]]))).toThrow(/downsampling factor 3/);
+  });
+});

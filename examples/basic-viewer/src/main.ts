@@ -42,6 +42,7 @@ function parseURLParams(): {
   up?: string;
   sse?: number;
   scale?: number;
+  pyramid?: 'native';
   cam?: [number, number, number] | [number, number, number, number, number, number];
   clipMin?: [number, number, number];
   clipMax?: [number, number, number];
@@ -119,6 +120,7 @@ function parseURLParams(): {
     up: params.get('up') ?? undefined,
     sse: params.has('sse') ? Number(params.get('sse')) : undefined,
     scale: params.has('scale') ? Number(params.get('scale')) : undefined,
+    pyramid: params.get('pyramid') === 'native' ? ('native' as const) : undefined,
     cam,
     clipMin,
     clipMax,
@@ -172,6 +174,7 @@ async function main() {
     cam: urlParams.cam,
     renderScale: urlParams.scale,
     maxPixelError: urlParams.sse,
+    pyramid: urlParams.pyramid,
     clipMin: urlParams.clipMin,
     clipMax: urlParams.clipMax,
     sliceX: urlParams.slices?.[0],

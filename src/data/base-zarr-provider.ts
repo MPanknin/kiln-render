@@ -20,7 +20,7 @@ import { NetworkTracker } from './network-tracker.js';
 import { extractMultiscales, normalizeAxes, validateZarrSupport } from './zarr-validator.js';
 import { estimateBrickChunkFanout } from './chunk-math.js';
 import { buildPyramid } from '../core/pyramid.js';
-import type { Vec3 } from '../core/pyramid.js';
+import type { Vec3, PyramidPolicy } from '../core/pyramid.js';
 
 interface OmeTransform { type: string; scale?: number[]; translation?: number[] }
 
@@ -106,7 +106,16 @@ export abstract class BaseZarrProvider implements DataProvider {
 
   protected metadata: VolumeMetadata | null = null;
   protected brickStatsCache = new Map<string, BrickStats>();
+  protected pyramidPolicy: PyramidPolicy = 'legacy';
   private networkTracker = new NetworkTracker();
+
+  /** Must be called before initialize(); the policy shapes levels, brick grids and worker mappings. */
+  setPyramidPolicy(policy: PyramidPolicy): void {
+    if (this.metadata && (this.metadata.pyramidPolicy ?? 'legacy') !== policy) {
+      throw new Error(`Pyramid policy cannot change after initialize() (already "${this.metadata.pyramidPolicy}")`);
+    }
+    this.pyramidPolicy = policy;
+  }
 
   // Abstract methods that subclasses must implement
   abstract initialize(): Promise<VolumeMetadata>;
@@ -286,7 +295,11 @@ export abstract class BaseZarrProvider implements DataProvider {
       lastThreeAsXyz(ms.coordinateTransformations?.find(x => x.type === 'scale')?.scale),
       lastThreeAsXyz(ms.coordinateTransformations?.find(x => x.type === 'translation')?.translation),
     );
-    if (pyramidBuild.issues.length > 0) {
+    const native = this.pyramidPolicy === 'native';
+    if (native && pyramidBuild.issues.length > 0) {
+      throw new UnsupportedDatasetError(pyramidBuild.issues);
+    }
+    if (!native && pyramidBuild.issues.length > 0) {
       console.warn(`[Kiln] native pyramid unsupported, legacy 2:1 model in use: ${pyramidBuild.issues.join('; ')}`);
     }
 
@@ -297,9 +310,10 @@ export abstract class BaseZarrProvider implements DataProvider {
       const actualDimY = shape[shape.length - 2]!;
       const actualDimZ = shape[shape.length - 3]!;
 
-      const virtualDimX = Math.ceil(lod0Dims[0] / (1 << i));
-      const virtualDimY = Math.ceil(lod0Dims[1] / (1 << i));
-      const virtualDimZ = Math.ceil(lod0Dims[2] / (1 << i));
+      // Native: levels are what the file stores. Legacy: uniform 2:1 virtual dims, resampled in assembly.
+      const virtualDimX = native ? actualDimX : Math.ceil(lod0Dims[0] / (1 << i));
+      const virtualDimY = native ? actualDimY : Math.ceil(lod0Dims[1] / (1 << i));
+      const virtualDimZ = native ? actualDimZ : Math.ceil(lod0Dims[2] / (1 << i));
 
       const chunkShape = arr.chunks;
       const shapePrefixLength = shape.length - 3;
@@ -372,6 +386,7 @@ export abstract class BaseZarrProvider implements DataProvider {
       levels,
       pyramid: pyramidBuild.levels,
       pyramidIssues: pyramidBuild.issues,
+      pyramidPolicy: this.pyramidPolicy,
       bitDepth,
       window: windowMeta,
       channelWindows,

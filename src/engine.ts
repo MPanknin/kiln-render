@@ -7,6 +7,7 @@
 
 import { mat4 } from 'wgpu-matrix';
 import type { LoadMilestones } from './core/milestones.js';
+import type { PyramidPolicy } from './core/pyramid.js';
 import { Renderer, VolumeRenderMode } from './core/renderer.js';
 import { VolumeResources } from './core/volume-resources.js';
 import { TransferFunction, TFPreset } from './core/transfer-function.js';
@@ -61,6 +62,8 @@ export interface EngineOptions {
   showAxis?: boolean;
   /** Format of the colour view passed to render() (default: preferred canvas format) */
   outputFormat?: GPUTextureFormat;
+  /** Level model: 'legacy' uniform 2:1 virtual pyramid (default) or 'native' per-axis factors. Temporary rollout switch. */
+  pyramid?: PyramidPolicy;
 }
 
 /** How long after the last view change the camera still counts as interacting (ms). */
@@ -151,6 +154,11 @@ export class KilnEngine {
       gpuReady: null,
     };
     const format = options.outputFormat ?? navigator.gpu.getPreferredCanvasFormat();
+    const pyramid: PyramidPolicy = options.pyramid ?? 'legacy';
+    if (pyramid === 'native') {
+      // Providers already support it; traversal, indirection and shaders still assume 2^lod
+      throw new Error('pyramid "native" is not connected to the renderer yet');
+    }
 
     // Data provider
     let dataProvider: DataProvider;
@@ -165,9 +173,13 @@ export class KilnEngine {
         : new ShardedDataProvider(dataset as string);
     }
 
-    // Metadata and texture format detection
+    // The level model must reach the provider before workers and brick loads exist
+    dataProvider.setPyramidPolicy?.(pyramid);
     const metadata = await dataProvider.initialize();
     milestones.metadataReady = performance.now();
+    if ((metadata.pyramidPolicy ?? 'legacy') !== pyramid) {
+      throw new Error(`Data provider uses pyramid "${metadata.pyramidPolicy ?? 'legacy'}" but the engine requested "${pyramid}"`);
+    }
     const sourceBitDepth = metadata.bitDepth;
 
     let textureFormat: GPUTextureFormat;

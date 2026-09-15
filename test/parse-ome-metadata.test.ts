@@ -516,3 +516,41 @@ describe('parseOmeMetadata — native pyramid', () => {
     expect(metadata.levels).toHaveLength(2);
   });
 });
+
+describe('parseOmeMetadata — pyramid policy', () => {
+  const xyOnly = () => {
+    const datasets = [0, 1, 2].map(i => ({
+      path: String(i),
+      coordinateTransformations: [{ type: 'scale', scale: [1, 0.2, 2 ** i, 2 ** i] }],
+    }));
+    const attrs = { multiscales: [{ datasets, axes: ['c', 'z', 'y', 'x'], version: '0.4' }] };
+    const arrays = [0, 1, 2].map(i => arr([4, 25, 2048 >> i, 2048 >> i], [1, 1, 2048 >> i, 2048 >> i]));
+    return { attrs, arrays };
+  };
+
+  it('legacy (default) keeps the uniform 2:1 virtual levels', () => {
+    const { attrs, arrays } = xyOnly();
+    const { metadata, lodParams } = new TestProvider().parse(attrs, arrays);
+    expect(metadata.pyramidPolicy).toBe('legacy');
+    expect(metadata.levels[1]!.dimensions).toEqual([1024, 1024, 13]);
+    expect(lodParams[1]!.scaleZ).toBeCloseTo(25 / 13);
+  });
+
+  it('native uses the stored level dims, so assembly scale is 1 on every axis', () => {
+    const { attrs, arrays } = xyOnly();
+    const provider = new TestProvider();
+    provider.setPyramidPolicy('native');
+    const { metadata, lodParams } = provider.parse(attrs, arrays);
+    expect(metadata.pyramidPolicy).toBe('native');
+    expect(metadata.levels[1]!.dimensions).toEqual([1024, 1024, 25]);
+    expect(metadata.levels[1]!.brickGrid).toEqual([16, 16, 1]);
+    expect(lodParams[1]).toMatchObject({ scaleX: 1, scaleY: 1, scaleZ: 1 });
+  });
+
+  it('native rejects layouts the pyramid model does not support', () => {
+    const provider = new TestProvider();
+    provider.setPyramidPolicy('native');
+    expect(() => provider.parse(v5Attrs([{ path: '0' }, { path: '1' }]), [arr([900, 900, 900], [64, 64, 64]), arr([300, 300, 300], [64, 64, 64])]))
+      .toThrow(/downsampling factor 3/);
+  });
+});

@@ -1,5 +1,7 @@
 /** Kiln Configuration — volume rendering and virtual texturing constants. */
 
+import type { PyramidLevel, Vec3 } from './pyramid.js';
+
 // Core constants
 export const LOGICAL_BRICK_SIZE = 64;
 export const PHYSICAL_BRICK_SIZE = 66; // 64 + 1 voxel padding on each side
@@ -104,15 +106,44 @@ export class DatasetConfig {
   /** Bricks with max intensity below this value are considered empty */
   readonly emptyBrickThreshold: number;
 
+  /** Level model; absent = legacy uniform 2:1 (exponent [lod, lod, lod]). */
+  private readonly levels: PyramidLevel[] | undefined;
+
   constructor(
     dimensions: [number, number, number],
     voxelSpacing: [number, number, number] = [1, 1, 1],
     emptyBrickThreshold = 100,
+    levels?: PyramidLevel[],
   ) {
     this.dimensions = [...dimensions] as [number, number, number];
     this.voxelSpacing = [...voxelSpacing] as [number, number, number];
     this.emptyBrickThreshold = emptyBrickThreshold;
     this.datasetGrid = computeDatasetGrid(dimensions);
     this.normalizedSize = computeNormalizedSize(dimensions, voxelSpacing);
+    this.levels = levels;
+  }
+
+  /** Per-axis log2 downsampling of `lod` relative to level 0. */
+  levelExponent(lod: number): Vec3 {
+    return this.levels?.[lod]?.exponent ?? [lod, lod, lod];
+  }
+
+  /** Finest-grid cells (LOD-0 bricks) one brick of `lod` covers, per axis. */
+  levelSpanCells(lod: number): Vec3 {
+    return this.levelExponent(lod).map(e => 1 << e) as Vec3;
+  }
+
+  /** Children per axis when refining from `lod` to `lod - 1`: 1 or 2. */
+  childCounts(lod: number): Vec3 {
+    const coarse = this.levelExponent(lod);
+    const fine = this.levelExponent(lod - 1);
+    return coarse.map((e, a) => 1 << (e - fine[a]!)) as Vec3;
+  }
+
+  /** Bricks of `fineLod` per brick of `coarseLod`, per axis. */
+  levelRatio(coarseLod: number, fineLod: number): Vec3 {
+    const coarse = this.levelExponent(coarseLod);
+    const fine = this.levelExponent(fineLod);
+    return coarse.map((e, a) => 1 << (e - fine[a]!)) as Vec3;
   }
 }

@@ -7,7 +7,7 @@
 
 import { mat4 } from 'wgpu-matrix';
 import type { LoadMilestones } from './core/milestones.js';
-import type { PyramidPolicy } from './core/pyramid.js';
+import type { PyramidLevel, PyramidPolicy } from './core/pyramid.js';
 import { Renderer, VolumeRenderMode } from './core/renderer.js';
 import { VolumeResources } from './core/volume-resources.js';
 import { TransferFunction, TFPreset } from './core/transfer-function.js';
@@ -70,6 +70,11 @@ export interface EngineOptions {
 const INTERACTION_HOLD_MS = 200;
 
 type SetupMilestones = Pick<LoadMilestones, 'datasetOpenStart' | 'deviceReady' | 'metadataReady' | 'gpuReady'>;
+
+/** Level model for DatasetConfig: the provider's validated pyramid in native mode, legacy 2:1 otherwise. */
+function levelModel(policy: PyramidPolicy, metadata: VolumeMetadata): PyramidLevel[] | undefined {
+  return policy === 'native' ? metadata.pyramid : undefined;
+}
 
 export class KilnEngine {
   readonly device: GPUDevice;
@@ -216,7 +221,7 @@ export class KilnEngine {
     const emptyThreshold = emptyBrickThresholdFor(
       sourceBitDepth, metadata.channelWindows ?? (metadata.window ? [metadata.window] : undefined), metadata.isFloat,
     );
-    const config = new DatasetConfig(metadata.dimensions, metadata.voxelSpacing, emptyThreshold);
+    const config = new DatasetConfig(metadata.dimensions, metadata.voxelSpacing, emptyThreshold, levelModel(pyramid, metadata));
 
     // Shrink the atlas grid with channel count so total atlas VRAM fits the
     // budget — a fixed 660³ × 4 channels (~2.3 GB) OOMs mobile GPUs at startup.

@@ -789,18 +789,17 @@ export class StreamingManager {
           return;
         }
 
-        // Compute child coordinates for non-power-of-two grids
-        // The relationship is: parent brick covers a 2x2x2 region at finer LOD
-        // But we need to check bounds at the finer level
+        // Children per axis follow the level model (1 or 2); bounds-check at the finer grid
         const [finerGridX, finerGridY, finerGridZ] = finerLevel.brickGrid;
         const nextLod = lod - 1;
+        const [nx, ny, nz] = this.config.childCounts(lod);
 
-        for (let dz = 0; dz < 2; dz++) {
-          for (let dy = 0; dy < 2; dy++) {
-            for (let dx = 0; dx < 2; dx++) {
-              const cx = bx * 2 + dx;
-              const cy = by * 2 + dy;
-              const cz = bz * 2 + dz;
+        for (let dz = 0; dz < nz; dz++) {
+          for (let dy = 0; dy < ny; dy++) {
+            for (let dx = 0; dx < nx; dx++) {
+              const cx = bx * nx + dx;
+              const cy = by * ny + dy;
+              const cz = bz * nz + dz;
 
               // Only traverse if within finer grid bounds
               if (cx < finerGridX && cy < finerGridY && cz < finerGridZ) {
@@ -1185,7 +1184,7 @@ export class StreamingManager {
     if (!this.levelsByLod[lod]) return { min: [0, 0, 0], max: [0, 0, 0] };
 
     // Same convention as the shader's voxelToNormalized: only the last brick per axis is truncated
-    const span = LOGICAL_BRICK_SIZE << lod;
+    const cells = this.config.levelSpanCells(lod);
     const dims = this.config.dimensions;
     const normalizedSize = this.config.normalizedSize;
     const toWorld = (voxel: number, axis: number) => (voxel / dims[axis]! - 0.5) * normalizedSize[axis]!;
@@ -1194,6 +1193,7 @@ export class StreamingManager {
     const max: [number, number, number] = [0, 0, 0];
     const index = [bx, by, bz];
     for (let axis = 0; axis < 3; axis++) {
+      const span = LOGICAL_BRICK_SIZE * cells[axis]!;
       const v0 = index[axis]! * span;
       const v1 = Math.min(v0 + span, dims[axis]!);
       min[axis] = toWorld(v0, axis);
@@ -1224,16 +1224,15 @@ export class StreamingManager {
    * Get the world-space size of one voxel at a given LOD level
    * At LOD N, each voxel represents 2^N original voxels
    */
-  /** Conservative SSE voxel size: the largest physical voxel extent across axes, scaled by 2^lod. */
+  /** Conservative SSE voxel size at `lod`: the largest voxel among axes that finer levels
+   *  still improve (exponent > 0), so an axis stored at native resolution never forces a split. */
   private getVoxelWorldSize(lod: number): number {
     const normalizedSize = this.config.normalizedSize;
     const dims = this.config.dimensions;
-    const largestVoxel = Math.max(
-      normalizedSize[0] / dims[0],
-      normalizedSize[1] / dims[1],
-      normalizedSize[2] / dims[2],
-    );
-    return largestVoxel * (1 << lod);
+    const exponent = this.config.levelExponent(lod);
+    const improvable = [0, 1, 2].filter(a => exponent[a]! > 0);
+    const axes = improvable.length > 0 ? improvable : [0, 1, 2];
+    return Math.max(...axes.map(a => (normalizedSize[a]! / dims[a]!) * (1 << exponent[a]!)));
   }
 
   /**
@@ -1250,11 +1249,10 @@ export class StreamingManager {
 
     // Walk up the LOD hierarchy to find a loaded parent
     for (let parentLod = lod + 1; parentLod <= maxLod; parentLod++) {
-      // Parent coordinates are halved for each LOD level up
-      const scale = 1 << (parentLod - lod);
-      const parentBx = Math.floor(bx / scale);
-      const parentBy = Math.floor(by / scale);
-      const parentBz = Math.floor(bz / scale);
+      const [rx, ry, rz] = this.config.levelRatio(parentLod, lod);
+      const parentBx = Math.floor(bx / rx);
+      const parentBy = Math.floor(by / ry);
+      const parentBz = Math.floor(bz / rz);
 
       const parentKey = `lod${parentLod}:${parentBz}/${parentBy}/${parentBx}`;
       const parentEntry = this.loadedBricks.get(parentKey);
@@ -1271,10 +1269,11 @@ export class StreamingManager {
   private hasResidentChildren(bx: number, by: number, bz: number, lod: number): boolean {
     const finerLod = lod - 1;
     if (finerLod < 0) return false;
-    for (let dz = 0; dz < 2; dz++) {
-      for (let dy = 0; dy < 2; dy++) {
-        for (let dx = 0; dx < 2; dx++) {
-          const childKey = `lod${finerLod}:${bz * 2 + dz}/${by * 2 + dy}/${bx * 2 + dx}`;
+    const [nx, ny, nz] = this.config.childCounts(lod);
+    for (let dz = 0; dz < nz; dz++) {
+      for (let dy = 0; dy < ny; dy++) {
+        for (let dx = 0; dx < nx; dx++) {
+          const childKey = `lod${finerLod}:${bz * nz + dz}/${by * ny + dy}/${bx * nx + dx}`;
           if (this.loadedBricks.has(childKey) || this.inFlightRequests.has(childKey)) {
             return true;
           }
@@ -1288,8 +1287,8 @@ export class StreamingManager {
   private hasEmptyAncestor(bx: number, by: number, bz: number, lod: number): boolean {
     const maxLod = this.maxLod;
     for (let parentLod = lod + 1; parentLod <= maxLod; parentLod++) {
-      const scale = 1 << (parentLod - lod);
-      const parentKey = `lod${parentLod}:${Math.floor(bz / scale)}/${Math.floor(by / scale)}/${Math.floor(bx / scale)}`;
+      const [rx, ry, rz] = this.config.levelRatio(parentLod, lod);
+      const parentKey = `lod${parentLod}:${Math.floor(bz / rz)}/${Math.floor(by / ry)}/${Math.floor(bx / rx)}`;
       if (this.emptyBricks.has(parentKey)) return true;
     }
     return false;

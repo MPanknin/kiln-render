@@ -4,6 +4,7 @@
  */
 
 import type { DatasetConfig } from './config.js';
+import type { Vec3 } from './pyramid.js';
 
 export interface BrickLocation {
   // Virtual position (which brick in the logical volume)
@@ -32,6 +33,7 @@ export class IndirectionTable {
   private gridX: number;
   private gridY: number;
   private gridZ: number;
+  private readonly config: DatasetConfig;
 
   constructor(device: GPUDevice, config: DatasetConfig) {
     this.device = device;
@@ -39,6 +41,7 @@ export class IndirectionTable {
     this.gridX = config.datasetGrid[0];
     this.gridY = config.datasetGrid[1];
     this.gridZ = config.datasetGrid[2];
+    this.config = config;
 
     // Dataset grid, 4 bytes per entry (RGBA)
     this.data = new Uint8Array(this.gridX * this.gridY * this.gridZ * 4);
@@ -65,18 +68,15 @@ export class IndirectionTable {
     atlasX: number, atlasY: number, atlasZ: number,
     lod: number = 0
   ) {
-    // How many LOD 0 cells does this brick cover?
-    const scale = 1 << lod; // 2^lod: 1, 2, 4, 8 for LOD 0, 1, 2, 3
+    // LOD-0 cells this brick covers, per axis (2^exponent), and its base cell
+    const span = this.config.levelSpanCells(lod);
+    const baseX = virtualX * span[0];
+    const baseY = virtualY * span[1];
+    const baseZ = virtualZ * span[2];
 
-    // Base position in LOD 0 grid
-    const baseX = virtualX * scale;
-    const baseY = virtualY * scale;
-    const baseZ = virtualZ * scale;
-
-    // Fill all covered cells
-    for (let dz = 0; dz < scale; dz++) {
-      for (let dy = 0; dy < scale; dy++) {
-        for (let dx = 0; dx < scale; dx++) {
+    for (let dz = 0; dz < span[2]; dz++) {
+      for (let dy = 0; dy < span[1]; dy++) {
+        for (let dx = 0; dx < span[0]; dx++) {
           const x = baseX + dx;
           const y = baseY + dy;
           const z = baseZ + dz;
@@ -105,7 +105,7 @@ export class IndirectionTable {
     }
 
     // Update the GPU region
-    this.updateRegionGPU(baseX, baseY, baseZ, scale);
+    this.updateRegionGPU(baseX, baseY, baseZ, span);
   }
 
   /**
@@ -116,14 +116,14 @@ export class IndirectionTable {
     virtualX: number, virtualY: number, virtualZ: number,
     lod: number = 0
   ) {
-    const scale = 1 << lod;
-    const baseX = virtualX * scale;
-    const baseY = virtualY * scale;
-    const baseZ = virtualZ * scale;
+    const span = this.config.levelSpanCells(lod);
+    const baseX = virtualX * span[0];
+    const baseY = virtualY * span[1];
+    const baseZ = virtualZ * span[2];
 
-    for (let dz = 0; dz < scale; dz++) {
-      for (let dy = 0; dy < scale; dy++) {
-        for (let dx = 0; dx < scale; dx++) {
+    for (let dz = 0; dz < span[2]; dz++) {
+      for (let dy = 0; dy < span[1]; dy++) {
+        for (let dx = 0; dx < span[0]; dx++) {
           const x = baseX + dx;
           const y = baseY + dy;
           const z = baseZ + dz;
@@ -148,7 +148,7 @@ export class IndirectionTable {
       }
     }
 
-    this.updateRegionGPU(baseX, baseY, baseZ, scale);
+    this.updateRegionGPU(baseX, baseY, baseZ, span);
   }
 
   /**
@@ -161,14 +161,14 @@ export class IndirectionTable {
     fallbackAtlas?: [number, number, number],
     fallbackLod?: number
   ) {
-    const scale = 1 << lod;
-    const baseX = virtualX * scale;
-    const baseY = virtualY * scale;
-    const baseZ = virtualZ * scale;
+    const span = this.config.levelSpanCells(lod);
+    const baseX = virtualX * span[0];
+    const baseY = virtualY * span[1];
+    const baseZ = virtualZ * span[2];
 
-    for (let dz = 0; dz < scale; dz++) {
-      for (let dy = 0; dy < scale; dy++) {
-        for (let dx = 0; dx < scale; dx++) {
+    for (let dz = 0; dz < span[2]; dz++) {
+      for (let dy = 0; dy < span[1]; dy++) {
+        for (let dx = 0; dx < span[0]; dx++) {
           const x = baseX + dx;
           const y = baseY + dy;
           const z = baseZ + dz;
@@ -200,17 +200,15 @@ export class IndirectionTable {
       }
     }
 
-    this.updateRegionGPU(baseX, baseY, baseZ, scale);
+    this.updateRegionGPU(baseX, baseY, baseZ, span);
   }
 
-  /**
-   * Clear all mappings
-   */
   /** Destroy the GPU texture (the device is external). */
   dispose(): void {
     this.texture.destroy();
   }
 
+  /** Clear all mappings */
   clearAll() {
     this.data.fill(0);
     this.updateFullGPU();
@@ -220,11 +218,11 @@ export class IndirectionTable {
    * Update a region of the indirection texture on the GPU
    * Used for multi-cell updates when setting/clearing coarse LOD bricks
    */
-  private updateRegionGPU(baseX: number, baseY: number, baseZ: number, size: number) {
+  private updateRegionGPU(baseX: number, baseY: number, baseZ: number, span: Vec3) {
     // Clamp region to grid bounds
-    const endX = Math.min(baseX + size, this.gridX);
-    const endY = Math.min(baseY + size, this.gridY);
-    const endZ = Math.min(baseZ + size, this.gridZ);
+    const endX = Math.min(baseX + span[0], this.gridX);
+    const endY = Math.min(baseY + span[1], this.gridY);
+    const endZ = Math.min(baseZ + span[2], this.gridZ);
     const actualSizeX = endX - baseX;
     const actualSizeY = endY - baseY;
     const actualSizeZ = endZ - baseZ;
@@ -233,7 +231,7 @@ export class IndirectionTable {
 
     // For small regions, write directly
     // For larger regions, extract the subregion into a contiguous buffer
-    if (size === 1) {
+    if (span[0] === 1 && span[1] === 1 && span[2] === 1) {
       const idx = (baseX + baseY * this.gridX + baseZ * this.gridX * this.gridY) * 4;
       this.device.queue.writeTexture(
         { texture: this.texture, origin: [baseX, baseY, baseZ] },

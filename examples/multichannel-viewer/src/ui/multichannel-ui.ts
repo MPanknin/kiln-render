@@ -22,6 +22,7 @@ import {
   createColorSwatch,
 } from "../../../shared/controls/widgets.js";
 import { trackRenderMode } from "../../../shared/analytics.js";
+import { normalizeWindow } from "@kiln/core/config.js";
 
 /** Only 'dvr' | 'mip' | 'slice' are selectable via the Mode segmented control — 'slice-lod' is a debug visualization, relocated to the "LOD Levels" Advanced toggle (applied on top of the base mode). */
 type BaseRenderMode = "dvr" | "mip" | "slice";
@@ -160,14 +161,7 @@ export class MultichannelUI {
           b: 255,
         };
         const base = i * 4;
-        let min = 0,
-          max = 1;
-        const w = viewer.metadata.channelWindows?.[i];
-        if (w && w.max > w.min) {
-          const range = w.max - w.min;
-          min = Math.max(0, Math.min(1, (w.start - w.min) / range));
-          max = Math.max(0, Math.min(1, (w.end - w.min) / range));
-        }
+        const { min, max } = this.metadataWindow(i) ?? { min: 0, max: 1 };
         this.channelParams.push({
           color: {
             r: Math.round(
@@ -519,11 +513,9 @@ export class MultichannelUI {
     if (!windows) return;
 
     for (let i = 0; i < this.channelParams.length; i++) {
-      const w = windows[i];
-      if (!w || w.max <= w.min) continue;
-      const range = w.max - w.min;
-      const min = Math.max(0, Math.min(1, (w.start - w.min) / range));
-      const max = Math.max(0, Math.min(1, (w.end - w.min) / range));
+      const w = this.metadataWindow(i);
+      if (!w) continue;
+      const { min, max } = w;
       this.channelParams[i]!.level.min = min;
       this.channelParams[i]!.level.max = max;
       this.renderer.setChannelWindow(
@@ -533,6 +525,13 @@ export class MultichannelUI {
       );
       this.channelWidgets[i]?.level.setValue(min, max);
     }
+  }
+
+  /** Channel window from metadata in shader space (float: relative to the global dataRange). */
+  private metadataWindow(ch: number): { min: number; max: number } | null {
+    const m = this.viewer.metadata;
+    const w = m.channelWindows?.[ch];
+    return w ? normalizeWindow(w, m.isFloat ?? false, m.dataRange) : null;
   }
 
   getChannelState(): ChannelState[] {

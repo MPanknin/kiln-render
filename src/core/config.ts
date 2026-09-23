@@ -93,6 +93,22 @@ export function emptyBrickThresholdFor(
 }
 
 /**
+ * Display window in shader space (0–1 of the stored texture value). Float voxels are
+ * normalised by the global dataRange, integer voxels by the dtype range in `w.min/max`.
+ */
+export function normalizeWindow(
+  w: { start: number; end: number; min: number; max: number },
+  isFloat: boolean,
+  dataRange?: [number, number],
+): { min: number; max: number } | null {
+  const [lo, hi] = isFloat && dataRange ? dataRange : [w.min, w.max];
+  const range = hi - lo;
+  if (!(range > 0)) return null;
+  const clamp = (v: number) => Math.max(0, Math.min(1, (v - lo) / range));
+  return { min: clamp(w.start), max: clamp(w.end) };
+}
+
+/**
  * Immutable value object describing dataset geometry.
  * Computed from VolumeMetadata and injected into subsystems at construction.
  */

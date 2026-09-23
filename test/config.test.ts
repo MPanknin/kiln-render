@@ -8,6 +8,7 @@ import {
   TOTAL_BRICK_SLOTS,
   DatasetConfig,
   emptyBrickThresholdFor,
+  normalizeWindow,
 } from '../src/core/config.js';
 
 describe('Config Constants', () => {
@@ -163,5 +164,30 @@ describe('emptyBrickThresholdFor', () => {
 
   it('float stats are normalised to 16-bit range and ignore raw window starts', () => {
     expect(emptyBrickThresholdFor(16, [{ start: 0.001 }], true)).toBe(100);
+  });
+});
+
+describe('normalizeWindow', () => {
+  it('scales integer windows by the dtype range the parser put in min/max', () => {
+    expect(normalizeWindow({ start: 0, end: 65535, min: 0, max: 65535 }, false)).toEqual({ min: 0, max: 1 });
+    const w = normalizeWindow({ start: 6553.5, end: 32767.5, min: 0, max: 65535 }, false)!;
+    expect(w.min).toBeCloseTo(0.1);
+    expect(w.max).toBeCloseTo(0.5);
+  });
+
+  it('scales float windows by the global dataRange, not the channel OMERO min/max', () => {
+    // ch1 OMERO min/max 0–100 differs from the dataset range 0–1000 taken from ch0
+    const w = normalizeWindow({ start: 10, end: 90, min: 0, max: 100 }, true, [0, 1000])!;
+    expect(w.min).toBeCloseTo(0.01);
+    expect(w.max).toBeCloseTo(0.09);
+  });
+
+  it('falls back to the window min/max for float data without a dataRange', () => {
+    expect(normalizeWindow({ start: 25, end: 75, min: 0, max: 100 }, true)).toEqual({ min: 0.25, max: 0.75 });
+  });
+
+  it('clamps to 0–1 and rejects an empty range', () => {
+    expect(normalizeWindow({ start: -10, end: 200, min: 0, max: 100 }, false)).toEqual({ min: 0, max: 1 });
+    expect(normalizeWindow({ start: 1, end: 2, min: 5, max: 5 }, false)).toBeNull();
   });
 });

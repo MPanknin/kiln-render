@@ -12,7 +12,7 @@ import { Renderer, VolumeRenderMode } from './core/renderer.js';
 import { VolumeResources } from './core/volume-resources.js';
 import { TransferFunction, TFPreset } from './core/transfer-function.js';
 import { StreamingManager } from './streaming/streaming-manager.js';
-import { DatasetConfig, computeAtlasGrid, emptyBrickThresholdFor } from './core/config.js';
+import { DatasetConfig, computeAtlasGrid, emptyBrickThresholdFor, normalizeWindow } from './core/config.js';
 import { detectBest16BitFormat } from './core/volume.js';
 import type { ViewParams } from './core/view.js';
 import type { DataProvider, VolumeMetadata } from './data/data-provider.js';
@@ -70,6 +70,14 @@ export interface EngineOptions {
 
 /** How long after the last view change the camera still counts as interacting (ms). */
 const INTERACTION_HOLD_MS = 200;
+
+/** Push every metadata channel window to the renderer in shader space. */
+function applyChannelWindows(renderer: Renderer, metadata: VolumeMetadata): void {
+  metadata.channelWindows?.forEach((cw, ch) => {
+    const w = cw && normalizeWindow(cw, metadata.isFloat ?? false, metadata.dataRange);
+    if (w) renderer.setChannelWindow(ch, (w.min + w.max) / 2, Math.max(0.01, w.max - w.min));
+  });
+}
 
 type SetupMilestones = Pick<LoadMilestones, 'datasetOpenStart' | 'deviceReady' | 'metadataReady' | 'gpuReady'>;
 
@@ -238,35 +246,13 @@ export class KilnEngine {
 
     // Apply 16-bit window/level defaults from metadata
     if (effectiveBitDepth === 16) {
-      if (metadata.window) {
-        const { start, end, min, max } = metadata.window;
-        const range = max - min;
-        if (range > 0) {
-          renderer.windowCenter = Math.max(0, Math.min(1, ((start + end) / 2 - min) / range));
-          renderer.windowWidth = Math.max(0.01, Math.min(1, (end - start) / range));
-        }
-      } else {
-        renderer.windowCenter = 0.5;
-        renderer.windowWidth = 1.0;
-      }
+      const w = metadata.window && normalizeWindow(metadata.window, metadata.isFloat ?? false, metadata.dataRange);
+      renderer.windowCenter = w ? (w.min + w.max) / 2 : 0.5;
+      renderer.windowWidth = w ? Math.max(0.01, w.max - w.min) : 1.0;
     }
 
-    // Apply per-channel window/level from metadata. Float windows are
-    // relative to the global dataRange (not per-channel OMERO min/max).
     if (metadata.channelWindows && metadata.numChannels > 1) {
-      const useGlobalRange = (metadata.isFloat ?? false) && !!metadata.dataRange;
-      for (let ch = 0; ch < metadata.channelWindows.length; ch++) {
-        const w = metadata.channelWindows[ch];
-        if (!w) continue;
-        const lo = useGlobalRange ? metadata.dataRange![0] : w.min;
-        const hi = useGlobalRange ? metadata.dataRange![1] : w.max;
-        const range = hi - lo;
-        if (range > 0) {
-          const center = Math.max(0, Math.min(1, ((w.start + w.end) / 2 - lo) / range));
-          const width = Math.max(0.01, Math.min(1, (w.end - w.start) / range));
-          renderer.setChannelWindow(ch, center, width);
-        }
-      }
+      applyChannelWindows(renderer, metadata);
     }
 
     // OMERO display hints: channel colour and default visibility (alpha 0 = hidden)
@@ -362,17 +348,7 @@ export class KilnEngine {
         renderer.resetAccumulation();
       }
       if (opts.channelRanges && metadata.channelWindows) {
-        for (let ch = 0; ch < opts.channelRanges.length; ch++) {
-          const w = metadata.channelWindows[ch];
-          if (!w) continue;
-          const range = w.max - w.min;
-          if (range > 0) {
-            const center = Math.max(0, Math.min(1, ((w.start + w.end) / 2 - w.min) / range));
-            const width = Math.max(0.01, Math.min(1, (w.end - w.start) / range));
-            renderer.setChannelWindow(ch, center, width);
-          }
-        }
-        renderer.resetAccumulation();
+        applyChannelWindows(renderer, metadata);
       }
       engine.onChannelWindowsChanged?.();
     });

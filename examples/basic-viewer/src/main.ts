@@ -16,6 +16,9 @@ import { VolumeUI } from './ui/volume-ui.js';
 import { mountDatasetDialog, showDialogError } from '../../shared/dataset-dialog.js';
 import { mountToast } from '../../shared/toast.js';
 import { setupShareButton } from '../../shared/share-button.js';
+import { setupScreenshotButton } from '../../shared/screenshot.js';
+import { mountOrientationGizmo } from '../../shared/orientation-gizmo.js';
+import { mountShortcuts, axisSnapShortcut } from '../../shared/shortcuts.js';
 import { mountTopBar } from '../../shared/top-bar.js';
 import { trackEvent, trackDataset, trackRenderMode } from '../../shared/analytics.js';
 import { maybeRunBench } from '../../shared/bench.js';
@@ -209,9 +212,21 @@ async function main() {
   if (!IS_EMBED) {
     const ui = new VolumeUI(viewer);
     viewer.onBeforeFrame = () => ui.recordFrame();
+    viewer.onChannelWindowsChanged = () => ui.refreshValueLabels();
     ui.syncFromState();
 
     const toast = mountToast();
+    const takeScreenshot = setupScreenshotButton(viewer, toast);
+    const gizmo = mountOrientationGizmo(viewer.camera);
+    mountShortcuts([
+      { keys: ['1', '2', '3', '4'], display: '1 – 4', label: 'DVR / MIP / ISO / Slice',
+        run: (e) => ui.setBaseMode((['dvr', 'mip', 'iso', 'slice'] as const)[Number(e.key) - 1]!) },
+      { keys: ['a', 'A'], display: 'A', label: 'Auto contrast', run: () => ui.autoContrast() },
+      axisSnapShortcut((dir) => gizmo.snap(dir)),
+      { keys: ['r', 'R'], display: 'R', label: 'Reset view', run: () => gizmo.reset() },
+      { keys: ['s', 'S'], display: 'S', label: 'Save screenshot', run: takeScreenshot },
+      { keys: ['d', 'D'], display: 'D', label: 'Diagnostics panel' },
+    ]);
     setupShareButton({
       isLocalZarr,
       toast,

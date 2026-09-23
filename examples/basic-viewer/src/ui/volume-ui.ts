@@ -25,7 +25,11 @@ import {
   createSelect,
   createSegmentedControl,
   createSliderToggleRow,
+  createButtonRow,
 } from '../../../shared/controls/widgets.js';
+import { percentileWindow, AUTO_CONTRAST_BINS } from '../../../shared/auto-contrast.js';
+import { toRawValue, formatRawValue, type ValueSpace } from '../../../shared/data-values.js';
+import { mountColorbar, type Colorbar } from '../../../shared/colorbar.js';
 
 /** Only 'dvr' | 'mip' | 'iso' | 'slice' are selectable via the Mode segmented control — 'lod'/'slice-lod' are debug visualizations, relocated to the "LOD Levels" Advanced toggle (applied on top of the base mode). */
 type BaseRenderMode = 'dvr' | 'mip' | 'iso' | 'slice';
@@ -33,6 +37,7 @@ type BaseRenderMode = 'dvr' | 'mip' | 'iso' | 'slice';
 export class VolumeUI {
   private viewer: KilnViewer;
   private stats: StatsPanel;
+  private colorbar: Colorbar;
   private renderer: Renderer;
   private camera: Camera;
   private transferFunction: TransferFunction;
@@ -76,6 +81,8 @@ export class VolumeUI {
   private windowCenterSlider!: ReturnType<typeof createSlider>;
   private windowWidthSlider!: ReturnType<typeof createSlider>;
   private densitySlider!: ReturnType<typeof createSlider>;
+  private autoContrastRow!: ReturnType<typeof createButtonRow>;
+  private contrastHistogram: Uint32Array | null = null;
   private sliceRows!: [ReturnType<typeof createSliderToggleRow>, ReturnType<typeof createSliderToggleRow>, ReturnType<typeof createSliderToggleRow>];
   private upAxisSelect!: ReturnType<typeof createSelect>;
   private wireframeToggle!: ReturnType<typeof createToggle>;
@@ -123,6 +130,7 @@ export class VolumeUI {
     statsContainer.style.cssText = 'position: fixed; right: 8px; bottom: calc(36px + env(safe-area-inset-bottom, 0px)); z-index: 1000;';
     document.body.appendChild(statsContainer);
     this.stats = new StatsPanel(statsContainer);
+    this.colorbar = mountColorbar();
 
     this.tfCanvas = document.createElement('canvas');
     this.tfCanvas.width = 256;
@@ -161,6 +169,14 @@ export class VolumeUI {
     this.updateVisibility();
   }
 
+  /** Switch base render mode and keep the Mode control in sync (keyboard shortcuts). */
+  setBaseMode(mode: BaseRenderMode): void {
+    this.params.renderMode = mode;
+    this.modeControl.setValue(mode);
+    this.applyEffectiveMode();
+    trackRenderMode(mode);
+  }
+
   private buildPanel(container: HTMLElement): void {
     const { el: panelEl, body } = createPanel('Controls', { defaultCollapsed: true });
     container.appendChild(panelEl);
@@ -174,11 +190,7 @@ export class VolumeUI {
         { label: 'Slice', value: 'slice' },
       ],
       value: this.params.renderMode,
-      onChange: (v) => {
-        this.params.renderMode = v as BaseRenderMode;
-        this.applyEffectiveMode();
-        trackRenderMode(v);
-      },
+      onChange: (v) => this.setBaseMode(v as BaseRenderMode),
     });
     body.appendChild(this.modeControl.el);
 
@@ -325,11 +337,13 @@ export class VolumeUI {
 
     this.isoValueSlider = createSlider({
       label: 'ISO Value', min: 0, max: 1, step: 0.01, value: this.params.isoValue,
+      format: (v) => this.formatRaw(v),
       onChange: (v) => { this.renderer.isoValue = v; this.renderer.resetAccumulation(); },
     });
 
     this.windowCenterSlider = createSlider({
       label: 'Center', min: 0, max: 1, step: 0.01, value: this.params.windowCenter,
+      format: (v) => this.formatRaw(v),
       onChange: (v) => {
         this.renderer.windowCenter = v;
         this.renderer.resetAccumulation();
@@ -339,12 +353,19 @@ export class VolumeUI {
 
     this.windowWidthSlider = createSlider({
       label: 'Width', min: 0.01, max: 1, step: 0.01, value: this.params.windowWidth,
+      format: (v) => formatRawValue(toRawValue(v, this.valueSpace()) - toRawValue(0, this.valueSpace()), this.valueSpace()),
       onChange: (v) => {
         this.renderer.windowWidth = v;
         this.renderer.resetAccumulation();
         this.updateTFPreview();
       },
     });
+
+    this.autoContrastRow = createButtonRow({
+      label: 'Contrast', text: 'Auto', title: 'Fit the window to the data (A)',
+      onClick: () => this.autoContrast(),
+    });
+    this.autoContrastRow.setDisabled(true);
 
     this.densitySlider = createSlider({
       label: 'Density', min: 0.1, max: 10.0, step: 0.1, value: this.params.densityScale,
@@ -496,7 +517,32 @@ export class VolumeUI {
       this.renderer.windowCenter,
       this.renderer.windowWidth
     );
+    this.updateColorbar();
     this.renderer.resetAccumulation();
+  }
+
+  private valueSpace(): ValueSpace {
+    const m = this.viewer.metadata;
+    return { isFloat: m.isFloat ?? false, bitDepth: m.bitDepth, floatMin: this.renderer.floatMin, floatMax: this.renderer.floatMax };
+  }
+
+  /** Normalized (shader) value → raw data value text. */
+  private formatRaw(n: number): string {
+    const space = this.valueSpace();
+    return formatRawValue(toRawValue(n, space), space);
+  }
+
+  private updateColorbar(): void {
+    const { windowCenter: c, windowWidth: w } = this.renderer;
+    this.colorbar.update((t) => this.transferFunction.getColor(t), this.formatRaw(c - w / 2), this.formatRaw(c + w / 2));
+  }
+
+  /** Re-render raw-value labels, e.g. after the float data range is derived. */
+  refreshValueLabels(): void {
+    this.isoValueSlider.setValue(this.renderer.isoValue);
+    this.windowCenterSlider.setValue(this.renderer.windowCenter);
+    this.windowWidthSlider.setValue(this.renderer.windowWidth);
+    this.updateColorbar();
   }
 
   refreshTFPreview(): void {
@@ -507,16 +553,29 @@ export class VolumeUI {
   private onBaseLodLoaded(brickData: (Uint8Array | Uint16Array)[]): void {
     if (!this.metadata) return;
 
-    const histogram = computeHistogram(
+    const histogramOf = (bins: number) => computeHistogram(
       brickData,
-      this.metadata.bitDepth,
-      256,
-      this.metadata.isFloat ?? false,
-      this.metadata.dataRange?.[0] ?? 0,
-      this.metadata.dataRange?.[1] ?? 1,
+      this.metadata!.bitDepth,
+      bins,
+      this.metadata!.isFloat ?? false,
+      this.metadata!.dataRange?.[0] ?? 0,
+      this.metadata!.dataRange?.[1] ?? 1,
       this.renderer.canvas.format,
     );
-    this.transferFunction.setHistogram(histogram);
+    this.transferFunction.setHistogram(histogramOf(256));
+    this.contrastHistogram = histogramOf(AUTO_CONTRAST_BINS);
+    this.autoContrastRow.setDisabled(false);
+    this.updateTFPreview();
+  }
+
+  /** Fit window center/width to the base-LOD value distribution. */
+  autoContrast(): void {
+    const w = this.contrastHistogram && percentileWindow(this.contrastHistogram);
+    if (!w) return;
+    this.renderer.windowCenter = w.center;
+    this.renderer.windowWidth = w.width;
+    this.windowCenterSlider.setValue(w.center);
+    this.windowWidthSlider.setValue(w.width);
     this.updateTFPreview();
   }
 
@@ -592,12 +651,13 @@ export class VolumeUI {
         children.push(this.isoValueSlider.el);
       }
       if (!isLodDebug) {
-        children.push(this.windowCenterSlider.el, this.windowWidthSlider.el);
+        children.push(this.windowCenterSlider.el, this.windowWidthSlider.el, this.autoContrastRow.el);
       }
       if (mode === 'dvr') {
         children.push(this.densitySlider.el);
       }
     }
     this.modeSwap.setContent(children);
+    this.colorbar.setVisible(mode !== 'iso' && !isLodDebug);
   }
 }

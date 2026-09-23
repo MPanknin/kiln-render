@@ -9,9 +9,11 @@
 import { describe, it, expect } from 'vitest';
 import { mat4 } from 'wgpu-matrix';
 import {
+  Camera,
   extractFrustumPlanes,
   isAABBInFrustum,
 } from '../src/core/camera.js';
+import type { UpAxis } from '../src/core/camera.js';
 
 const multiplyMatrices = (a: Float32Array, b: Float32Array) => mat4.multiply(a, b) as Float32Array;
 
@@ -134,5 +136,40 @@ describe('Frustum Culling', () => {
 
       expect(isAABBInFrustum(min, max, frustum)).toBe(true);
     });
+  });
+});
+
+describe('Camera.lookFrom', () => {
+  const canvasStub = { addEventListener() {} } as unknown as HTMLCanvasElement;
+  const upAxes: UpAxis[] = ['x', 'y', 'z', '-x', '-y', '-z'];
+  const dirs: Array<[number, number, number]> = [
+    [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], [1, 1, 0],
+  ];
+
+  const viewDir = (cam: Camera): number[] => {
+    const [, , dist, tx, ty, tz] = cam.getOrbitState();
+    return [(cam.position[0]! - tx) / dist, (cam.position[1]! - ty) / dist, (cam.position[2]! - tz) / dist];
+  };
+
+  for (const up of upAxes) {
+    it(`places the camera on the requested side (up ${up})`, () => {
+      const cam = new Camera(canvasStub);
+      cam.setUpAxis(up);
+      for (const d of dirs) {
+        cam.lookFrom(d);
+        const len = Math.hypot(...d);
+        const v = viewDir(cam);
+        // Along-up views stop poleEpsilon short of the pole, so allow ~1e-3
+        for (let i = 0; i < 3; i++) expect(v[i]!).toBeCloseTo(d[i]! / len, 2);
+      }
+    });
+  }
+
+  it('keeps distance and pan target', () => {
+    const cam = new Camera(canvasStub);
+    cam.setOrbitState([0.2, 1.0, 2.5, 0.1, -0.2, 0.3]);
+    cam.lookFrom([0, 0, 1]);
+    const [, , dist, tx, ty, tz] = cam.getOrbitState();
+    expect([dist, tx, ty, tz]).toEqual([2.5, 0.1, -0.2, 0.3]);
   });
 });

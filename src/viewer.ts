@@ -192,6 +192,16 @@ export class KilnViewer {
     };
   }
 
+  /** Render the current view and encode it as an image; call once the view has converged. */
+  captureImage(type = 'image/png'): Promise<Blob> {
+    // Render and snapshot in the same task, before the frame is presented
+    const view = this.camera.getViewParams(this.canvas.width, this.canvas.height);
+    this.engine.render(this.context.getCurrentTexture().createView(), view);
+    return new Promise((resolve, reject) => {
+      this.canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Canvas capture failed'))), type);
+    });
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;

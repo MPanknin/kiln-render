@@ -486,3 +486,34 @@ export function createColorSwatch(opts: {
     },
   };
 }
+
+/** A labelled row with a compact action button on the right. */
+export function createButtonRow(opts: {
+  label: string;
+  text: string;
+  title?: string;
+  onClick: () => void;
+}): { el: HTMLElement; setDisabled(disabled: boolean): void } {
+  const el = document.createElement("div");
+  el.className = "ctl-button-row";
+
+  const label = document.createElement("span");
+  label.className = "ctl-row-label";
+  label.textContent = opts.label;
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ctl-button";
+  button.textContent = opts.text;
+  if (opts.title) button.title = opts.title;
+  button.addEventListener("click", () => opts.onClick());
+
+  el.appendChild(label);
+  el.appendChild(button);
+  return {
+    el,
+    setDisabled(disabled: boolean) {
+      button.disabled = disabled;
+    },
+  };
+}

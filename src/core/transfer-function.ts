@@ -191,6 +191,12 @@ export class TransferFunction {
     return [...this.opacityPoints];
   }
 
+  /** RGB (0–255) of the colour map at t in [0, 1]. */
+  getColor(t: number): [number, number, number] {
+    const i = Math.round(Math.max(0, Math.min(1, t)) * (this.size - 1)) * 3;
+    return [this.colorData[i]!, this.colorData[i + 1]!, this.colorData[i + 2]!];
+  }
+
   private sampleOpacity(t: number): number {
     // Find surrounding points
     let i = 0;

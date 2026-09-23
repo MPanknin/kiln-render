@@ -234,6 +234,14 @@ export class MultichannelUI {
     this.updateVisibility();
   }
 
+  /** Switch base render mode and keep the Mode control in sync (keyboard shortcuts). */
+  setBaseMode(mode: BaseRenderMode): void {
+    this.params.renderMode = mode;
+    this.modeControl.setValue(mode);
+    this.applyEffectiveMode();
+    trackRenderMode(mode);
+  }
+
   private buildPanel(container: HTMLElement): void {
     const { el: panelEl, body } = createPanel("Controls", { defaultCollapsed: true });
     container.appendChild(panelEl);
@@ -245,11 +253,7 @@ export class MultichannelUI {
         { label: "Slice", value: "slice" },
       ],
       value: this.params.renderMode,
-      onChange: (v) => {
-        this.params.renderMode = v as BaseRenderMode;
-        this.applyEffectiveMode();
-        trackRenderMode(v);
-      },
+      onChange: (v) => this.setBaseMode(v as BaseRenderMode),
     });
     body.appendChild(this.modeControl.el);
 

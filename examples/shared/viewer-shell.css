@@ -237,7 +237,7 @@ a:focus-visible {
 .toast {
   position: fixed;
   top: 44px;
-  right: 8px;
+  right: 88px; /* clear of the orientation gizmo */
   background: var(--accent);
   color: #fff;
   font-family: system-ui, -apple-system, sans-serif;
@@ -460,4 +460,122 @@ a:focus-visible {
 .cancel-btn:hover {
   background: rgba(187, 188, 196, 0.15);
   color: var(--text);
+}
+
+/* --- Colour legend: bottom-centre, just above the status strip --- */
+.colorbar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(36px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  pointer-events: auto;
+}
+
+.colorbar-ramp {
+  width: 160px;
+  height: 8px;
+  border-radius: 2px;
+  image-rendering: pixelated;
+}
+
+.colorbar-label {
+  min-width: 3ch;
+  white-space: nowrap;
+}
+
+.colorbar-lo {
+  text-align: right;
+}
+
+/* Screenshot in progress: waiting for the view to finish loading */
+.toolbar-btn.busy {
+  color: var(--accent);
+  animation: status-pulse 1.2s ease-in-out infinite;
+}
+
+/* --- Orientation gizmo: top-right below the top bar (navigation-gizmo convention) --- */
+.orientation-gizmo {
+  position: fixed;
+  top: 44px;
+  right: 8px;
+  z-index: 999;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--bg-panel);
+}
+
+.orientation-gizmo canvas {
+  display: block;
+}
+
+/* Centred under the circle */
+.orientation-gizmo-home {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 24px;
+  height: 24px;
+  background: var(--bg-panel);
+}
+
+.orientation-gizmo-home svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* --- Keyboard shortcut help overlay --- */
+.shortcut-help {
+  position: fixed;
+  inset: 0;
+  z-index: 1002;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.shortcut-help[hidden] {
+  display: none;
+}
+
+.shortcut-help-panel {
+  min-width: 280px;
+  padding: 14px 16px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.shortcut-help-panel .ctl-eyebrow {
+  margin-bottom: 8px;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 3px 0;
+}
+
+.shortcut-row kbd {
+  flex: 0 0 64px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
 }

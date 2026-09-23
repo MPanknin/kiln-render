@@ -697,3 +697,33 @@
     padding: 12px;
   }
 }
+
+/* --- Button row: label left, compact action button right --- */
+.ctl-button-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 0;
+}
+
+.ctl-button {
+  border: none;
+  border-radius: var(--radius);
+  background: rgba(187, 188, 196, 0.08);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.ctl-button:hover:not(:disabled) {
+  background: rgba(187, 188, 196, 0.15);
+}
+
+.ctl-button:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}

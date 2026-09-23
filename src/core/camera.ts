@@ -321,6 +321,23 @@ export class Camera {
     this.updatePosition();
   }
 
+  /** Orbit to view the target from world direction `dir`; distance and pan are kept. */
+  lookFrom(dir: [number, number, number]): void {
+    const len = Math.hypot(dir[0], dir[1], dir[2]);
+    if (len === 0) return;
+    const [x, y, z] = [dir[0] / len, dir[1] / len, dir[2] / len];
+    const sign = this.upAxis.startsWith('-') ? -1 : 1;
+    // Inverse of updatePosition(): (along-up, horizontal cos, horizontal sin) per up axis
+    const [up, hc, hs] = ({ x: [x, y, z], y: [y, z, x], z: [z, x, y] } as const)[
+      this.upAxis.replace('-', '') as 'x' | 'y' | 'z'
+    ];
+    // Along-up views stop just short of the pole and keep the current azimuth
+    const limit = Math.PI / 2 - this.poleEpsilon;
+    this.rotationX = Math.max(-limit, Math.min(limit, Math.asin(Math.max(-1, Math.min(1, up * sign)))));
+    if (Math.hypot(hc, hs) > 1e-6) this.rotationY = Math.atan2(hs, hc);
+    this.updatePosition();
+  }
+
   /** Reset pan to center on origin */
   resetPan(): void {
     this.target = [0, 0, 0];

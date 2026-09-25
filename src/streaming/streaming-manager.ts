@@ -1326,7 +1326,7 @@ export class StreamingManager {
       commit(placeholders);
     };
 
-    await Promise.all(loadChannels.map(async (ch) => {
+    const fetchChannel = async (ch: number): Promise<void> => {
       const cached = this.brickCache.get(`ch${ch}:${key}`);
       let r: BrickLoadResult | null;
       if (cached) {
@@ -1346,7 +1346,12 @@ export class StreamingManager {
       } else {
         tryCommit();
       }
-    }));
+    };
+    // First visible channel alone, then the rest: in-flight bricks otherwise share the link
+    // across all channels and every channel lands at the same late moment.
+    await fetchChannel(loadChannels[0]!);
+    if (signal.aborted) return;
+    await Promise.all(loadChannels.slice(1).map(fetchChannel));
     if (signal.aborted) return;
 
     if (!loadChannels.some(ch => results[ch])) {

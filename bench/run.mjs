@@ -160,6 +160,7 @@ function summarize(rs) {
   const cols = [
     ['first content', r => r.firstContentFrameMs],
     ['base 50%', r => r.milestones?.baseCoverage50],
+    ['ch0 done', r => r.milestones?.baseChannel0Complete],
     ['base done', r => r.baseCompleteMs],
     ['converge', r => r.convergeMs],
     ['requests', r => r.requestCount],

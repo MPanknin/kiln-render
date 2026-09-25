@@ -509,6 +509,7 @@ export class StreamingManager {
     // that has not arrived (or failed) never shows a previous brick.
     interface BrickState { slot: AllocationResult | null; settled: number; empty: boolean | null; allocFailed: boolean }
     const states = new Map<string, BrickState>();
+    let ch0Settled = 0;
     const stateFor = (key: string) => {
       let st = states.get(key);
       if (!st) { st = { slot: null, settled: 0, empty: null, allocFailed: false }; states.set(key, st); }
@@ -559,6 +560,9 @@ export class StreamingManager {
       this.uploadAvg.add(uploadMs);
       this.notifyContentChanged();
       } finally {
+        if (ch === 0 && ++ch0Settled === bricks.length && this.milestones.baseChannel0Complete === null && !stale()) {
+          this.milestones.baseChannel0Complete = performance.now();
+        }
         if (++st.settled === numChannels) settleBrick(key);
       }
     };
@@ -617,6 +621,7 @@ export class StreamingManager {
     this.baseLodPending = 0;
     this.baseLodLoaded = true;
     stampBaseCoverage(this.milestones, resolved.size, bricks.length, now);
+    if (this.milestones.baseChannel0Complete === null) this.milestones.baseChannel0Complete = now;
     this.milestones.baseComplete = now;
 
     // Show the completed base LOD right away, even if the camera never moves again

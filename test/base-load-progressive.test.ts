@@ -12,6 +12,7 @@ vi.mock('../src/core/volume.js', () => ({ writeToCanvas: vi.fn() }));
 const flags = new Set<string>();
 vi.mock('../src/core/feature-flags.js', () => ({
   isFlagEnabled: (name: string) => flags.has(name),
+  flagNumber: (_name: string, fallback: number) => fallback,
   activeFlags: () => [...flags],
 }));
 

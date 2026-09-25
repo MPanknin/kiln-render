@@ -123,7 +123,7 @@ function formatReport(r: BenchReport): string {
     `${pad('time to converge')}${Math.round(r.convergeMs)} ms${r.timedOut ? '  ⚠ TIMED OUT (did not converge)' : ''}`,
     `${pad('setup')}open ${ms(m.datasetOpenStart)} · device ${ms(m.deviceReady)} · metadata ${ms(m.metadataReady)} · gpu ${ms(m.gpuReady)}`,
     `${pad('first content')}submit ${ms(r.firstContentSubmitMs)} · frame ${ms(r.firstContentFrameMs)}`,
-    `${pad('base coverage')}50% ${ms(m.baseCoverage50)} · 90% ${ms(m.baseCoverage90)} · done ${ms(r.baseCompleteMs)}`,
+    `${pad('base coverage')}50% ${ms(m.baseCoverage50)} · 90% ${ms(m.baseCoverage90)} · ch0 ${ms(m.baseChannel0Complete)} · done ${ms(r.baseCompleteMs)}`,
     `${pad('requests')}${r.requestCount}`,
     `${pad('downloaded')}${mb(r.bytesDownloaded)} MB`,
     `${pad('bricks')}dispatched ${r.bricksDispatched} · committed ${r.bricksCommitted} · cancelled ${r.bricksCancelled} · discarded ${r.bricksDiscarded}`,

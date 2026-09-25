@@ -12,6 +12,8 @@ export interface LoadMilestones {
   baseCoverage10: number | null;
   baseCoverage50: number | null;
   baseCoverage90: number | null;
+  /** Every base brick has its channel 0 resolved — a complete one-channel image (channel-major loads). */
+  baseChannel0Complete: number | null;
   baseComplete: number | null;
   /** First frame submitted after resident data was committed; not proof of presentation. */
   firstContentSubmit: number | null;
@@ -20,7 +22,7 @@ export interface LoadMilestones {
 }
 
 export type BrickMilestones = Pick<LoadMilestones,
-  'firstBrickDecoded' | 'firstAtlasCommit' | 'baseCoverage10' | 'baseCoverage50' | 'baseCoverage90' | 'baseComplete'>;
+  'firstBrickDecoded' | 'firstAtlasCommit' | 'baseCoverage10' | 'baseCoverage50' | 'baseCoverage90' | 'baseChannel0Complete' | 'baseComplete'>;
 
 export function createBrickMilestones(): BrickMilestones {
   return {
@@ -29,6 +31,7 @@ export function createBrickMilestones(): BrickMilestones {
     baseCoverage10: null,
     baseCoverage50: null,
     baseCoverage90: null,
+    baseChannel0Complete: null,
     baseComplete: null,
   };
 }

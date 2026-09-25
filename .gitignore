@@ -11,7 +11,7 @@ docs/.vitepress/dist/
 public/volumes/
 public/datasets/
 
-# bench harness artefacts (datasets mirror, results, TLS cert, build snapshots)
+# bench harness artefacts (datasets mirror, results, TLS cert)
 bench/cache/
 bench/results/
 bench/certs/

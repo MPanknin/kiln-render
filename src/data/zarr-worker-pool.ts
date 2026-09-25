@@ -173,9 +173,8 @@ export class ZarrWorkerPool {
           floatMin: floatRange?.[0],
           floatMax: floatRange?.[1],
           arrayMetadata,
-          // ?p3=1 / ?p4=1 — read here (main thread), forwarded since a worker
+          // ?p4=1 — read here (main thread), forwarded since a worker
           // can't read the page URL itself. See docs/audits/kiln-render - fetch_patterns.md.
-          dynamicCacheBudget: isFlagEnabled('p3'),
           refcountedAborts: isFlagEnabled('p4'),
         };
         worker.postMessage(req);

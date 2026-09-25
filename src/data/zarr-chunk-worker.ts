@@ -59,13 +59,6 @@ export interface ZarrWorkerRequest {
   /** Whether source data is float32/float64 */
   isFloat32?: boolean;
   /**
-   * Feature flag ?p3=1 (read on the main thread, forwarded here — a worker
-   * can't read the page URL itself). OFF → fixed 32MB cache (control). ON →
-   * budget scales with the largest chunk seen. See docs/audits/kiln-render -
-   * fetch_patterns.md and src/core/feature-flags.ts.
-   */
-  dynamicCacheBudget?: boolean;
-  /**
    * Feature flag ?p4=1. OFF → the original in-flight dedup (control): a
    * shared fetch runs under the FIRST caller's signal, so cancelling that
    * caller kills the fetch for every other caller sharing it, and survivors
@@ -126,7 +119,6 @@ let targetFormat: 'r8unorm' | 'r16unorm' | 'r16float' = 'r16unorm';
 let isFloat32 = false;
 let floatMin = 0;
 let floatMax = 1;
-let dynamicCacheBudget = false; // ?p3=1
 let refcountedAborts = false; // ?p4=1
 
 // Per-worker chunk cache (LRU, bounded by byte count to prevent OOM)
@@ -134,14 +126,13 @@ interface DecodedChunk { data: ArrayLike<number>; shape: number[]; stride: numbe
 const chunkCache = new Map<string, DecodedChunk & { bytes: number }>();
 let cacheBytes = 0;
 let largestChunkBytes = 0;
-const FIXED_CACHE_BYTES = 32 * 1024 * 1024; // 32 MB per worker — the ?p3=1 control value
-const MIN_DYNAMIC_CACHE_BYTES = 64 * 1024 * 1024;
-const MAX_DYNAMIC_CACHE_BYTES = 256 * 1024 * 1024;
+const MIN_CACHE_BYTES = 64 * 1024 * 1024;
+const MAX_CACHE_BYTES = 256 * 1024 * 1024;
 
-/** Cache budget for this worker: fixed (control), or scaled to the largest chunk seen (?p3=1). */
+/** Per-worker decoded-chunk budget: at least 64 MB, 8 of the largest chunk seen, capped at 256 MB.
+ *  Whole-plane sources re-fetch shared planes when this is too small (32 MB lost ~38% on zebrafish). */
 function cacheBudgetBytes(): number {
-  if (!dynamicCacheBudget) return FIXED_CACHE_BYTES;
-  return Math.min(MAX_DYNAMIC_CACHE_BYTES, Math.max(MIN_DYNAMIC_CACHE_BYTES, 8 * largestChunkBytes));
+  return Math.min(MAX_CACHE_BYTES, Math.max(MIN_CACHE_BYTES, 8 * largestChunkBytes));
 }
 
 // In-flight chunk fetch promises — coalesces concurrent requests for the same chunk
@@ -252,7 +243,6 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
         is16bit = event.data.is16bit ?? false;
         targetFormat = event.data.targetFormat ?? 'r16unorm';
         isFloat32 = event.data.isFloat32 ?? false;
-        dynamicCacheBudget = event.data.dynamicCacheBudget ?? false;
         refcountedAborts = event.data.refcountedAborts ?? false;
         floatMin = event.data.floatMin ?? 0;
         floatMax = event.data.floatMax ?? 1;

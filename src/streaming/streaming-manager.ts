@@ -271,6 +271,8 @@ export class StreamingManager {
     // Scale concurrent requests and cache budget for multichannel
     const numChannels = resources.numChannels;
     this.maxConcurrentRequests = numChannels > 1 ? 12 : 8;
+    // ?p34=1 — twice the in-flight bricks: fetch→decode→upload per brick leaves the link idle otherwise.
+    if (isFlagEnabled('p34')) this.maxConcurrentRequests *= 2;
     this.brickCache = new BrickCache(numChannels * 256 * 1024 * 1024);
 
     // Load coarsest LOD immediately as base layer

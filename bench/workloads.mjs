@@ -57,11 +57,11 @@ export const WORKLOADS = {
   },
 };
 
-/** Build the page URL for a workload against a bench server. */
-export function workloadUrl(origin, wl, extraQuery = '') {
+/** Build the page URL for a workload against a bench server; `direct` hits the real upstream. */
+export function workloadUrl(origin, wl, extraQuery = '', direct = false) {
   const appPath = wl.app === 'multichannel' ? '/kiln-render/app/multichannel/' : '/kiln-render/app/';
   const u = new URL(wl.dataset);
-  const proxied = `${origin}/proxy/${u.host}${u.pathname}`;
+  const proxied = direct ? wl.dataset : `${origin}/proxy/${u.host}${u.pathname}`;
   const q = new URLSearchParams(wl.query);
   q.set('dataset', proxied);
   let s = q.toString();

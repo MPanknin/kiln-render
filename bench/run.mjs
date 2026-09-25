@@ -2,7 +2,10 @@
 //
 //   node bench/run.mjs [--workloads zebrafish,yeast] [--profiles cdn,fast]
 //                      [--variants control=,p3=p3%3D1] [--runs 3] [--label name]
-//                      [--dist dist] [--timeout 120000] [--headed]
+//                      [--dist dist] [--timeout 120000] [--headed] [--direct]
+//
+// --direct bypasses the proxy: the page fetches from the real upstream (CDN),
+// unthrottled and without warm-up. Real-world numbers, real-world noise.
 //
 // A variant is `name=extraQuery[@distDir]`. Variants with different dists get
 // their own server on a separate port. Runs are interleaved across variants so
@@ -34,6 +37,7 @@ const outDir = path.join(here, 'results', label);
 const defaultDist = path.resolve(args.dist ?? path.join(here, '..', 'dist'));
 const variants = parseVariants(args.variants ?? 'control=');
 const orbitDeg = Number(args.orbit ?? 0);
+const direct = !!args.direct;
 const orbitQuery = orbitDeg ? `&benchOrbit=${orbitDeg}` : '';
 
 for (const w of workloads) if (!WORKLOADS[w]) die(`unknown workload ${w}`);
@@ -67,7 +71,7 @@ const results = [];
 try {
   // --- warm the proxy cache: one unthrottled run per workload × dist -------
   for (const s of servers.values()) await control(s.origin, 'config', PROFILES.off);
-  for (const w of workloads) {
+  for (const w of direct ? [] : workloads) {
     for (const s of servers.values()) {
       await control(s.origin, 'reset');
       const url = workloadUrl(s.origin, WORKLOADS[w], `bench=1&benchLabel=warm&benchTimeout=${timeoutMs * 3}`);
@@ -79,14 +83,14 @@ try {
   }
 
   // --- measured runs ---------------------------------------------------------
-  for (const p of profiles) {
-    for (const s of servers.values()) await control(s.origin, 'config', PROFILES[p]);
+  for (const p of direct ? ['direct'] : profiles) {
+    if (!direct) for (const s of servers.values()) await control(s.origin, 'config', PROFILES[p]);
     for (const w of workloads) {
       for (let i = 1; i <= runs; i++) {
         for (const v of variants) {
           const name = `${w}.${p}.${v.name}.${i}`;
           await control(v.origin, 'reset');
-          const url = workloadUrl(v.origin, WORKLOADS[w], `bench=1&benchLabel=${encodeURIComponent(v.name)}&benchTimeout=${timeoutMs}${orbitQuery}${v.query ? '&' + v.query : ''}`);
+          const url = workloadUrl(v.origin, WORKLOADS[w], `bench=1&benchLabel=${encodeURIComponent(v.name)}&benchTimeout=${timeoutMs}${orbitQuery}${v.query ? '&' + v.query : ''}`, direct);
           const r = await runOnce(url, timeoutMs, path.join(outDir, name));
           if (r && v.query) {
             // Guard against the flags silently not reaching the page.
@@ -94,8 +98,8 @@ try {
               if (new URLSearchParams(r.query).get(k) !== val) die(`variant ${v.name}: page query lacks ${k}=${val} — got ${r.query}`);
             }
           }
-          const st = await control(v.origin, 'stats');
-          const rec = { workload: w, profile: p, variant: v.name, run: i, url, proxy: st, ...(r ?? { failed: true }) };
+          const st = direct ? { requests: 0, hits: 0, misses: 0, bytes: NaN } : await control(v.origin, 'stats');
+          const rec = { workload: w, profile: p, variant: v.name, run: i, url, proxy: direct ? null : st, ...(r ?? { failed: true }) };
           results.push(rec);
           await fsp.writeFile(path.join(outDir, name + '.json'), JSON.stringify(rec, null, 2));
           log(`${name.padEnd(34)} first ${fmt(r?.firstContentFrameMs)}  ch0 ${fmt(r?.milestones?.baseChannel0Complete)}  base ${fmt(r?.baseCompleteMs)}  conv ${fmt(r?.convergeMs)}${r?.orbit ? `  orbit first ${fmt(r.orbit.firstCommitMs)} reconv ${fmt(r.orbit.reconvergeMs)}` : ''}  req ${r?.requestCount ?? '-'}  ${r ? (r.bytesDownloaded / 1e6).toFixed(1) : '-'} MB${st.misses ? `  ⚠ ${st.misses} cache misses` : ''}${r?.timedOut ? '  ⚠ timed out' : ''}`);

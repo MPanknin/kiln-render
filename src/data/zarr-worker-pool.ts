@@ -362,7 +362,7 @@ export class ZarrWorkerPool {
       worker.terminate();
     }
     this.workers = [];
-    for (const m of this.brokerFetches) { for (const c of m.values()) c.abort(); m.clear(); }
+    for (const m of this.brokerFetches ?? []) { for (const c of m.values()) c.abort(); m.clear(); }
     // Settle every pending promise so callers never hang on a dead worker
     for (const pending of this.pendingRequests.values()) pending.reject(new DOMException('Aborted', 'AbortError'));
     this.pendingRequests.clear();

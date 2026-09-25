@@ -76,7 +76,8 @@ try {
   for (const w of direct ? [] : workloads) {
     for (const s of servers.values()) {
       await control(s.origin, 'reset');
-      const url = workloadUrl(s.origin, WORKLOADS[w], `bench=1&benchLabel=warm&benchTimeout=${timeoutMs * 3}`);
+      // Warm-up runs the scenarios too, so their files are in the OS page cache for run 1.
+      const url = workloadUrl(s.origin, WORKLOADS[w], `bench=1&benchLabel=warm&benchTimeout=${timeoutMs * 3}${orbitQuery}`);
       log(`warm  ${w}  ${path.basename(s.dist)}`);
       const r = await runOnce(url, timeoutMs * 3, null);
       const st = await control(s.origin, 'stats');

@@ -4,7 +4,7 @@
  */
 
 import { open, root, Array as ZarrArray, registry } from 'zarrita';
-import type { DataType, Readable } from 'zarrita';
+import type { DataType, Readable, ArrayMetadata, AbsolutePath } from 'zarrita';
 import blosc from 'numcodecs/blosc';
 import lz4 from 'numcodecs/lz4';
 import zstd from 'numcodecs/zstd';
@@ -23,8 +23,13 @@ registry.set('zstd', async () => zstd as any);
 
 /** Messages from main thread to worker */
 export interface ZarrWorkerRequest {
-  type: 'init' | 'loadBrick' | 'setTargetFormat' | 'setFloatRange' | 'cancel';
+  type: 'init' | 'loadBrick' | 'setTargetFormat' | 'setFloatRange' | 'cancel' | 'fetchResult';
   id: number;
+  /** For 'fetchResult' (?p23=1): chunk bytes from the main-thread broker, null = not found. */
+  bytes?: ArrayBuffer | null;
+  error?: string;
+  /** For 'init': route chunk fetches through the main-thread ChunkFetchBroker. */
+  brokeredFetch?: boolean;
   /** For 'init': dataset URL and array paths */
   url?: string;
   paths?: string[];
@@ -78,13 +83,20 @@ export interface ZarrWorkerRequest {
   /** Float normalisation range — voxel values are mapped from [floatMin, floatMax] → [0, 65535] */
   floatMin?: number;
   floatMax?: number;
+  /**
+   * For 'init' (?p22=1): per-level array metadata already fetched on the main
+   * thread, so arrays are built here without any network round trips.
+   */
+  arrayMetadata?: ArrayMetadata<DataType>[];
 }
 
 /** Messages from worker to main thread */
 export interface ZarrWorkerResponse {
-  type: 'init' | 'loadBrick' | 'setTargetFormat' | 'setFloatRange';
+  type: 'init' | 'loadBrick' | 'setTargetFormat' | 'setFloatRange' | 'fetch' | 'fetchCancel';
   id: number;
   error?: string;
+  /** For 'fetch' (?p23=1): store key to resolve via the main-thread broker. */
+  key?: string;
   /** For 'loadBrick': assembled brick data (transferable) */
   data?: ArrayBuffer;
   /** Brick stats */
@@ -172,8 +184,46 @@ function toDecodedChunk(chunk: { data: unknown; shape: number[]; stride: number[
   return { data: chunk.data as ArrayLike<number>, shape: chunk.shape, stride: chunk.stride };
 }
 
+/**
+ * ?p23=1 — chunk store that asks the main thread for bytes (see
+ * ChunkFetchBroker) instead of fetching itself. Same counters as
+ * TolerantFetchStore so telemetry is unchanged.
+ */
+class BrokeredChunkStore {
+  bytesFetched = 0;
+  requestCount = 0;
+  private nextId = 0;
+  private pending = new Map<number, { resolve: (v: Uint8Array | undefined) => void; reject: (e: unknown) => void }>();
+
+  get(key: AbsolutePath, options?: RequestInit): Promise<Uint8Array | undefined> {
+    const signal = options?.signal ?? undefined;
+    if (signal?.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
+    return new Promise((resolve, reject) => {
+      const id = this.nextId++;
+      this.requestCount++;
+      this.pending.set(id, { resolve, reject });
+      (self as unknown as Worker).postMessage({ type: 'fetch', id, key } as ZarrWorkerResponse);
+      signal?.addEventListener('abort', () => {
+        if (!this.pending.delete(id)) return;
+        (self as unknown as Worker).postMessage({ type: 'fetchCancel', id } as ZarrWorkerResponse);
+        reject(new DOMException('Aborted', 'AbortError'));
+      }, { once: true });
+    });
+  }
+
+  /** Called from onmessage for 'fetchResult'. */
+  settle(id: number, bytes: ArrayBuffer | null | undefined, error?: string): void {
+    const p = this.pending.get(id);
+    if (!p) return;
+    this.pending.delete(id);
+    if (error) { p.reject(new Error(error)); return; }
+    if (bytes) this.bytesFetched += bytes.byteLength;
+    p.resolve(bytes ? new Uint8Array(bytes) : undefined);
+  }
+}
+
 // Store reference
-let workerStore: TolerantFetchStore | null = null;
+let workerStore: TolerantFetchStore | BrokeredChunkStore | null = null;
 
 // Cancellation state
 const cancelledRequests = new Set<number>();
@@ -221,6 +271,11 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
     return;
   }
 
+  if (type === 'fetchResult') {
+    if (workerStore instanceof BrokeredChunkStore) workerStore.settle(id, event.data.bytes, event.data.error);
+    return;
+  }
+
   if (type === 'setTargetFormat') {
     targetFormat = event.data.targetFormat ?? 'r16unorm';
     const resp: ZarrWorkerResponse = { type: 'setTargetFormat', id };
@@ -255,13 +310,17 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
           console.log(`[ZarrWorker] Float32 normalization range: [${floatMin}, ${floatMax}]`);
         }
 
-        workerStore = new TolerantFetchStore(url!);
-        const rootGroup = await open(root(workerStore), { kind: 'group' });
-
-        arrays = [];
-        for (const path of paths!) {
-          const arr = await open(rootGroup.resolve(path), { kind: 'array' });
-          arrays.push(arr);
+        workerStore = event.data.brokeredFetch ? new BrokeredChunkStore() : new TolerantFetchStore(url!);
+        const { arrayMetadata } = event.data;
+        if (arrayMetadata && arrayMetadata.length === paths!.length) {
+          arrays = paths!.map((path, i) => new ZarrArray(workerStore!, `/${path}` as AbsolutePath, arrayMetadata[i]!));
+        } else {
+          const rootGroup = await open(root(workerStore), { kind: 'group' });
+          arrays = [];
+          for (const path of paths!) {
+            const arr = await open(rootGroup.resolve(path), { kind: 'array' });
+            arrays.push(arr);
+          }
         }
 
         const resp: ZarrWorkerResponse = { type: 'init', id };

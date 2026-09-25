@@ -14,7 +14,9 @@
 
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import fsp from 'node:fs/promises';
+import { X509Certificate, createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PROFILES, WORKLOADS, workloadUrl } from './workloads.mjs';
@@ -46,10 +48,17 @@ for (const v of variants) {
   v.origin = servers.get(dist).origin;
 }
 
+// Trust the bench cert by SPKI hash rather than ignoring cert errors: Chrome
+// refuses to HTTP-cache responses from connections with certificate errors,
+// which would charge the network for repeat chunk fetches that the real CDN
+// serves from the browser's disk cache.
+const spki = createHash('sha256')
+  .update(new X509Certificate(fs.readFileSync(path.join(here, 'certs', 'cert.pem'))).publicKey.export({ type: 'spki', format: 'der' }))
+  .digest('base64');
 const browser = await chromium.launch({
   headless: !args.headed,
   channel: 'chromium',
-  args: ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist', '--use-angle=metal', '--ignore-certificate-errors'],
+  args: ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist', '--use-angle=metal', `--ignore-certificate-errors-spki-list=${spki}`],
 });
 
 const results = [];
@@ -77,6 +86,12 @@ try {
           await control(v.origin, 'reset');
           const url = workloadUrl(v.origin, WORKLOADS[w], `bench=1&benchLabel=${encodeURIComponent(v.name)}&benchTimeout=${timeoutMs}${v.query ? '&' + v.query : ''}`);
           const r = await runOnce(url, timeoutMs, path.join(outDir, name));
+          if (r && v.query) {
+            // Guard against the flags silently not reaching the page.
+            for (const [k, val] of new URLSearchParams(v.query)) {
+              if (new URLSearchParams(r.query).get(k) !== val) die(`variant ${v.name}: page query lacks ${k}=${val} — got ${r.query}`);
+            }
+          }
           const st = await control(v.origin, 'stats');
           const rec = { workload: w, profile: p, variant: v.name, run: i, url, proxy: st, ...(r ?? { failed: true }) };
           results.push(rec);
@@ -99,7 +114,7 @@ console.log(`results: ${outDir}`);
 
 // ---------------------------------------------------------------------------
 async function runOnce(url, timeout, outBase) {
-  const ctx = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
   const page = await ctx.newPage();
   const lines = [];
   page.on('console', m => lines.push(`${(performance.now() - t0).toFixed(0).padStart(7)} ${m.type()} ${m.text()}`));
@@ -185,7 +200,8 @@ function parseVariants(spec) {
     let dist;
     const at = rest.lastIndexOf('@');
     if (at >= 0) { dist = path.resolve(rest.slice(at + 1)); rest = rest.slice(0, at); }
-    return { name, query: rest, dist };
+    // Accept both `p20=1&p21=1` and a URL-encoded form; the page must see real `k=v` pairs.
+    return { name, query: decodeURIComponent(rest), dist };
   });
 }
 function parseArgs(argv) {

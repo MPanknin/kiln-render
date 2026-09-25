@@ -347,8 +347,8 @@ export class StreamingManager {
     // ?p20=1 — ramp-up: start with one brick in flight and double the window per
     // completed brick, so the first brick owns the link instead of sharing it.
     const rampUp = isFlagEnabled('p20');
-    // ?p21=1 — commit a base brick as soon as its first channel lands; the
-    // remaining channels are written as they arrive (no parent to fall back on).
+    // ?p21=1 — channel-major base load: all bricks' channel 0 first, committing
+    // each brick as its first channel lands; remaining channels fill in after.
     const channelProgressive = isFlagEnabled('p21');
 
     // Center-out ordering: the volume's central content appears first instead
@@ -368,7 +368,7 @@ export class StreamingManager {
 
     const maxConcurrency = Math.min(bricks.length, this.maxConcurrentRequests);
     let window = rampUp ? 1 : maxConcurrency;
-    console.log(`[Kiln] loadBaseLod: ${bricks.length} bricks × ${numChannels} channels (concurrency: ${maxConcurrency}${rampUp ? ', ramp-up' : ''}${channelProgressive ? ', channel-progressive' : ''})`);
+    console.log(`[Kiln] loadBaseLod: ${bricks.length} bricks × ${numChannels} channels (concurrency: ${maxConcurrency}${rampUp ? ', ramp-up' : ''}${channelProgressive ? ', channel-major' : ''})`);
 
     // Process bricks with bounded concurrency — avoids firing all N×channels network
     // requests simultaneously, which saturates the browser's HTTP connection pool.
@@ -386,8 +386,6 @@ export class StreamingManager {
     let floatRangeMin = Infinity, floatRangeMax = -Infinity;
     const channelMins = needsChannelRanges ? new Array(numChannels).fill(Infinity) as number[] : [];
     const channelMaxs = needsChannelRanges ? new Array(numChannels).fill(-Infinity) as number[] : [];
-
-    const queue = [...bricks];
 
     const accumulateStats = (ch: number, r: BrickLoadResult) => {
       if (needsFloatRange && r.rawMin !== undefined && r.rawMax !== undefined) {
@@ -436,6 +434,17 @@ export class StreamingManager {
       if (this.milestones.firstAtlasCommit === null) this.milestones.firstAtlasCommit = performance.now();
     };
 
+    // A brick has settled once every channel task finished (loaded, empty or failed).
+    const settleBrick = (key: string) => {
+      if (stale()) return;
+      this.baseLodPending = Math.max(0, this.baseLodPending - 1);
+      if (this.loadedBricks.has(key) || this.emptyBricks.has(key)) {
+        resolved.add(key);
+        stampBaseCoverage(this.milestones, resolved.size, bricks.length, performance.now());
+      }
+    };
+
+    // Control path: one task per brick, all channels in parallel, commit when all landed.
     const processBrick = async ({ bx, by, bz, key }: typeof bricks[0]) => {
       try {
       const tIsEmpty = performance.now();
@@ -449,99 +458,124 @@ export class StreamingManager {
         return;
       }
 
+      // Load all channels in parallel — ch0 is mandatory, others degrade gracefully
       const tFetch = performance.now();
-      const channelPromises = Array.from({ length: numChannels }, (_, ch) =>
-        this.dataProvider.loadBrick(maxLod, bx, by, bz, ch, abort.signal)
+      const channelResults = await Promise.all(
+        Array.from({ length: numChannels }, (_, ch) =>
+          this.dataProvider.loadBrick(maxLod, bx, by, bz, ch, abort.signal)
+        )
       );
+      sumFetchMs += performance.now() - tFetch;
+      if (stale()) return;
 
-      if (!channelProgressive) {
-        // Load all channels in parallel — ch0 is mandatory, others degrade gracefully
-        const channelResults = await Promise.all(channelPromises);
-        sumFetchMs += performance.now() - tFetch;
-        if (stale()) return;
+      if (!channelResults[0]) return; // ch0 mandatory; skip brick entirely if it failed
+      if (this.milestones.firstBrickDecoded === null) this.milestones.firstBrickDecoded = performance.now();
 
-        if (!channelResults[0]) return; // ch0 mandatory; skip brick entirely if it failed
-        if (this.milestones.firstBrickDecoded === null) this.milestones.firstBrickDecoded = performance.now();
+      for (let ch = 0; ch < numChannels; ch++) {
+        const r = channelResults[ch];
+        if (r) accumulateStats(ch, r);
+      }
 
-        for (let ch = 0; ch < numChannels; ch++) {
-          const r = channelResults[ch];
-          if (r) accumulateStats(ch, r);
-        }
-
-        const result = this.resources.allocator.allocate(this.frameCount);
-        if (!result) {
-          console.warn('[Kiln] loadBaseLod: atlas allocation failed');
-          return;
-        }
-
-        const tUpload = performance.now();
-        for (let ch = 0; ch < numChannels; ch++) uploadChannel(result, ch, channelResults[ch]?.data ?? null);
-        const uploadMs = performance.now() - tUpload;
-        sumUploadMs += uploadMs;
-        this.uploadAvg.add(uploadMs);
-
-        registerSlot(result, bx, by, bz, key);
-        allBrickData.push(channelResults[0].data);
-        this.notifyContentChanged();
+      const result = this.resources.allocator.allocate(this.frameCount);
+      if (!result) {
+        console.warn('[Kiln] loadBaseLod: atlas allocation failed');
         return;
       }
 
-      // Channel-progressive: the first channel to land allocates the slot and
-      // shows the brick; the others are written as they arrive. Channels
-      // that fail stay zero (a reused slot is zeroed up front).
-      let slot: AllocationResult | null = null;
-      let allocationFailed = false;
-      await Promise.all(channelPromises.map(async (p, ch) => {
-        const r = await p;
-        if (stale() || !r || allocationFailed) return;
-        if (this.milestones.firstBrickDecoded === null) this.milestones.firstBrickDecoded = performance.now();
-        accumulateStats(ch, r);
-        if (ch === 0) allBrickData.push(r.data);
+      const tUpload = performance.now();
+      for (let ch = 0; ch < numChannels; ch++) uploadChannel(result, ch, channelResults[ch]?.data ?? null);
+      const uploadMs = performance.now() - tUpload;
+      sumUploadMs += uploadMs;
+      this.uploadAvg.add(uploadMs);
 
-        const tUpload = performance.now();
-        if (!slot) {
-          slot = this.resources.allocator.allocate(this.frameCount);
-          if (!slot) {
-            allocationFailed = true;
-            console.warn('[Kiln] loadBaseLod: atlas allocation failed');
-            return;
-          }
-          if (this.touchedSlots.has(slot.slotIndex)) {
-            for (let c = 0; c < numChannels; c++) if (c !== ch) uploadChannel(slot, c, null);
-          }
-          uploadChannel(slot, ch, r.data);
-          registerSlot(slot, bx, by, bz, key);
-        } else {
-          uploadChannel(slot, ch, r.data);
-        }
-        const uploadMs = performance.now() - tUpload;
-        sumUploadMs += uploadMs;
-        this.uploadAvg.add(uploadMs);
-        this.notifyContentChanged();
-      }));
-      sumFetchMs += performance.now() - tFetch;
+      registerSlot(result, bx, by, bz, key);
+      allBrickData.push(channelResults[0].data);
+      this.notifyContentChanged();
       } finally {
-        if (!stale()) {
-          this.baseLodPending = Math.max(0, this.baseLodPending - 1);
-          if (this.loadedBricks.has(key) || this.emptyBricks.has(key)) {
-            resolved.add(key);
-            stampBaseCoverage(this.milestones, resolved.size, bricks.length, performance.now());
-          }
-        }
+        settleBrick(key);
       }
     };
 
-    // Drain the queue with a concurrency window; ramp-up doubles the window
-    // after each completed brick until it reaches maxConcurrency.
+    // Channel-major path (?p21=1): one task per (brick, channel). The first
+    // channel to land allocates the slot and shows the brick; later channels
+    // are written as they arrive. A reused slot is zeroed first so a channel
+    // that has not arrived (or failed) never shows a previous brick.
+    interface BrickState { slot: AllocationResult | null; settled: number; empty: boolean | null; allocFailed: boolean }
+    const states = new Map<string, BrickState>();
+    const stateFor = (key: string) => {
+      let st = states.get(key);
+      if (!st) { st = { slot: null, settled: 0, empty: null, allocFailed: false }; states.set(key, st); }
+      return st;
+    };
+
+    const processBrickChannel = async ({ bx, by, bz, key }: typeof bricks[0], ch: number) => {
+      const st = stateFor(key);
+      try {
+      if (st.empty === null) {
+        const tIsEmpty = performance.now();
+        st.empty = await this.dataProvider.isBrickEmpty(maxLod, bx, by, bz, this.config.emptyBrickThreshold);
+        sumIsEmptyMs += performance.now() - tIsEmpty;
+        if (stale()) return;
+        if (st.empty) {
+          this.emptyBricks.add(key);
+          this.resources.indirection.setEmpty(bx, by, bz, maxLod);
+        }
+      }
+      if (st.empty || st.allocFailed) return;
+
+      const tFetch = performance.now();
+      const r = await this.dataProvider.loadBrick(maxLod, bx, by, bz, ch, abort.signal);
+      sumFetchMs += performance.now() - tFetch;
+      if (stale() || !r) return;
+      if (this.milestones.firstBrickDecoded === null) this.milestones.firstBrickDecoded = performance.now();
+      accumulateStats(ch, r);
+      if (ch === 0) allBrickData.push(r.data);
+
+      const tUpload = performance.now();
+      if (!st.slot) {
+        st.slot = this.resources.allocator.allocate(this.frameCount);
+        if (!st.slot) {
+          st.allocFailed = true;
+          console.warn('[Kiln] loadBaseLod: atlas allocation failed');
+          return;
+        }
+        if (this.touchedSlots.has(st.slot.slotIndex)) {
+          for (let c = 0; c < numChannels; c++) if (c !== ch) uploadChannel(st.slot, c, null);
+        }
+        uploadChannel(st.slot, ch, r.data);
+        registerSlot(st.slot, bx, by, bz, key);
+      } else {
+        uploadChannel(st.slot, ch, r.data);
+      }
+      const uploadMs = performance.now() - tUpload;
+      sumUploadMs += uploadMs;
+      this.uploadAvg.add(uploadMs);
+      this.notifyContentChanged();
+      } finally {
+        if (++st.settled === numChannels) settleBrick(key);
+      }
+    };
+
+    // Task list: control = bricks; channel-major = every brick's channel 0
+    // first, then channel 1, … so a complete one-channel image appears in
+    // 1/numChannels of the time and the other channels fill in after.
+    const tasks: (() => Promise<void>)[] = channelProgressive
+      ? Array.from({ length: numChannels }, (_, ch) => bricks.map(b => () => processBrickChannel(b, ch))).flat()
+      : bricks.map(b => () => processBrick(b));
+    const maxWindow = channelProgressive ? maxConcurrency * numChannels : maxConcurrency;
+    if (channelProgressive && !rampUp) window = maxWindow;
+
+    // Drain the task list with a concurrency window; ramp-up doubles the
+    // window after each completed task until it reaches maxWindow.
     await new Promise<void>(resolve => {
       let active = 0;
       const pump = () => {
-        while (active < window && queue.length > 0 && !stale()) {
-          const brick = queue.shift()!;
+        while (active < window && tasks.length > 0 && !stale()) {
+          const task = tasks.shift()!;
           active++;
-          processBrick(brick).finally(() => {
+          task().finally(() => {
             active--;
-            if (rampUp) window = Math.min(maxConcurrency, window * 2);
+            if (rampUp) window = Math.min(maxWindow, window * 2);
             pump();
           });
         }

@@ -10,7 +10,7 @@ import type { VolumeResources } from '../core/volume-resources.js';
 import type { DataProvider, VolumeMetadata, BrickLoadResult, LodLevel } from '../data/data-provider.js';
 import { AtlasSlot } from './atlas-allocator.js';
 import type { AllocationResult } from './atlas-allocator.js';
-import { isFlagEnabled } from '../core/feature-flags.js';
+import { isFlagEnabled, flagNumber } from '../core/feature-flags.js';
 import { BrickCache } from './brick-cache.js';
 import { LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE } from '../core/config.js';
 import type { DatasetConfig } from '../core/config.js';
@@ -367,7 +367,9 @@ export class StreamingManager {
     });
 
     const maxConcurrency = Math.min(bricks.length, this.maxConcurrentRequests);
-    let window = rampUp ? 1 : maxConcurrency;
+    // ?p20w=<n> — initial ramp-up window (1 = first task owns the link; 2 avoids
+    // serialising tiny two-brick base levels such as the sharded chameleon).
+    let window = rampUp ? Math.max(1, Math.min(maxConcurrency, flagNumber('p20w', 1))) : maxConcurrency;
     console.log(`[Kiln] loadBaseLod: ${bricks.length} bricks × ${numChannels} channels (concurrency: ${maxConcurrency}${rampUp ? ', ramp-up' : ''}${channelProgressive ? ', channel-major' : ''})`);
 
     // Process bricks with bounded concurrency — avoids firing all N×channels network
@@ -431,7 +433,12 @@ export class StreamingManager {
       this.loadedBricks.set(key, { slot: slot.slot, slotIndex: slot.slotIndex });
       this.pinnedBricks.add(key);
       brickCount++;
-      if (this.milestones.firstAtlasCommit === null) this.milestones.firstAtlasCommit = performance.now();
+      if (this.milestones.firstAtlasCommit === null) {
+        this.milestones.firstAtlasCommit = performance.now();
+        // First visible content: present it now rather than after the
+        // accumulation-reset debounce (~100 ms) that coalesces later commits.
+        if (rampUp) { this.notifyContentChanged(); this.flushAccumulationReset(); }
+      }
     };
 
     // A brick has settled once every channel task finished (loaded, empty or failed).

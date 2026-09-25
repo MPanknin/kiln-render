@@ -47,7 +47,8 @@ await fsp.mkdir(outDir, { recursive: true });
 
 // --- servers: one per distinct dist -----------------------------------------
 const servers = new Map();
-let nextPort = Number(args.port ?? 4800);
+// Direct mode serves plain HTTP on 3000/3001 — the only localhost origins the CDN's CORS allows.
+let nextPort = Number(args.port ?? (direct ? 3000 : 4800));
 for (const v of variants) {
   const dist = v.dist ?? defaultDist;
   if (!servers.has(dist)) servers.set(dist, await startServer(dist, nextPort++));
@@ -123,13 +124,23 @@ async function runOnce(url, timeout, outBase) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
   const page = await ctx.newPage();
   const lines = [];
-  page.on('console', m => lines.push(`${(performance.now() - t0).toFixed(0).padStart(7)} ${m.type()} ${m.text()}`));
+  // Fail fast: a dataset that cannot even be opened never produces a result.
+  let fatal = null;
+  page.on('console', m => {
+    lines.push(`${(performance.now() - t0).toFixed(0).padStart(7)} ${m.type()} ${m.text()}`);
+    if (m.type() === 'error' && /blocked by CORS|Failed to fetch|volume metadata|UnsupportedDataset/.test(m.text())) fatal = m.text();
+  });
   page.on('pageerror', e => lines.push(`PAGEERROR ${e.message}`));
   const t0 = performance.now();
   let report = null;
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => window.__KILN_BENCH_RESULT !== undefined, null, { timeout: timeout * 2 + 30000, polling: 200 });
+    await page.waitForFunction(() => window.__KILN_BENCH_RESULT !== undefined || window.__benchFatal, null, { timeout: timeout * 2 + 30000, polling: 200 })
+      .catch(async e => { if (!fatal) throw e; });
+    // give a fatal error a few seconds in case the app recovers, then give up
+    const deadline = performance.now() + 5000;
+    while (fatal && performance.now() < deadline && !(await page.evaluate(() => window.__KILN_BENCH_RESULT !== undefined))) await new Promise(r => setTimeout(r, 250));
+    if (fatal && !(await page.evaluate(() => window.__KILN_BENCH_RESULT !== undefined))) throw new Error(`fatal page error: ${fatal.slice(0, 160)}`);
     report = await page.evaluate(() => window.__KILN_BENCH_RESULT);
     if (outBase) await page.screenshot({ path: outBase + '.png' });
   } catch (e) {
@@ -143,8 +154,9 @@ async function runOnce(url, timeout, outBase) {
 }
 
 async function startServer(dist, port) {
-  const proc = spawn(process.execPath, [path.join(here, 'server.mjs'), '--port', String(port), '--dist', dist], { stdio: ['ignore', 'pipe', 'inherit'] });
-  const origin = `https://localhost:${port}`;
+  const extra = direct ? ['--plain'] : [];
+  const proc = spawn(process.execPath, [path.join(here, 'server.mjs'), '--port', String(port), '--dist', dist, ...extra], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const origin = `${direct ? 'http' : 'https'}://localhost:${port}`;
   await new Promise((resolve, reject) => {
     proc.stdout.on('data', d => { if (String(d).includes('[bench-server]')) resolve(); });
     proc.on('exit', c => reject(new Error(`server exited ${c}`)));

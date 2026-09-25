@@ -14,6 +14,7 @@
 // does against a real CDN instead of capping at 6 HTTP/1.1 connections.
 
 import http2 from 'node:http2';
+import http from 'node:http';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -202,14 +203,19 @@ async function handleControl(req, res, url) {
 }
 
 // ---------------------------------------------------------------------------
-const server = http2.createSecureServer({
-  key: fs.readFileSync(path.join(here, 'certs', 'key.pem')),
-  cert: fs.readFileSync(path.join(here, 'certs', 'cert.pem')),
-  allowHTTP1: true,
-});
+// --plain: HTTP/1.1 without TLS. Used for direct-to-CDN runs, whose CORS
+// allow-list names http://localhost:3000/3001; the app itself is tiny.
+const PLAIN = !!args.plain;
+const server = PLAIN
+  ? http.createServer()
+  : http2.createSecureServer({
+    key: fs.readFileSync(path.join(here, 'certs', 'key.pem')),
+    cert: fs.readFileSync(path.join(here, 'certs', 'cert.pem')),
+    allowHTTP1: true,
+  });
 
 server.on('request', (req, res) => {
-  const url = new URL(req.url, `https://localhost:${PORT}`);
+  const url = new URL(req.url, `${PLAIN ? 'http' : 'https'}://localhost:${PORT}`);
   if (req.method === 'OPTIONS') { res.writeHead(204, cors()); return res.end(); }
   if (url.pathname.startsWith('/proxy/')) return void handleProxy(req, res, url);
   if (url.pathname.startsWith('/__bench/')) return void handleControl(req, res, url);
@@ -219,7 +225,7 @@ server.on('request', (req, res) => {
 
 server.on('error', e => { console.error('[bench-server]', e.message); process.exit(1); });
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`[bench-server] https://localhost:${PORT}${SITE_PREFIX}app/  dist=${DIST}  cache=${CACHE}`);
+  console.log(`[bench-server] ${PLAIN ? 'http' : 'https'}://localhost:${PORT}${SITE_PREFIX}app/  dist=${DIST}  cache=${CACHE}`);
 });
 
 // ---------------------------------------------------------------------------

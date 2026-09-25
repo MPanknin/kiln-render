@@ -72,6 +72,16 @@ export interface EngineOptions {
 const INTERACTION_HOLD_MS = 200;
 
 /** Push every metadata channel window to the renderer in shader space. */
+/** Bitmask of channels the renderer currently displays (alpha weight > 0); all bits for single-channel data. */
+function visibleChannelMask(renderer: Renderer): number {
+  if (renderer.numChannels <= 1) return 0xf;
+  let mask = 0;
+  for (let ch = 0; ch < renderer.numChannels; ch++) {
+    if (renderer.channelColors[ch * 4 + 3]! > 0) mask |= 1 << ch;
+  }
+  return mask;
+}
+
 function applyChannelWindows(renderer: Renderer, metadata: VolumeMetadata): void {
   metadata.channelWindows?.forEach((cw, ch) => {
     const w = cw && normalizeWindow(cw, metadata.isFloat ?? false, metadata.dataRange);
@@ -330,6 +340,7 @@ export class KilnEngine {
       device,
       config,
       () => renderer.resetAccumulation(),
+      visibleChannelMask(renderer),
     );
 
     if (options.maxPixelError !== undefined) {
@@ -416,6 +427,7 @@ export class KilnEngine {
     }
 
     // Always run streaming (may trigger onDirty via resetAccumulation)
+    if (this.renderer.numChannels > 1) this.streamingManager.setVisibleChannels(visibleChannelMask(this.renderer));
     this.streamingManager.update(resolved);
 
     const needsRender = this.dirty || interacting || !this.renderer.isConverged;

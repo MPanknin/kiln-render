@@ -37,6 +37,12 @@ export const WORKLOADS = {
     query: 'up=-z&mode=mip&scale=0.50&cam=0.390%2C4.230%2C2.087%2C-0.013%2C-0.016%2C0.060&channels=0%2C0%2C255%2C1.00%2C1%2C0.00%2C0.41%3B255%2C255%2C0%2C1.00%2C1%2C0.00%2C0.19%3B255%2C0%2C0%2C1.00%2C1%2C0.00%2C0.41%3B255%2C255%2C255%2C1.00%2C1%2C0.00%2C0.11&slice=960%2C960%2C376%2C1%2C1%2C1',
     note: '1920²×752, 4ch uint16, 128³ chunks, 4 levels (XY-only; Z never downsampled)',
   },
+  'fly-1ch': {
+    app: 'multichannel',
+    dataset: 'https://d39zu0xtgv0613.cloudfront.net/Fly-eFISH/NP01_1_1_SS00790_AstA546_CCHa1_647_1x_LOL.chunked.zarr/',
+    query: 'up=-z&mode=mip&scale=0.50&cam=0.390%2C4.230%2C2.087%2C-0.013%2C-0.016%2C0.060&channels=0%2C0%2C255%2C1.00%2C1%2C0.00%2C0.41%3B255%2C255%2C0%2C1.00%2C0%2C0.00%2C0.19%3B255%2C0%2C0%2C1.00%2C0%2C0.00%2C0.41%3B255%2C255%2C255%2C1.00%2C0%2C0.00%2C0.11&slice=960%2C960%2C376%2C1%2C1%2C1',
+    note: 'fly view with only channel 0 visible — exercises visible-channel demand',
+  },
   chameleon: {
     app: 'basic',
     dataset: 'https://d39zu0xtgv0613.cloudfront.net/chameleon-16bit',

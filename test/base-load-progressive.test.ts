@@ -60,8 +60,8 @@ function makeResources(numChannels: number) {
 }
 
 const config = { normalizedSize: [1, 1, 1] as [number, number, number], emptyBrickThreshold: 1 };
-const make = (resources: unknown, provider: DataProvider, meta: VolumeMetadata) =>
-  new StreamingManager(resources as never, provider, meta, {} as GPUDevice, config as never, vi.fn());
+const make = (resources: unknown, provider: DataProvider, meta: VolumeMetadata, visible = 0xf) =>
+  new StreamingManager(resources as never, provider, meta, {} as GPUDevice, config as never, vi.fn(), visible);
 
 const flush = () => new Promise(r => setTimeout(r, 0));
 
@@ -98,7 +98,7 @@ describe('?p21=1 channel-progressive base commit', () => {
     const resources = makeResources(3);
     // Construct, then mark slot 0 as previously written before the load reaches the atlas.
     const sm = make(resources, provider, meta);
-    (sm as unknown as { touchedSlots: Set<number> }).touchedSlots.add(0);
+    (sm as unknown as { dirtyChannels: Map<number, number> }).dirtyChannels.set(0, 0b111);
 
     await vi.waitFor(() => expect(resources.indirection.setBrick).toHaveBeenCalledTimes(1));
     // channels 0 and 2 zeroed, channel 1 real data
@@ -169,5 +169,49 @@ describe('?p20=1 ramp-up base load', () => {
     make(makeResources(1), provider, meta);
     await flush(); await flush();
     expect(seen.length).toBe(3);
+  });
+});
+
+describe('?p25=1 visible-channel demand', () => {
+  it('base load fetches only visible channels and backfills a channel when it is shown', async () => {
+    flags.add('p21'); flags.add('p25');
+    const meta = metadataFor(3, 1);
+    const calls: number[] = [];
+    const provider = makeProvider(meta, (_l, _x, _y, _z, ch) => { calls.push(ch!); return Promise.resolve(brick()); });
+    const resources = makeResources(3);
+    const sm = make(resources, provider, meta, 0b101); // channels 0 and 2 visible
+    await vi.waitFor(() => expect(sm.baseLodLoaded).toBe(true));
+    expect([...calls].sort()).toEqual([0, 2]);
+    expect(writeToCanvas).toHaveBeenCalledTimes(2);
+
+    // Show channel 1 → fetched for the resident brick and written to its slot
+    sm.setVisibleChannels(0b111);
+    await vi.waitFor(() => expect(calls).toContain(1));
+    await vi.waitFor(() => expect(writeToCanvas).toHaveBeenCalledTimes(3));
+    expect((vi.mocked(writeToCanvas).mock.calls[2]![1] as { _ch: number })._ch).toBe(1);
+    // Showing it again is a no-op
+    sm.setVisibleChannels(0b111);
+    await flush();
+    expect(calls.filter(c => c === 1).length).toBe(1);
+  });
+
+  it('never loads zero channels: an all-hidden mask falls back to channel 0', async () => {
+    flags.add('p21'); flags.add('p25');
+    const meta = metadataFor(2, 1);
+    const calls: number[] = [];
+    const provider = makeProvider(meta, (_l, _x, _y, _z, ch) => { calls.push(ch!); return Promise.resolve(brick()); });
+    const sm = make(makeResources(2), provider, meta, 0);
+    await vi.waitFor(() => expect(sm.baseLodLoaded).toBe(true));
+    expect(calls).toEqual([0]);
+  });
+
+  it('flag off: all channels load regardless of the mask', async () => {
+    flags.add('p21');
+    const meta = metadataFor(2, 1);
+    const calls: number[] = [];
+    const provider = makeProvider(meta, (_l, _x, _y, _z, ch) => { calls.push(ch!); return Promise.resolve(brick()); });
+    const sm = make(makeResources(2), provider, meta, 0b01);
+    await vi.waitFor(() => expect(sm.baseLodLoaded).toBe(true));
+    expect([...calls].sort()).toEqual([0, 1]);
   });
 });

@@ -71,7 +71,7 @@ function desired(sm: StreamingManager) {
     return { lod: Number(m[1]), bz: Number(m[2]), by: Number(m[3]), bx: Number(m[4]) };
   });
 }
-const fullDemand = { mode: 'dvr', clipMin: [0, 0, 0] as [number, number, number], clipMax: [1, 1, 1] as [number, number, number], slices: [0.5, 0.5, 0.5] as [number, number, number], showSlice: [true, true, true] as [boolean, boolean, boolean] };
+const fullDemand = { renderScale: 1, mode: 'dvr', clipMin: [0, 0, 0] as [number, number, number], clipMax: [1, 1, 1] as [number, number, number], slices: [0.5, 0.5, 0.5] as [number, number, number], showSlice: [true, true, true] as [boolean, boolean, boolean] };
 
 beforeEach(() => { flags.clear(); vi.clearAllMocks(); });
 

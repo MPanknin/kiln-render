@@ -17,6 +17,8 @@ export interface RenderDemand {
   /** Slice plane positions in [0,1] and their visibility (slice modes only). */
   slices: [number, number, number];
   showSlice: [boolean, boolean, boolean];
+  /** User render-resolution scale (not the transient interaction scale). */
+  renderScale: number;
 }
 import type { VolumeResources } from '../core/volume-resources.js';
 import type { DataProvider, VolumeMetadata, BrickLoadResult, LodLevel } from '../data/data-provider.js';
@@ -200,6 +202,8 @@ export class StreamingManager {
   private readonly sliceDemand = isFlagEnabled('p30');
   private readonly clipDemand = isFlagEnabled('p31');
   private readonly refineRamp = isFlagEnabled('p32');
+  // ?p33=1 — judge screen-space error at the render target's resolution, not the canvas's.
+  private readonly sseAtRenderScale = isFlagEnabled('p33');
   private demand: RenderDemand | null = null;
   private refineWindow = 2;
   // Channels shown while the base was still loading; backfilled once it completes.
@@ -929,6 +933,7 @@ export class StreamingManager {
     // projectionFactor targets full viewport resolution — LOD selection pre-loads
     // fine bricks during interaction; dispatch gating prevents wasted loads.
     this.projectionFactor = view.height / (2 * Math.tan(view.fovY / 2));
+    if (this.sseAtRenderScale && this.demand) this.projectionFactor *= this.demand.renderScale;
 
     // Get LOD range from metadata
     const maxLod = this.maxLod;

@@ -446,6 +446,7 @@ export class KilnEngine {
       clipMax: [r.clipMax[0]!, r.clipMax[1]!, r.clipMax[2]!],
       slices: [r.sliceX, r.sliceY, r.sliceZ],
       showSlice: [r.showSliceX, r.showSliceY, r.showSliceZ],
+      renderScale: this.userRenderScale,
     });
     this.streamingManager.update(resolved);
 

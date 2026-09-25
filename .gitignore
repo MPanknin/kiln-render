@@ -12,7 +12,7 @@ public/volumes/
 public/datasets/
 
 # bench harness artefacts (datasets mirror, results, TLS cert)
-bench/cache/
+bench/cache
 bench/results/
 bench/certs/
 bench/dists/

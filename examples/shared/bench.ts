@@ -19,7 +19,8 @@
  *   ?benchTimeout=120000  give-up timeout (ms) if it never converges
  *   ?benchStable=8        consecutive stable polls required to call it converged
  *   ?benchLabel=<name>    label echoed into the report
- *   ?benchScenarios=zoom,pan,orbit,return   after converging, run camera scenarios and time each re-converge
+ *   ?benchScenarios=zoom,pan,orbit,glide-zoom,glide-pan,return   after converging, run camera
+ *                         scenarios (glide-* animate over 2.5 s) and time each re-converge
  *   ?report=<url>         POST the JSON report here when done
  */
 
@@ -74,6 +75,11 @@ export interface ScenarioReport {
   chunkCacheHitRatio: number;
   /** ms from the camera change until pipeline idle + converged again. */
   reconvergeMs: number;
+  /** Camera animation length (0 = jump) and ms from the end of motion to re-converge. */
+  motionMs: number;
+  afterStopMs: number;
+  /** Bytes the bench proxy actually served during the scenario (NaN when not behind the proxy). */
+  wireBytes: number;
   timedOut: boolean;
   requests: number;
   bytesDownloaded: number;
@@ -168,14 +174,27 @@ function formatReport(r: BenchReport): string {
     `${pad('resident/desired')}${r.loadedCount} / ${r.desiredCount}`,
     ...(r.scenarios ?? []).flatMap(sc => [
       `${pad(sc.name)}first ${ms(sc.firstCommitMs)} · 50% ${ms(sc.desired50Ms)} · 90% ${ms(sc.desired90Ms)} · reconverge ${Math.round(sc.reconvergeMs)} ms${sc.timedOut ? '  ⚠ TIMED OUT' : ''}`,
-      `${pad('')}${sc.requests} req · ${mb(sc.bytesDownloaded)} MB · committed ${sc.committed} · cancelled ${sc.cancelled} · discarded ${sc.discarded} · desired ${sc.desiredCount}`,
+      `${pad('')}${sc.requests} req · ${mb(sc.bytesDownloaded)} MB (wire ${mb(sc.wireBytes)}) · committed ${sc.committed} · cancelled ${sc.cancelled} · discarded ${sc.discarded} · desired ${sc.desiredCount}`,
     ]),
     '==================',
   ].join('\n');
 }
 
-/** Capture the converged frame and reduce it to a hash + small thumbnail for cross-variant comparison. */
-async function signImage(v: BenchViewer): Promise<ImageSignature | null> {
+/** Full-resolution frames per phase, collected by the runner for PSNR / detail comparison. */
+const frames: Record<string, { png: string; gray: string; w: number; h: number }> = {};
+(window as unknown as { __KILN_BENCH_FRAMES?: typeof frames }).__KILN_BENCH_FRAMES = frames;
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result as string);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+
+/** Capture the converged frame: hash + thumbnail in the report, full-res frame for the runner. */
+async function signImage(v: BenchViewer, phase: string): Promise<ImageSignature | null> {
   try {
     const blob = await v.captureImage();
     const bmp = await createImageBitmap(blob);
@@ -183,6 +202,11 @@ async function signImage(v: BenchViewer): Promise<ImageSignature | null> {
     const ctx = full.getContext('2d')!;
     ctx.drawImage(bmp, 0, 0);
     const px = ctx.getImageData(0, 0, bmp.width, bmp.height).data;
+    const gray = new Uint8Array(bmp.width * bmp.height);
+    for (let i = 0, j = 0; j < gray.length; i += 4, j++) gray[j] = Math.round(px[i]! * 0.299 + px[i + 1]! * 0.587 + px[i + 2]! * 0.114);
+    let bin = '';
+    for (let i = 0; i < gray.length; i += 0x8000) bin += String.fromCharCode(...gray.subarray(i, i + 0x8000));
+    frames[phase] = { png: await blobToDataUrl(blob), gray: btoa(bin), w: bmp.width, h: bmp.height };
     const digest = await crypto.subtle.digest('SHA-256', px);
     const hash = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
     const small = new OffscreenCanvas(64, 40);
@@ -198,12 +222,14 @@ async function signImage(v: BenchViewer): Promise<ImageSignature | null> {
   }
 }
 
-/** Camera targets per scenario, relative to the start state. */
+/** Camera targets per scenario, relative to the start state; glide-* are animated versions. */
 function scenarioCamera(name: string, start: OrbitState, current: OrbitState): OrbitState | null {
   const [rx, ry, dist, tx, ty, tz] = current;
   switch (name) {
-    case 'zoom':   return [rx, ry, Math.max(0.1, dist / 3), tx, ty, tz];
-    case 'pan':    return [rx, ry, dist, tx + 0.15, ty, tz];
+    case 'zoom':
+    case 'glide-zoom': return [rx, ry, Math.max(0.1, dist / 3), tx, ty, tz];
+    case 'pan':
+    case 'glide-pan':  return [rx, ry, dist, tx + 0.15, ty, tz];
     case 'orbit':  return [rx, ry + (35 * Math.PI) / 180, dist, tx, ty, tz];
     case 'tilt':   return [rx + (25 * Math.PI) / 180, ry, dist, tx, ty, tz];
     case 'return': return start;
@@ -211,11 +237,37 @@ function scenarioCamera(name: string, start: OrbitState, current: OrbitState): O
   }
 }
 
-/** Apply one camera scenario and measure how the streaming pipeline recovers. */
+/** Bytes served by the bench proxy so far; NaN outside the proxy (direct mode serves plain http). */
+async function proxyBytes(): Promise<number> {
+  if (location.protocol !== 'https:') return NaN;
+  try {
+    const r = await fetch('/__bench/stats', { cache: 'no-store' });
+    return ((await r.json()) as { bytes: number }).bytes;
+  } catch {
+    return NaN;
+  }
+}
+
+/** Apply one camera scenario (jump, or animated for glide-*) and measure how streaming recovers. */
 async function runScenario(v: BenchViewer, name: string, target: OrbitState, timeoutMs: number, stablePolls: number): Promise<ScenarioReport> {
   const s0 = v.streamingManager.getStats();
+  const wire0 = await proxyBytes();
+  const motionMs = name.startsWith('glide-') ? 2500 : 0;
+  const from = v.camera.getOrbitState();
   const t0 = performance.now();
-  v.camera.setOrbitState(target);
+  let moving = motionMs > 0;
+  let stopAt = t0;
+  if (moving) {
+    const step = () => {
+      const k = Math.min(1, (performance.now() - t0) / motionMs);
+      v.camera.setOrbitState(from.map((a, i) => a + (target[i]! - a) * k) as OrbitState);
+      if (k < 1) requestAnimationFrame(step);
+      else { moving = false; stopAt = performance.now(); }
+    };
+    requestAnimationFrame(step);
+  } else {
+    v.camera.setOrbitState(target);
+  }
 
   let firstCommitMs: number | null = null;
   let desired50Ms: number | null = null;
@@ -234,12 +286,13 @@ async function runScenario(v: BenchViewer, name: string, target: OrbitState, tim
       if (desired50Ms === null && s.pendingCount <= peakPending * 0.5) desired50Ms = now;
       if (desired90Ms === null && s.pendingCount <= peakPending * 0.1) desired90Ms = now;
     }
-    const idle = s.pendingCount === 0 && v.renderer.isConverged;
+    const idle = !moving && s.pendingCount === 0 && v.renderer.isConverged;
     stable = idle ? stable + 1 : 0;
     if (stable >= stablePolls) { timedOut = false; break; }
     await sleep(POLL_MS);
   }
   const reconvergeMs = performance.now() - t0;
+  const wire1 = await proxyBytes();
   const s1 = v.streamingManager.getStats();
   if (peakPending === 0) { desired50Ms = 0; desired90Ms = 0; } // nothing new was needed
   return {
@@ -248,6 +301,9 @@ async function runScenario(v: BenchViewer, name: string, target: OrbitState, tim
     desired50Ms,
     desired90Ms,
     reconvergeMs,
+    motionMs,
+    afterStopMs: t0 + reconvergeMs - stopAt,
+    wireBytes: wire1 - wire0,
     timedOut,
     requests: s1.requestCount - s0.requestCount,
     bytesDownloaded: s1.totalBytesDownloaded - s0.totalBytesDownloaded,
@@ -257,7 +313,7 @@ async function runScenario(v: BenchViewer, name: string, target: OrbitState, tim
     desiredCount: s1.desiredCount,
     peakPending,
     chunkCacheHitRatio: s1.pipelineTimings.chunkCacheHitRatio ?? 0,
-    image: timedOut ? null : await signImage(v),
+    image: timedOut ? null : await signImage(v, name),
   };
 }
 
@@ -311,7 +367,7 @@ export async function maybeRunBench(viewer: BenchViewer): Promise<void> {
     userAgent: navigator.userAgent,
   };
 
-  if (settled) report.image = await signImage(viewer);
+  if (settled) report.image = await signImage(viewer, 'load');
   const scenarioNames = (params.get('benchScenarios') ?? '').split(',').map(x => x.trim()).filter(Boolean);
   if (scenarioNames.length > 0 && settled) {
     const start = viewer.camera.getOrbitState();

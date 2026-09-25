@@ -21,6 +21,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import { X509Certificate, createHash } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PROFILES, WORKLOADS, workloadUrl } from './workloads.mjs';
@@ -144,7 +145,16 @@ async function runOnce(url, timeout, outBase) {
     while (fatal && performance.now() < deadline && !(await page.evaluate(() => window.__KILN_BENCH_RESULT !== undefined))) await new Promise(r => setTimeout(r, 250));
     if (fatal && !(await page.evaluate(() => window.__KILN_BENCH_RESULT !== undefined))) throw new Error(`fatal page error: ${fatal.slice(0, 160)}`);
     report = await page.evaluate(() => window.__KILN_BENCH_RESULT);
-    if (outBase) await page.screenshot({ path: outBase + '.png' });
+    if (outBase) {
+      await page.screenshot({ path: outBase + '.png' });
+      // Converged frame per phase: PNG to look at, gzipped luminance (u32 w, u32 h, bytes) for metrics.
+      const frames = await page.evaluate(() => window.__KILN_BENCH_FRAMES ?? {});
+      for (const [phase, f] of Object.entries(frames)) {
+        await fsp.writeFile(`${outBase}.${phase}.png`, Buffer.from(f.png.split(',')[1], 'base64'));
+        const head = Buffer.alloc(8); head.writeUInt32LE(f.w, 0); head.writeUInt32LE(f.h, 4);
+        await fsp.writeFile(`${outBase}.${phase}.gray.gz`, gzipSync(Buffer.concat([head, Buffer.from(f.gray, 'base64')])));
+      }
+    }
   } catch (e) {
     lines.push(`RUNNER ${e.message}`);
     if (outBase) await page.screenshot({ path: outBase + '.png' }).catch(() => {});

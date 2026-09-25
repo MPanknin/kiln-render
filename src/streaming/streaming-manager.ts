@@ -204,6 +204,8 @@ export class StreamingManager {
   private readonly refineRamp = isFlagEnabled('p32');
   // ?p33=1 — judge screen-space error at the render target's resolution, not the canvas's.
   private readonly sseAtRenderScale = isFlagEnabled('p33');
+  // ?p35=1 — dispatch the largest projected error first, so the blurriest regions sharpen first.
+  private readonly errorOrder = isFlagEnabled('p35');
   private demand: RenderDemand | null = null;
   private refineWindow = 2;
   // Channels shown while the base was still loading; backfilled once it completes.
@@ -1097,7 +1099,12 @@ export class StreamingManager {
     );
 
     // Sort by distance (closest first)
-    missingBricks.sort((a, b) => a.distance - b.distance);
+    if (this.errorOrder) {
+      const err = (b: BrickRequest) => this.getVoxelWorldSize(b.lod) / Math.max(b.distance, 0.001);
+      missingBricks.sort((a, b) => err(b) - err(a) || a.distance - b.distance);
+    } else {
+      missingBricks.sort((a, b) => a.distance - b.distance);
+    }
 
     // Limit queue size to prevent runaway loading
     // Only queue the closest N bricks

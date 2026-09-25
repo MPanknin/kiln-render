@@ -134,3 +134,17 @@ describe('slice-aware demand (?p30)', () => {
     expect(desired(sm).length).toBe(desired(sm2).length);
   });
 });
+
+describe('error-ordered refinement (?p35)', () => {
+  it('queues the brick with the largest projected error first', async () => {
+    flags.add('p35');
+    const sm = await freshSM();
+    sm.forceUpdate(stubView([0.2, 0.1, 0.9]));
+    const priv = sm as unknown as { loadQueue: { lod: number; distance: number }[]; getVoxelWorldSize(l: number): number };
+    const err = (b: { lod: number; distance: number }) => priv.getVoxelWorldSize(b.lod) / Math.max(b.distance, 0.001);
+    expect(priv.loadQueue.length).toBeGreaterThan(1);
+    for (let i = 1; i < priv.loadQueue.length; i++) {
+      expect(err(priv.loadQueue[i - 1]!)).toBeGreaterThanOrEqual(err(priv.loadQueue[i]!) - 1e-12);
+    }
+  });
+});

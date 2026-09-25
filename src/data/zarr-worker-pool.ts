@@ -3,8 +3,7 @@
  *  footprint so a brick's channels spread across workers, not one. */
 
 import type { ZarrWorkerRequest, ZarrWorkerResponse } from './zarr-chunk-worker.js';
-import type { ArrayMetadata, DataType, AbsolutePath } from 'zarrita';
-import type { ChunkFetchBroker } from './chunk-fetch-broker.js';
+import type { ArrayMetadata, DataType } from 'zarrita';
 import type { PipelineTimings } from './data-provider.js';
 import { RollingAvg } from './network-tracker.js';
 import { isFlagEnabled } from '../core/feature-flags.js';
@@ -66,10 +65,6 @@ export class ZarrWorkerPool {
   /** Abort listeners to clean up on normal completion (prevents stale cancel messages) */
   private abortListeners = new Map<number, { signal: AbortSignal; listener: () => void }>();
 
-  /** ?p23=1 — main-thread chunk fetch broker; per-worker in-flight controllers keyed by worker-local fetch id. */
-  private broker: ChunkFetchBroker | null = null;
-  private brokerFetches: Map<number, AbortController>[] = [];
-
   constructor(
     private poolSize: number = navigator.hardwareConcurrency
       ? Math.min(navigator.hardwareConcurrency, 8)
@@ -90,9 +85,7 @@ export class ZarrWorkerPool {
     isFloat32?: boolean,
     floatRange?: [number, number],
     arrayMetadata?: ArrayMetadata<DataType>[],
-    broker?: ChunkFetchBroker,
   ): Promise<void> {
-    this.broker = broker ?? null;
     this.is16bit = is16bit;
     this.lodParams = lodParams;
     this.logicalBrickSize = logicalBrickSize;
@@ -103,13 +96,8 @@ export class ZarrWorkerPool {
       this.workerLastBytes[i] = 0;
       this.workerLastRequests[i] = 0;
 
-      this.brokerFetches[i] = new Map();
       worker.onmessage = (event: MessageEvent<ZarrWorkerResponse>) => {
         const { type: msgType, id, error, data, min, max, avg, rawMin, rawMax, fetchMs, assemblyMs, queueMs, chunkHits, chunkTotal, chunkStoreBytes, chunkStoreRequests } = event.data;
-        if (msgType === 'fetch' || msgType === 'fetchCancel') {
-          this.handleBrokerMessage(i, event.data);
-          return;
-        }
         const pending = this.pendingRequests.get(id);
         if (!pending) return;
         this.pendingRequests.delete(id);
@@ -185,7 +173,6 @@ export class ZarrWorkerPool {
           floatMin: floatRange?.[0],
           floatMax: floatRange?.[1],
           arrayMetadata,
-          brokeredFetch: !!broker,
           // ?p3=1 / ?p4=1 — read here (main thread), forwarded since a worker
           // can't read the page URL itself. See docs/audits/kiln-render - fetch_patterns.md.
           dynamicCacheBudget: isFlagEnabled('p3'),
@@ -197,33 +184,6 @@ export class ZarrWorkerPool {
     }
 
     await Promise.all(initPromises);
-  }
-
-  /** Resolve a worker's chunk request through the shared broker; bytes are copied per worker (shared results). */
-  private handleBrokerMessage(workerIdx: number, msg: ZarrWorkerResponse): void {
-    const fetches = this.brokerFetches[workerIdx]!;
-    if (msg.type === 'fetchCancel') {
-      fetches.get(msg.id)?.abort();
-      fetches.delete(msg.id);
-      return;
-    }
-    const worker = this.workers[workerIdx];
-    if (!worker || !this.broker || msg.key === undefined) return;
-    const controller = new AbortController();
-    fetches.set(msg.id, controller);
-    this.broker.get(msg.key as AbsolutePath, controller.signal).then(
-      bytes => {
-        if (!fetches.delete(msg.id)) return; // cancelled meanwhile
-        const copy = bytes ? bytes.slice().buffer : null;
-        const req: ZarrWorkerRequest = { type: 'fetchResult', id: msg.id, bytes: copy };
-        if (copy) worker.postMessage(req, [copy]); else worker.postMessage(req);
-      },
-      (e: unknown) => {
-        if (!fetches.delete(msg.id)) return;
-        const req: ZarrWorkerRequest = { type: 'fetchResult', id: msg.id, error: e instanceof Error ? e.message : String(e) };
-        worker.postMessage(req);
-      },
-    );
   }
 
   /**
@@ -362,7 +322,6 @@ export class ZarrWorkerPool {
       worker.terminate();
     }
     this.workers = [];
-    for (const m of this.brokerFetches ?? []) { for (const c of m.values()) c.abort(); m.clear(); }
     // Settle every pending promise so callers never hang on a dead worker
     for (const pending of this.pendingRequests.values()) pending.reject(new DOMException('Aborted', 'AbortError'));
     this.pendingRequests.clear();

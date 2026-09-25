@@ -29,13 +29,6 @@ export function isFlagEnabled(name: string): boolean {
   return raw !== null && raw !== undefined && TRUTHY.has(raw.toLowerCase());
 }
 
-/** Numeric tuning knob `?<name>=<n>`; `fallback` if absent or not a finite number. */
-export function flagNumber(name: string, fallback: number): number {
-  const raw = params?.get(name);
-  const n = raw === null || raw === undefined ? NaN : Number(raw);
-  return Number.isFinite(n) ? n : fallback;
-}
-
 /** Names of all flags currently set to on — for logging/bench-report traceability. */
 export function activeFlags(): string[] {
   if (!params) return [];

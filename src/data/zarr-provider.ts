@@ -14,8 +14,6 @@ import { UnsupportedDatasetError } from './data-provider.js';
 import { extractMultiscales } from './zarr-validator.js';
 import { v2ToV3ArrayMetadata, compressionLabel } from './zarr-v2-metadata.js';
 import type { ZarrV2ArrayJson } from './zarr-v2-metadata.js';
-import { isFlagEnabled, flagNumber } from '../core/feature-flags.js';
-import { ChunkFetchBroker } from './chunk-fetch-broker.js';
 
 /** Everything initialize() needs, opened in two round trips (see openV2Fast). */
 interface FastOpen {
@@ -54,7 +52,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
   }
 
   /**
-   * ?p22=1 — open a Zarr v2 OME dataset in two round trips: group attrs (root
+   * Open a Zarr v2 OME dataset in two round trips: group attrs (root
    * and bioformats2raw "0" speculatively together), then every level's .zarray
    * in parallel. Arrays are built from that JSON, and the same metadata is
    * handed to the workers so they start without touching the network.
@@ -94,7 +92,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
 
     // Use zarrita on main thread for lightweight metadata reading only
     const store = new TolerantFetchStore(this.url);
-    const fast = isFlagEnabled('p22') ? await this.openV2Fast(store) : null;
+    const fast = await this.openV2Fast(store);
 
     let attrs: Record<string, unknown>;
     let arrays: ZarrArray<DataType, Readable>[];
@@ -162,9 +160,6 @@ export class ZarrDataProvider extends BaseZarrProvider {
 
     this.metadata = metadata;
 
-    // ?p23=1 — workers fetch through one main-thread broker (dedupe + bounded in-flight)
-    const broker = isFlagEnabled('p23') ? new ChunkFetchBroker(store, flagNumber('p23n', 16)) : undefined;
-
     // Initialize worker pool — all heavy lifting happens there
     this.workerPool = new ZarrWorkerPool();
     await this.workerPool.init(
@@ -178,7 +173,6 @@ export class ZarrDataProvider extends BaseZarrProvider {
       metadata.isFloat ?? false,
       metadata.dataRange,
       arrayMetadata,
-      broker,
     );
 
     return this.metadata;

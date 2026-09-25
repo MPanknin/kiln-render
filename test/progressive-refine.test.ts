@@ -1,5 +1,5 @@
 /**
- * ?p36=1 progressive multichannel refinement: a refined brick is committed on
+ * Progressive multichannel refinement: a refined brick is committed on
  * its first non-empty channel, missing channels show the resident ancestor's
  * data resampled, and real data replaces it on arrival.
  */
@@ -10,11 +10,6 @@ import { upsampleFromAncestor } from '../src/streaming/placeholder.js';
 import type { DataProvider, VolumeMetadata, NetworkStats, BrickLoadResult } from '../src/data/data-provider.js';
 
 vi.mock('../src/core/volume.js', () => ({ writeToCanvas: vi.fn() }));
-const flags = new Set<string>();
-vi.mock('../src/core/feature-flags.js', () => ({
-  isFlagEnabled: (name: string) => flags.has(name),
-  activeFlags: () => [...flags],
-}));
 
 const N = 66 * 66 * 66;
 // 128×64×64 volume: lod1 is one brick (base), lod0 has two bricks along x.
@@ -68,9 +63,9 @@ async function refine(sm: StreamingManager) {
 const writes = () => vi.mocked(writeToCanvas).mock.calls.map(c => ({ ch: (c[1] as { _ch: number })._ch, data: c[2] as Uint16Array }));
 const flush = () => new Promise(r => setTimeout(r, 0));
 
-beforeEach(() => { flags.clear(); flags.add('p36'); vi.mocked(writeToCanvas).mockClear(); });
+beforeEach(() => { vi.mocked(writeToCanvas).mockClear(); });
 
-describe('progressive refinement (?p36)', () => {
+describe('progressive refinement', () => {
   it('commits on the first channel with the ancestor resampled into the missing one, then replaces it', async () => {
     const ch1 = deferred<BrickLoadResult | null>();
     const fine0 = filled(1000), fine1 = filled(2000);

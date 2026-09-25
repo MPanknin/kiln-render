@@ -53,6 +53,15 @@ Before any refinement, the coarsest level is loaded in full and pinned in the at
 
 Measured on a throttled 10 MB/s, 40 ms link this took first content for a 4-channel light-sheet embryo (whole-plane chunks) from 3.3 s to 0.6 s, and for a 4-channel 128³-chunked fly brain from 13.6 s to 0.5 s; time to a fully loaded base is unchanged because it is bandwidth-bound.
 
+## Refinement while interacting
+
+Refined bricks follow the same "show data as soon as it exists" rule as the base load:
+
+- **Progressive multichannel commit.** A refined brick fetches its first visible channel before the others and is committed to the atlas as soon as that channel arrives with signal. Channels still in flight are filled with the currently displayed ancestor's data, nearest-neighbour resampled into the new slot, so they look exactly as before at coarse resolution; each real channel overwrites its stand-in on arrival. If the ancestor's data is not in the CPU cache the brick waits for all channels, and bricks that are dark in every channel are still marked empty.
+- **Worker chunk cache sized to the data.** Each decode worker keeps up to 8 of the largest chunks it has seen (64–256 MB). With whole-plane chunks every brick of a Z range needs the same planes; a cache smaller than that re-downloaded them.
+
+Measured on a 10 MB/s, 40 ms link: first new detail after a zoom on a 4-channel embryo 11.5 s → 3.2 s, on 4-channel yeast 4.4 s → 1.0 s, with identical converged images; a pan across the embryo re-converges in 2.1 s instead of 5.4 s with 97% fewer bytes.
+
 ## Priority queue and request management
 
 After computing the desired set, the manager:

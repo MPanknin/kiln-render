@@ -6,7 +6,6 @@
 import { mat4 } from 'wgpu-matrix';
 import { extractFrustumPlanes, isAABBInFrustum } from '../core/camera.js';
 import type { ViewParams } from '../core/view.js';
-import { isFlagEnabled } from '../core/feature-flags.js';
 import { upsampleFromAncestor } from './placeholder.js';
 import type { VolumeResources } from '../core/volume-resources.js';
 import type { DataProvider, VolumeMetadata, BrickLoadResult, LodLevel } from '../data/data-provider.js';
@@ -186,9 +185,6 @@ export class StreamingManager {
   private visibleMask = 0xf;
   private fillAbort: AbortController | null = null;
 
-  // ?p36=1 — commit a refined multichannel brick on its first channel; channels
-  // still in flight show the displayed ancestor's data until they land.
-  private readonly progressiveRefine = isFlagEnabled('p36');
   // Channels shown while the base was still loading; backfilled once it completes.
   private pendingVisibleBits = 0;
   private fillPending = 0;
@@ -1150,7 +1146,8 @@ export class StreamingManager {
     // Caching deferred until after emptiness check (empty bricks shouldn't evict useful cache entries).
     const numChannels = this.resources.numChannels;
     const loadChannels = this.channelsToLoad();
-    if (this.progressiveRefine && loadChannels.length > 1) {
+    // Multichannel: show the brick on its first channel, fill the rest in as they land.
+    if (loadChannels.length > 1) {
       await this.loadBrickProgressive(request, signal, loadChannels);
       return;
     }

@@ -6,6 +6,18 @@
 import { mat4 } from 'wgpu-matrix';
 import { extractFrustumPlanes, isAABBInFrustum } from '../core/camera.js';
 import type { ViewParams } from '../core/view.js';
+import { isFlagEnabled } from '../core/feature-flags.js';
+
+/** What the renderer will actually show; lets the desired set skip bricks that cannot contribute. */
+export interface RenderDemand {
+  mode: string;
+  /** Clip box in normalised [0,1] volume coordinates. */
+  clipMin: [number, number, number];
+  clipMax: [number, number, number];
+  /** Slice plane positions in [0,1] and their visibility (slice modes only). */
+  slices: [number, number, number];
+  showSlice: [boolean, boolean, boolean];
+}
 import type { VolumeResources } from '../core/volume-resources.js';
 import type { DataProvider, VolumeMetadata, BrickLoadResult, LodLevel } from '../data/data-provider.js';
 import { AtlasSlot } from './atlas-allocator.js';
@@ -183,6 +195,13 @@ export class StreamingManager {
   // fetched for resident bricks when they become visible (setVisibleChannels).
   private visibleMask = 0xf;
   private fillAbort: AbortController | null = null;
+
+  // ?p30=1 slice-aware / ?p31=1 clip-aware demand; ?p32=1 refinement ramp-up.
+  private readonly sliceDemand = isFlagEnabled('p30');
+  private readonly clipDemand = isFlagEnabled('p31');
+  private readonly refineRamp = isFlagEnabled('p32');
+  private demand: RenderDemand | null = null;
+  private refineWindow = 2;
   // Channels shown while the base was still loading; backfilled once it completes.
   private pendingVisibleBits = 0;
   private fillPending = 0;
@@ -276,6 +295,38 @@ export class StreamingManager {
       this.zeroBricks.set(bitDepth, brick);
     }
     return brick;
+  }
+
+  /** Current render demand (mode, clip box, slice planes); called by the engine each frame. */
+  setRenderDemand(d: RenderDemand): void {
+    this.demand = d;
+  }
+
+  /** False if the brick can contribute nothing to the current view (outside clip box / off every slice). */
+  private demandAccepts(aabb: { min: [number, number, number]; max: [number, number, number] }, lod: number): boolean {
+    const d = this.demand;
+    if (!d) return true;
+    const ns = this.config.normalizedSize;
+    const dims = this.config.dimensions;
+    const exp = this.config.levelExponent(lod);
+    // One voxel of this level as a margin: sampling at a boundary reads the neighbour.
+    const margin = (a: number) => (ns[a]! / dims[a]!) * (1 << exp[a]!);
+    if (this.clipDemand) {
+      for (let a = 0; a < 3; a++) {
+        const lo = (d.clipMin[a]! - 0.5) * ns[a]! - margin(a);
+        const hi = (d.clipMax[a]! - 0.5) * ns[a]! + margin(a);
+        if (aabb.max[a]! < lo || aabb.min[a]! > hi) return false;
+      }
+    }
+    if (this.sliceDemand && (d.mode === 'slice' || d.mode === 'slice-lod')) {
+      for (let a = 0; a < 3; a++) {
+        if (!d.showSlice[a]) continue;
+        const p = (d.slices[a]! - 0.5) * ns[a]!;
+        if (p >= aabb.min[a]! - margin(a) && p <= aabb.max[a]! + margin(a)) return true;
+      }
+      return false;
+    }
+    return true;
   }
 
   /** Channels to fetch for a brick: the visible ones (never empty). */
@@ -740,6 +791,8 @@ export class StreamingManager {
 
     if (regularUpdate || cameraJustStopped) {
       this.lastUpdateFrame = this.frameCount;
+      // A settled camera starts a new refinement burst: let the first bricks own the link.
+      if (cameraJustStopped) this.refineWindow = 2;
       this.computeDesiredSet(view);
     }
 
@@ -900,6 +953,8 @@ export class StreamingManager {
       if (!isAABBInFrustum(aabb.min, aabb.max, frustum)) {
         return;
       }
+      // Demand culling (never the base level, which stays pinned)
+      if (lod !== maxLod && !this.demandAccepts(aabb, lod)) return;
 
       // Distance check
       const center = this.getAABBCenter(aabb);
@@ -1079,7 +1134,7 @@ export class StreamingManager {
 
     // Start new requests up to max concurrent
     while (
-      this.inFlightRequests.size < this.maxConcurrentRequests &&
+      this.inFlightRequests.size < (this.refineRamp ? Math.min(this.maxConcurrentRequests, this.refineWindow) : this.maxConcurrentRequests) &&
       this.loadQueue.length > 0
     ) {
       // pre-dispatch check: if the atlas is full and nothing is
@@ -1269,6 +1324,7 @@ export class StreamingManager {
     // Track
     this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
     this.bricksCommitted++;
+    this.refineWindow = Math.min(this.maxConcurrentRequests, this.refineWindow * 2);
 
     // A channel shown while this fetch was in flight is not in loadChannels: backfill it.
     const missing = this.visibleMask & ~(this.slotChannels.get(result.slotIndex) ?? 0) & ((1 << numChannels) - 1);

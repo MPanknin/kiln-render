@@ -43,6 +43,12 @@ export const WORKLOADS = {
     query: 'up=-z&mode=mip&scale=0.50&cam=0.390%2C4.230%2C2.087%2C-0.013%2C-0.016%2C0.060&channels=0%2C0%2C255%2C1.00%2C1%2C0.00%2C0.41%3B255%2C255%2C0%2C1.00%2C0%2C0.00%2C0.19%3B255%2C0%2C0%2C1.00%2C0%2C0.00%2C0.41%3B255%2C255%2C255%2C1.00%2C0%2C0.00%2C0.11&slice=960%2C960%2C376%2C1%2C1%2C1',
     note: 'fly view with only channel 0 visible — exercises visible-channel demand',
   },
+  'vibrio-clip': {
+    app: 'basic',
+    dataset: 'https://d39zu0xtgv0613.cloudfront.net/sma2022-07-13-10.zarr',
+    query: 'mode=dvr&wc=0.50&ww=1.00&iso=0.20&tf=grayscale-inverted&tfpts=0.00%2C1.00%2C1.00%2C1.00&up=-z&scale=0.50&cam=0.550%2C12.050%2C1.203%2C0.046%2C0.017%2C0.146&clipMin=0.00%2C0.00%2C0.37&wireframe=1',
+    note: 'cryo-ET float32 tomogram with a Z clip plane — exercises clip-aware demand',
+  },
   chameleon: {
     app: 'basic',
     dataset: 'https://d39zu0xtgv0613.cloudfront.net/chameleon-16bit',

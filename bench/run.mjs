@@ -3,6 +3,7 @@
 //   node bench/run.mjs [--workloads zebrafish,yeast] [--profiles cdn,fast]
 //                      [--variants control=,p3=p3%3D1] [--runs 3] [--label name]
 //                      [--dist dist] [--timeout 120000] [--headed] [--direct]
+//                      [--scenarios zoom,pan,orbit,return]
 //
 // --direct bypasses the proxy: the page fetches from the real upstream (CDN),
 // unthrottled and without warm-up. Real-world numbers, real-world noise.
@@ -36,9 +37,9 @@ const label = args.label ?? new Date().toISOString().replace(/[:.]/g, '-').slice
 const outDir = path.join(here, 'results', label);
 const defaultDist = path.resolve(args.dist ?? path.join(here, '..', 'dist'));
 const variants = parseVariants(args.variants ?? 'control=');
-const orbitDeg = Number(args.orbit ?? 0);
+const scenarios = typeof args.scenarios === 'string' ? args.scenarios : (args.scenarios ? 'zoom,pan,orbit,return' : '');
 const direct = !!args.direct;
-const orbitQuery = orbitDeg ? `&benchOrbit=${orbitDeg}` : '';
+const orbitQuery = scenarios ? `&benchScenarios=${encodeURIComponent(scenarios)}` : '';
 
 for (const w of workloads) if (!WORKLOADS[w]) die(`unknown workload ${w}`);
 for (const p of profiles) if (!PROFILES[p]) die(`unknown profile ${p}`);
@@ -103,7 +104,7 @@ try {
           const rec = { workload: w, profile: p, variant: v.name, run: i, url, proxy: direct ? null : st, ...(r ?? { failed: true }) };
           results.push(rec);
           await fsp.writeFile(path.join(outDir, name + '.json'), JSON.stringify(rec, null, 2));
-          log(`${name.padEnd(34)} first ${fmt(r?.firstContentFrameMs)}  ch0 ${fmt(r?.milestones?.baseChannel0Complete)}  base ${fmt(r?.baseCompleteMs)}  conv ${fmt(r?.convergeMs)}${r?.orbit ? `  orbit first ${fmt(r.orbit.firstCommitMs)} reconv ${fmt(r.orbit.reconvergeMs)}` : ''}  req ${r?.requestCount ?? '-'}  ${r ? (r.bytesDownloaded / 1e6).toFixed(1) : '-'} MB${st.misses ? `  ⚠ ${st.misses} cache misses` : ''}${r?.timedOut ? '  ⚠ timed out' : ''}`);
+          log(`${name.padEnd(34)} first ${fmt(r?.firstContentFrameMs)}  ch0 ${fmt(r?.milestones?.baseChannel0Complete)}  base ${fmt(r?.baseCompleteMs)}  conv ${fmt(r?.convergeMs)}${(r?.scenarios ?? []).map(sc => `  ${sc.name}: 90% ${fmt(sc.desired90Ms)} reconv ${fmt(sc.reconvergeMs)} ${(sc.bytesDownloaded / 1e6).toFixed(1)}MB`).join('')}  req ${r?.requestCount ?? '-'}  ${r ? (r.bytesDownloaded / 1e6).toFixed(1) : '-'} MB${st.misses ? `  ⚠ ${st.misses} cache misses` : ''}${r?.timedOut ? '  ⚠ timed out' : ''}`);
         }
       }
     }
@@ -135,7 +136,7 @@ async function runOnce(url, timeout, outBase) {
   let report = null;
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => window.__KILN_BENCH_RESULT !== undefined || window.__benchFatal, null, { timeout: timeout * 2 + 30000, polling: 200 })
+    await page.waitForFunction(() => window.__KILN_BENCH_RESULT !== undefined || window.__benchFatal, null, { timeout: timeout * (2 + scenarios.split(',').filter(Boolean).length) + 30000, polling: 200 })
       .catch(async e => { if (!fatal) throw e; });
     // give a fatal error a few seconds in case the app recovers, then give up
     const deadline = performance.now() + 5000;
@@ -184,8 +185,6 @@ function summarize(rs) {
     ['requests', r => r.requestCount],
     ['MB', r => r.bytesDownloaded / 1e6],
     ['wire MB', r => (r.proxy?.bytes ?? NaN) / 1e6],
-    ['orbit first', r => r.orbit?.firstCommitMs],
-    ['reconverge', r => r.orbit?.reconvergeMs],
   ];
   out.push(`| workload | profile | variant | ${cols.map(c => c[0]).join(' | ')} | notes |`);
   out.push(`|---|---|---|${cols.map(() => '---').join('|')}|---|`);

@@ -439,6 +439,14 @@ export class KilnEngine {
 
     // Always run streaming (may trigger onDirty via resetAccumulation)
     if (this.renderer.numChannels > 1) this.streamingManager.setVisibleChannels(visibleChannelMask(this.renderer));
+    const r = this.renderer;
+    this.streamingManager.setRenderDemand({
+      mode: r.volumeRenderMode,
+      clipMin: [r.clipMin[0]!, r.clipMin[1]!, r.clipMin[2]!],
+      clipMax: [r.clipMax[0]!, r.clipMax[1]!, r.clipMax[2]!],
+      slices: [r.sliceX, r.sliceY, r.sliceZ],
+      showSlice: [r.showSliceX, r.showSliceY, r.showSliceZ],
+    });
     this.streamingManager.update(resolved);
 
     const needsRender = this.dirty || interacting || !this.renderer.isConverged;

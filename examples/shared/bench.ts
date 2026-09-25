@@ -19,7 +19,7 @@
  *   ?benchTimeout=120000  give-up timeout (ms) if it never converges
  *   ?benchStable=8        consecutive stable polls required to call it converged
  *   ?benchLabel=<name>    label echoed into the report
- *   ?benchOrbit=<deg>     after converging, orbit the camera by <deg> and time the re-converge
+ *   ?benchScenarios=zoom,pan,orbit,return   after converging, run camera scenarios and time each re-converge
  *   ?report=<url>         POST the JSON report here when done
  */
 
@@ -55,14 +55,24 @@ export interface BenchViewer {
   metadata: { name: string };
   milestones: LoadMilestones;
   camera: { getOrbitState(): OrbitState; setOrbitState(s: OrbitState): void };
+  captureImage(): Promise<Blob>;
 }
 
-/** Interaction phase: a camera jump after convergence and the streaming it triggers. */
-export interface OrbitReport {
-  deg: number;
-  /** ms from the camera jump to the first newly committed brick; null if none arrived. */
+/** Signature of a converged frame: SHA-256 of the pixels plus a 64×40 luminance thumbnail. */
+export interface ImageSignature { hash: string; thumb: number[] }
+
+/** One camera scenario after convergence and the streaming it triggers. */
+export interface ScenarioReport {
+  name: string;
+  /** ms from the camera change to the first newly committed brick; null if none. */
   firstCommitMs: number | null;
-  /** ms from the camera jump until pipeline idle + converged again. */
+  /** ms until pending work fell to ≤50% / ≤10% of its peak after the change; null if never. */
+  desired50Ms: number | null;
+  desired90Ms: number | null;
+  /** Peak pending bricks (queued + in flight) observed after the change. */
+  peakPending: number;
+  chunkCacheHitRatio: number;
+  /** ms from the camera change until pipeline idle + converged again. */
   reconvergeMs: number;
   timedOut: boolean;
   requests: number;
@@ -70,6 +80,8 @@ export interface OrbitReport {
   committed: number;
   cancelled: number;
   discarded: number;
+  desiredCount: number;
+  image: ImageSignature | null;
 }
 
 export interface BenchReport {
@@ -99,7 +111,9 @@ export interface BenchReport {
   chunkCacheHitRatio: number;
   timings: { queueMs: number; fetchMs: number; assemblyMs: number; uploadMs: number };
   userAgent: string;
-  orbit?: OrbitReport;
+  /** Signature of the converged initial view. */
+  image?: ImageSignature | null;
+  scenarios?: ScenarioReport[];
 }
 
 const POLL_MS = 100;
@@ -152,44 +166,98 @@ function formatReport(r: BenchReport): string {
     `${pad('chunk cache hit')}${(r.chunkCacheHitRatio * 100).toFixed(0)}%`,
     `${pad('pipeline avg ms')}queue ${r.timings.queueMs.toFixed(0)} · fetch ${r.timings.fetchMs.toFixed(0)} · assembly ${r.timings.assemblyMs.toFixed(0)} · upload ${r.timings.uploadMs.toFixed(0)}`,
     `${pad('resident/desired')}${r.loadedCount} / ${r.desiredCount}`,
-    ...(r.orbit ? [
-      `${pad(`orbit ${r.orbit.deg}°`)}first commit ${ms(r.orbit.firstCommitMs)} · reconverge ${Math.round(r.orbit.reconvergeMs)} ms${r.orbit.timedOut ? '  ⚠ TIMED OUT' : ''}`,
-      `${pad('orbit traffic')}${r.orbit.requests} req · ${mb(r.orbit.bytesDownloaded)} MB · committed ${r.orbit.committed} · cancelled ${r.orbit.cancelled} · discarded ${r.orbit.discarded}`,
-    ] : []),
+    ...(r.scenarios ?? []).flatMap(sc => [
+      `${pad(sc.name)}first ${ms(sc.firstCommitMs)} · 50% ${ms(sc.desired50Ms)} · 90% ${ms(sc.desired90Ms)} · reconverge ${Math.round(sc.reconvergeMs)} ms${sc.timedOut ? '  ⚠ TIMED OUT' : ''}`,
+      `${pad('')}${sc.requests} req · ${mb(sc.bytesDownloaded)} MB · committed ${sc.committed} · cancelled ${sc.cancelled} · discarded ${sc.discarded} · desired ${sc.desiredCount}`,
+    ]),
     '==================',
   ].join('\n');
 }
 
-/** Jump the camera and measure how the streaming pipeline recovers. */
-async function runOrbit(v: BenchViewer, deg: number, timeoutMs: number, stablePolls: number): Promise<OrbitReport> {
+/** Capture the converged frame and reduce it to a hash + small thumbnail for cross-variant comparison. */
+async function signImage(v: BenchViewer): Promise<ImageSignature | null> {
+  try {
+    const blob = await v.captureImage();
+    const bmp = await createImageBitmap(blob);
+    const full = new OffscreenCanvas(bmp.width, bmp.height);
+    const ctx = full.getContext('2d')!;
+    ctx.drawImage(bmp, 0, 0);
+    const px = ctx.getImageData(0, 0, bmp.width, bmp.height).data;
+    const digest = await crypto.subtle.digest('SHA-256', px);
+    const hash = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+    const small = new OffscreenCanvas(64, 40);
+    const sctx = small.getContext('2d')!;
+    sctx.drawImage(bmp, 0, 0, 64, 40);
+    const sp = sctx.getImageData(0, 0, 64, 40).data;
+    const thumb: number[] = [];
+    for (let i = 0; i < sp.length; i += 4) thumb.push(Math.round((sp[i]! * 0.299 + sp[i + 1]! * 0.587 + sp[i + 2]! * 0.114)));
+    bmp.close();
+    return { hash, thumb };
+  } catch {
+    return null;
+  }
+}
+
+/** Camera targets per scenario, relative to the start state. */
+function scenarioCamera(name: string, start: OrbitState, current: OrbitState): OrbitState | null {
+  const [rx, ry, dist, tx, ty, tz] = current;
+  switch (name) {
+    case 'zoom':   return [rx, ry, Math.max(0.1, dist / 3), tx, ty, tz];
+    case 'pan':    return [rx, ry, dist, tx + 0.15, ty, tz];
+    case 'orbit':  return [rx, ry + (35 * Math.PI) / 180, dist, tx, ty, tz];
+    case 'tilt':   return [rx + (25 * Math.PI) / 180, ry, dist, tx, ty, tz];
+    case 'return': return start;
+    default:       return null;
+  }
+}
+
+/** Apply one camera scenario and measure how the streaming pipeline recovers. */
+async function runScenario(v: BenchViewer, name: string, target: OrbitState, timeoutMs: number, stablePolls: number): Promise<ScenarioReport> {
   const s0 = v.streamingManager.getStats();
-  const [rx, ry, dist, tx, ty, tz] = v.camera.getOrbitState();
   const t0 = performance.now();
-  v.camera.setOrbitState([rx, ry + (deg * Math.PI) / 180, dist, tx, ty, tz]);
+  v.camera.setOrbitState(target);
 
   let firstCommitMs: number | null = null;
+  let desired50Ms: number | null = null;
+  let desired90Ms: number | null = null;
   let stable = 0;
   let timedOut = true;
+  let peakPending = 0;
   const deadline = t0 + timeoutMs;
   while (performance.now() < deadline) {
     const s = v.streamingManager.getStats();
-    if (firstCommitMs === null && s.bricksCommitted > s0.bricksCommitted) firstCommitMs = performance.now() - t0;
+    const now = performance.now() - t0;
+    if (firstCommitMs === null && s.bricksCommitted > s0.bricksCommitted) firstCommitMs = now;
+    // Progress = pending work drained relative to its peak after the camera change.
+    if (s.pendingCount > peakPending) { peakPending = s.pendingCount; desired50Ms = null; desired90Ms = null; }
+    if (peakPending > 0) {
+      if (desired50Ms === null && s.pendingCount <= peakPending * 0.5) desired50Ms = now;
+      if (desired90Ms === null && s.pendingCount <= peakPending * 0.1) desired90Ms = now;
+    }
     const idle = s.pendingCount === 0 && v.renderer.isConverged;
     stable = idle ? stable + 1 : 0;
     if (stable >= stablePolls) { timedOut = false; break; }
     await sleep(POLL_MS);
   }
+  const reconvergeMs = performance.now() - t0;
   const s1 = v.streamingManager.getStats();
+  if (peakPending === 0) { desired50Ms = 0; desired90Ms = 0; } // nothing new was needed
   return {
-    deg,
+    name,
     firstCommitMs,
-    reconvergeMs: performance.now() - t0,
+    desired50Ms,
+    desired90Ms,
+    reconvergeMs,
     timedOut,
     requests: s1.requestCount - s0.requestCount,
     bytesDownloaded: s1.totalBytesDownloaded - s0.totalBytesDownloaded,
     committed: s1.bricksCommitted - s0.bricksCommitted,
     cancelled: s1.bricksCancelled - s0.bricksCancelled,
     discarded: s1.bricksDiscarded - s0.bricksDiscarded,
+    desiredCount: s1.desiredCount,
+    peakPending,
+    chunkCacheHitRatio: s1.pipelineTimings.chunkCacheHitRatio ?? 0,
+    image: timedOut ? null : await signImage(v),
   };
 }
 
@@ -243,8 +311,17 @@ export async function maybeRunBench(viewer: BenchViewer): Promise<void> {
     userAgent: navigator.userAgent,
   };
 
-  const orbitDeg = num(params, 'benchOrbit', 0);
-  if (orbitDeg !== 0 && settled) report.orbit = await runOrbit(viewer, orbitDeg, timeoutMs, stablePolls);
+  if (settled) report.image = await signImage(viewer);
+  const scenarioNames = (params.get('benchScenarios') ?? '').split(',').map(x => x.trim()).filter(Boolean);
+  if (scenarioNames.length > 0 && settled) {
+    const start = viewer.camera.getOrbitState();
+    report.scenarios = [];
+    for (const name of scenarioNames) {
+      const target = scenarioCamera(name, start, viewer.camera.getOrbitState());
+      if (!target) continue;
+      report.scenarios.push(await runScenario(viewer, name, target, timeoutMs, stablePolls));
+    }
+  }
 
   const json = JSON.stringify(report);
   // eslint-disable-next-line no-console

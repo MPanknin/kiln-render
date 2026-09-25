@@ -66,10 +66,8 @@ export interface EngineOptions {
   outputFormat?: GPUTextureFormat;
   /** Level model: 'native' per-axis factors from metadata (default) or 'legacy' uniform 2:1 virtual pyramid. Comparison switch. */
   pyramid?: PyramidPolicy;
-  /**
-   * Initial per-channel visibility (multichannel). Hidden channels start with
-   * alpha 0 and are not streamed until shown; overrides OMERO `active`.
-   */
+  /** Initial per-channel visibility (multichannel): hidden channels start with alpha 0 and are
+   *  not streamed until shown. Overrides OMERO `active`. */
   visibleChannels?: boolean[];
 }
 

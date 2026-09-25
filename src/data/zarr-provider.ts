@@ -51,13 +51,8 @@ export class ZarrDataProvider extends BaseZarrProvider {
     }
   }
 
-  /**
-   * Open a Zarr v2 OME dataset in two round trips: group attrs (root
-   * and bioformats2raw "0" speculatively together), then every level's .zarray
-   * in parallel. Arrays are built from that JSON, and the same metadata is
-   * handed to the workers so they start without touching the network.
-   * Returns null when the store is not v2 (caller falls back to zarrita probing).
-   */
+  /** Zarr v2 OME open in two round trips: root + bioformats2raw "0" attrs, then all .zarray in
+   *  parallel; arrays come from that JSON and workers get it too. null → not v2, caller probes. */
   private async openV2Fast(store: TolerantFetchStore): Promise<FastOpen | null> {
     const getJson = async <T,>(key: string): Promise<T | null> => {
       const bytes = await store.get(key as AbsolutePath).catch(() => undefined);

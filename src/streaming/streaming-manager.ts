@@ -286,10 +286,7 @@ export class StreamingManager {
     return vis.length > 0 ? vis : [0];
   }
 
-  /**
-   * Write one channel of a slot (data, or zeros for a channel that is absent)
-   * and keep the per-slot channel bookkeeping in sync.
-   */
+  /** Write one channel of a slot (null = zeros) and keep the per-slot channel bits in sync. */
   private writeSlotChannel(slotIndex: number, slot: AtlasSlot, ch: number, data: Uint8Array | Uint16Array | null): void {
     writeToCanvas(
       this.device,
@@ -313,10 +310,8 @@ export class StreamingManager {
     }
   }
 
-  /**
-   * Renderer-visible channel bitmask. Newly visible channels are fetched for
-   * every resident brick that lacks them; hiding costs nothing.
-   */
+  /** Renderer-visible channel bitmask. Newly visible channels are fetched for every resident
+   *  brick that lacks them; hiding costs nothing. */
   setVisibleChannels(mask: number): void {
     if (this.disposed) return;
     const added = mask & ~this.visibleMask;
@@ -1274,6 +1269,10 @@ export class StreamingManager {
     // Track
     this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
     this.bricksCommitted++;
+
+    // A channel shown while this fetch was in flight is not in loadChannels: backfill it.
+    const missing = this.visibleMask & ~(this.slotChannels.get(result.slotIndex) ?? 0) & ((1 << numChannels) - 1);
+    if (missing) this.fillMissingChannels(missing);
 
     // Record end-to-end latency (dispatch → committed)
     const dispatchTime = this.dispatchTimestamps.get(key);

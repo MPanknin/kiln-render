@@ -33,7 +33,14 @@ import { KilnViewer } from 'kiln-render';
 const viewer = await KilnViewer.create(canvas, 'https://example.com/data/scan.ome.zarr');
 ```
 
-Kiln auto-detects the format from the URL. Brick assembly (fetching Zarr chunks, decompressing, and re-chunking into 66³ bricks with ghost borders) runs in a Web Worker pool off the main thread.
+Kiln auto-detects the format from the URL. Brick assembly (fetching Zarr chunks, decompressing, and re-chunking into 66³ bricks with ghost borders) runs in a Web Worker pool off the main thread. Metadata is read in two round trips for Zarr v2 stores and shared with the workers, so they start without touching the network.
+
+### Layout tips for fast streaming
+
+Kiln streams whatever layout it is given, but two properties of the source decide how quickly a full coarse image can appear:
+
+- **A pyramid that downsamples every axis.** If the multiscale levels halve X and Y but keep Z at full resolution, the coarsest level can still be hundreds of megabytes (a 1920×1920×752 stack with four channels has a 240×240×752 coarsest level of about 270 MB compressed). Kiln shows the first bricks and the first channel early, but the complete base still costs that download. Add a level or two that also halve Z.
+- **Chunks that are not whole planes.** With chunks of one full XY plane, every brick needs all planes of its Z range before it can be assembled, so nothing shows until most of a level has arrived. Cubic or near-cubic chunks (for example 64³ or 128³) let bricks stream independently.
 
 ## Public OME-Zarr datasets
 

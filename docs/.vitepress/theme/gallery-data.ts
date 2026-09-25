@@ -43,7 +43,7 @@ export const gallery: GalleryItem[] = [
   {
     title: 'Woodbranch',
     meta: 'µCT · 16-bit · 16.0 GB · 2048³',
-    href: 'app/?dataset=https%3A%2F%2Fome-zarr-scivis.s3.us-east-1.amazonaws.com%2Fv0.5%2F96x2%2Fwoodbranch.ome.zarr&mode=dvr&wc=0.06&ww=0.13&iso=0.20&tf=grayscale&up=-y&scale=0.50&cam=0.540%2C3.870%2C1.488%2C0.016%2C-0.003%2C-0.008',
+    href: 'app/?dataset=https%3A%2F%2Fome-zarr-scivis.s3.us-east-1.amazonaws.com%2Fv0.5%2F96x2%2Fwoodbranch.ome.zarr&mode=dvr&wc=0.06&ww=0.13&iso=0.20&tf=grayscale&up=-y&scale=0.50&cam=0.540%2C3.870%2C1.488%2C0.016%2C-0.003%2C-0.008&pyramid=legacy',
     thumb: 'gallery/woodbranch.webp',
     alt: 'Woodbranch micro-CT scan',
     description:

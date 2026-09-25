@@ -1,7 +1,5 @@
 # Gallery
 
-Live examples, streamed on demand.
-
 <Gallery />
 
 ## Dataset credits

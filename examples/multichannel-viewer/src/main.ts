@@ -170,6 +170,8 @@ async function main() {
       p.set('up', state.upAxis);
       p.set('mode', state.mode);
       p.set('scale', state.renderScale.toFixed(2));
+      // Datasets that only open with the legacy level model must keep it in shared links
+      if (urlParams.pyramid) p.set('pyramid', urlParams.pyramid);
       const [rx, ry, dist, tx, ty, tz] = state.cam;
       p.set('cam', `${rx.toFixed(3)},${ry.toFixed(3)},${dist.toFixed(3)},${tx.toFixed(3)},${ty.toFixed(3)},${tz.toFixed(3)}`);
       const channelState = ui.getChannelState();

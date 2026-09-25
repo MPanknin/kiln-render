@@ -569,9 +569,10 @@ export class MultichannelUI {
   }
 
   private updateVisibility(): void {
+    // Channels are always shown; slice mode adds the plane sliders below them.
     const isSlice = this.params.renderMode === "slice";
     const children: HTMLElement[] = isSlice
-      ? [this.sliceRows[0].el, this.sliceRows[1].el, this.sliceRows[2].el]
+      ? [this.channelRackEl, this.sliceRows[0].el, this.sliceRows[1].el, this.sliceRows[2].el]
       : [this.channelRackEl];
     this.modeSwap.setContent(children);
   }

@@ -256,6 +256,8 @@ async function main() {
         // Overlays — only emit when non-default (both default to false)
         if (state.showWireframe) p.set('wireframe', '1');
         if (state.showAxis) p.set('axis', '1');
+        // Datasets that only open with the legacy level model must keep it in shared links
+        if (urlParams.pyramid) p.set('pyramid', urlParams.pyramid);
 
         // Slice planes — only emit when in slice mode
         if (state.mode === 'slice') {

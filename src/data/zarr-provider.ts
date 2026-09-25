@@ -4,13 +4,26 @@
  */
 
 import { open, root, Array as ZarrArray } from 'zarrita';
-import type { DataType, Readable } from 'zarrita';
+import type { DataType, Readable, ArrayMetadata, AbsolutePath } from 'zarrita';
 import { TolerantFetchStore } from './tolerant-fetch-store.js';
 import { ZarrWorkerPool } from './zarr-worker-pool.js';
 import { BaseZarrProvider, detectCompression } from './base-zarr-provider.js';
+import type { OmeMultiscales } from './base-zarr-provider.js';
 import type { VolumeMetadata, BrickLoadResult, PipelineTimings } from './data-provider.js';
 import { UnsupportedDatasetError } from './data-provider.js';
 import { extractMultiscales } from './zarr-validator.js';
+import { v2ToV3ArrayMetadata, compressionLabel } from './zarr-v2-metadata.js';
+import type { ZarrV2ArrayJson } from './zarr-v2-metadata.js';
+
+/** Everything initialize() needs, opened in two round trips (see openV2Fast). */
+interface FastOpen {
+  attrs: Record<string, unknown>;
+  ms: OmeMultiscales;
+  arrays: ZarrArray<DataType, Readable>[];
+  arrayPaths: string[];
+  arrayMetadata: ArrayMetadata<DataType>[];
+  compression: string | undefined;
+}
 
 /**
  * DataProvider implementation for OME-Zarr (NGFF v0.5) volumes over HTTP
@@ -38,44 +51,88 @@ export class ZarrDataProvider extends BaseZarrProvider {
     }
   }
 
+  /** Zarr v2 OME open in two round trips: root + bioformats2raw "0" attrs, then all .zarray in
+   *  parallel; arrays come from that JSON and workers get it too. null → not v2, caller probes. */
+  private async openV2Fast(store: TolerantFetchStore): Promise<FastOpen | null> {
+    const getJson = async <T,>(key: string): Promise<T | null> => {
+      const bytes = await store.get(key as AbsolutePath).catch(() => undefined);
+      return bytes ? JSON.parse(new TextDecoder().decode(bytes)) as T : null;
+    };
+    const [rootAttrs, subAttrs] = await Promise.all([
+      getJson<Record<string, unknown>>('/.zattrs'),
+      getJson<Record<string, unknown>>('/0/.zattrs'),
+    ]);
+    if (!rootAttrs && !subAttrs) return null;
+
+    let attrs = rootAttrs ?? {};
+    let ms = extractMultiscales(attrs) as OmeMultiscales | null;
+    let subGroupPath = '';
+    if (!ms && subAttrs) {
+      const subMs = extractMultiscales(subAttrs) as OmeMultiscales | null;
+      if (subMs) { attrs = subAttrs; ms = subMs; subGroupPath = '0/'; }
+    }
+    if (!ms) return null;
+
+    const arrayPaths = ms.datasets.map(ds => `${subGroupPath}${ds.path}`);
+    const zarrays = await Promise.all(arrayPaths.map(p => getJson<ZarrV2ArrayJson>(`/${p}/.zarray`)));
+    if (zarrays.some(z => !z)) return null;
+
+    const arrayMetadata = zarrays.map(z => v2ToV3ArrayMetadata(z!));
+    const arrays = arrayPaths.map((p, i) => new ZarrArray(store, `/${p}` as AbsolutePath, arrayMetadata[i]!));
+    return { attrs, ms, arrays, arrayPaths, arrayMetadata, compression: compressionLabel(zarrays[0]!.compressor) };
+  }
+
   async initialize(): Promise<VolumeMetadata> {
     if (this.metadata) return this.metadata;
 
     // Use zarrita on main thread for lightweight metadata reading only
     const store = new TolerantFetchStore(this.url);
-    const rootGroup = await open(root(store), { kind: 'group' });
+    const fast = await this.openV2Fast(store);
 
-    // Parse OME multiscales — try root attrs first, then bioformats2raw sub-group "0"
-    let attrs = rootGroup.attrs as Record<string, unknown>;
-    let ms = extractMultiscales(attrs);
-    let baseGroup: typeof rootGroup = rootGroup;
-    let subGroupPath = '';
-    if (!ms) {
-      try {
-        const subGroup = await open(rootGroup.resolve('0'), { kind: 'group' });
-        const subAttrs = subGroup.attrs as Record<string, unknown>;
-        const subMs = extractMultiscales(subAttrs);
-        if (subMs) {
-          baseGroup = subGroup as typeof rootGroup;
-          attrs = subAttrs;
-          ms = subMs;
-          subGroupPath = '0/';
+    let attrs: Record<string, unknown>;
+    let arrays: ZarrArray<DataType, Readable>[];
+    let arrayPaths: string[];
+    let arrayMetadata: ArrayMetadata<DataType>[] | undefined;
+    let compression: string | undefined;
+
+    if (fast) {
+      ({ attrs, arrays, arrayPaths, arrayMetadata, compression } = fast);
+    } else {
+      const rootGroup = await open(root(store), { kind: 'group' });
+
+      // Parse OME multiscales — try root attrs first, then bioformats2raw sub-group "0"
+      attrs = rootGroup.attrs as Record<string, unknown>;
+      let ms = extractMultiscales(attrs);
+      let baseGroup: typeof rootGroup = rootGroup;
+      let subGroupPath = '';
+      if (!ms) {
+        try {
+          const subGroup = await open(rootGroup.resolve('0'), { kind: 'group' });
+          const subAttrs = subGroup.attrs as Record<string, unknown>;
+          const subMs = extractMultiscales(subAttrs);
+          if (subMs) {
+            baseGroup = subGroup as typeof rootGroup;
+            attrs = subAttrs;
+            ms = subMs;
+            subGroupPath = '0/';
+          }
+        } catch {
+          // sub-group doesn't exist
         }
-      } catch {
-        // sub-group doesn't exist
       }
-    }
-    if (!ms) {
-      throw new UnsupportedDatasetError(['No OME-NGFF multiscales metadata found']);
-    }
+      if (!ms) {
+        throw new UnsupportedDatasetError(['No OME-NGFF multiscales metadata found']);
+      }
 
-    const arrayPaths = ms.datasets.map((ds: any) => `${subGroupPath}${ds.path}`);
+      arrayPaths = ms.datasets.map((ds: any) => `${subGroupPath}${ds.path}`);
 
-    // Open arrays on main thread to read metadata (shape, chunks, dtype)
-    const arrays: ZarrArray<DataType, Readable>[] = [];
-    for (const ds of ms.datasets) {
-      const arr = await open(baseGroup.resolve(ds.path), { kind: 'array' });
-      arrays.push(arr);
+      // Open arrays on main thread to read metadata (shape, chunks, dtype)
+      arrays = [];
+      for (const ds of ms.datasets) {
+        const arr = await open(baseGroup.resolve(ds.path), { kind: 'array' });
+        arrays.push(arr);
+      }
+      compression = await detectCompression(store, arrayPaths[0] ?? '');
     }
 
     // Parse metadata using base class helper
@@ -89,7 +146,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
       metadata.dataRange = [0, 1];
     }
 
-    metadata.compression = await detectCompression(store, arrayPaths[0] ?? '');
+    metadata.compression = compression;
 
     // Backfill the metadata reads made above (group/array opens, compression
     // probe) — small, but real network activity that should count too.
@@ -109,6 +166,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
       this.targetFormat,
       metadata.isFloat ?? false,
       metadata.dataRange,
+      arrayMetadata,
     );
 
     return this.metadata;

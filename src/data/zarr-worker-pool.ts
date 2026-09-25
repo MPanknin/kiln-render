@@ -3,6 +3,7 @@
  *  footprint so a brick's channels spread across workers, not one. */
 
 import type { ZarrWorkerRequest, ZarrWorkerResponse } from './zarr-chunk-worker.js';
+import type { ArrayMetadata, DataType } from 'zarrita';
 import type { PipelineTimings } from './data-provider.js';
 import { RollingAvg } from './network-tracker.js';
 import { isFlagEnabled } from '../core/feature-flags.js';
@@ -83,6 +84,7 @@ export class ZarrWorkerPool {
     targetFormat?: 'r8unorm' | 'r16unorm' | 'r16float',
     isFloat32?: boolean,
     floatRange?: [number, number],
+    arrayMetadata?: ArrayMetadata<DataType>[],
   ): Promise<void> {
     this.is16bit = is16bit;
     this.lodParams = lodParams;
@@ -170,6 +172,7 @@ export class ZarrWorkerPool {
           isFloat32: isFloat32 ?? false,
           floatMin: floatRange?.[0],
           floatMax: floatRange?.[1],
+          arrayMetadata,
           // ?p3=1 / ?p4=1 — read here (main thread), forwarded since a worker
           // can't read the page URL itself. See docs/audits/kiln-render - fetch_patterns.md.
           dynamicCacheBudget: isFlagEnabled('p3'),

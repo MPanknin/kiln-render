@@ -33,7 +33,7 @@ import { KilnViewer } from 'kiln-render';
 const viewer = await KilnViewer.create(canvas, 'https://example.com/data/scan.ome.zarr');
 ```
 
-Kiln auto-detects the format from the URL. Brick assembly (fetching Zarr chunks, decompressing, and re-chunking into 66³ bricks with ghost borders) runs in a Web Worker pool off the main thread.
+Kiln auto-detects the format from the URL. Brick assembly (fetching Zarr chunks, decompressing, and re-chunking into 66³ bricks with ghost borders) runs in a Web Worker pool off the main thread. For Zarr v2 stores (NGFF 0.4) the metadata is read in two round trips and shared with the workers, so they start without touching the network.
 
 ## Public OME-Zarr datasets
 

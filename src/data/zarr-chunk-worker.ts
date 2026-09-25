@@ -4,7 +4,7 @@
  */
 
 import { open, root, Array as ZarrArray, registry } from 'zarrita';
-import type { DataType, Readable } from 'zarrita';
+import type { DataType, Readable, ArrayMetadata, AbsolutePath } from 'zarrita';
 import blosc from 'numcodecs/blosc';
 import lz4 from 'numcodecs/lz4';
 import zstd from 'numcodecs/zstd';
@@ -78,6 +78,11 @@ export interface ZarrWorkerRequest {
   /** Float normalisation range — voxel values are mapped from [floatMin, floatMax] → [0, 65535] */
   floatMin?: number;
   floatMax?: number;
+  /**
+   * For 'init': per-level array metadata already fetched on the main thread,
+   * so arrays are built here without any network round trips.
+   */
+  arrayMetadata?: ArrayMetadata<DataType>[];
 }
 
 /** Messages from worker to main thread */
@@ -256,12 +261,16 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
         }
 
         workerStore = new TolerantFetchStore(url!);
-        const rootGroup = await open(root(workerStore), { kind: 'group' });
-
-        arrays = [];
-        for (const path of paths!) {
-          const arr = await open(rootGroup.resolve(path), { kind: 'array' });
-          arrays.push(arr);
+        const { arrayMetadata } = event.data;
+        if (arrayMetadata && arrayMetadata.length === paths!.length) {
+          arrays = paths!.map((path, i) => new ZarrArray(workerStore!, `/${path}` as AbsolutePath, arrayMetadata[i]!));
+        } else {
+          const rootGroup = await open(root(workerStore), { kind: 'group' });
+          arrays = [];
+          for (const path of paths!) {
+            const arr = await open(rootGroup.resolve(path), { kind: 'array' });
+            arrays.push(arr);
+          }
         }
 
         const resp: ZarrWorkerResponse = { type: 'init', id };

@@ -33,6 +33,8 @@ const label = args.label ?? new Date().toISOString().replace(/[:.]/g, '-').slice
 const outDir = path.join(here, 'results', label);
 const defaultDist = path.resolve(args.dist ?? path.join(here, '..', 'dist'));
 const variants = parseVariants(args.variants ?? 'control=');
+const orbitDeg = Number(args.orbit ?? 0);
+const orbitQuery = orbitDeg ? `&benchOrbit=${orbitDeg}` : '';
 
 for (const w of workloads) if (!WORKLOADS[w]) die(`unknown workload ${w}`);
 for (const p of profiles) if (!PROFILES[p]) die(`unknown profile ${p}`);
@@ -84,7 +86,7 @@ try {
         for (const v of variants) {
           const name = `${w}.${p}.${v.name}.${i}`;
           await control(v.origin, 'reset');
-          const url = workloadUrl(v.origin, WORKLOADS[w], `bench=1&benchLabel=${encodeURIComponent(v.name)}&benchTimeout=${timeoutMs}${v.query ? '&' + v.query : ''}`);
+          const url = workloadUrl(v.origin, WORKLOADS[w], `bench=1&benchLabel=${encodeURIComponent(v.name)}&benchTimeout=${timeoutMs}${orbitQuery}${v.query ? '&' + v.query : ''}`);
           const r = await runOnce(url, timeoutMs, path.join(outDir, name));
           if (r && v.query) {
             // Guard against the flags silently not reaching the page.
@@ -96,7 +98,7 @@ try {
           const rec = { workload: w, profile: p, variant: v.name, run: i, url, proxy: st, ...(r ?? { failed: true }) };
           results.push(rec);
           await fsp.writeFile(path.join(outDir, name + '.json'), JSON.stringify(rec, null, 2));
-          log(`${name.padEnd(34)} first ${fmt(r?.firstContentFrameMs)}  base50 ${fmt(r?.milestones?.baseCoverage50)}  base ${fmt(r?.baseCompleteMs)}  conv ${fmt(r?.convergeMs)}  req ${r?.requestCount ?? '-'}  ${r ? (r.bytesDownloaded / 1e6).toFixed(1) : '-'} MB${st.misses ? `  ⚠ ${st.misses} cache misses` : ''}${r?.timedOut ? '  ⚠ timed out' : ''}`);
+          log(`${name.padEnd(34)} first ${fmt(r?.firstContentFrameMs)}  ch0 ${fmt(r?.milestones?.baseChannel0Complete)}  base ${fmt(r?.baseCompleteMs)}  conv ${fmt(r?.convergeMs)}${r?.orbit ? `  orbit first ${fmt(r.orbit.firstCommitMs)} reconv ${fmt(r.orbit.reconvergeMs)}` : ''}  req ${r?.requestCount ?? '-'}  ${r ? (r.bytesDownloaded / 1e6).toFixed(1) : '-'} MB${st.misses ? `  ⚠ ${st.misses} cache misses` : ''}${r?.timedOut ? '  ⚠ timed out' : ''}`);
         }
       }
     }
@@ -123,7 +125,7 @@ async function runOnce(url, timeout, outBase) {
   let report = null;
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => window.__KILN_BENCH_RESULT !== undefined, null, { timeout: timeout + 30000, polling: 200 });
+    await page.waitForFunction(() => window.__KILN_BENCH_RESULT !== undefined, null, { timeout: timeout * 2 + 30000, polling: 200 });
     report = await page.evaluate(() => window.__KILN_BENCH_RESULT);
     if (outBase) await page.screenshot({ path: outBase + '.png' });
   } catch (e) {
@@ -166,6 +168,8 @@ function summarize(rs) {
     ['requests', r => r.requestCount],
     ['MB', r => r.bytesDownloaded / 1e6],
     ['wire MB', r => (r.proxy?.bytes ?? NaN) / 1e6],
+    ['orbit first', r => r.orbit?.firstCommitMs],
+    ['reconverge', r => r.orbit?.reconvergeMs],
   ];
   out.push(`| workload | profile | variant | ${cols.map(c => c[0]).join(' | ')} | notes |`);
   out.push(`|---|---|---|${cols.map(() => '---').join('|')}|---|`);

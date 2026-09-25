@@ -19,6 +19,7 @@
  *   ?benchTimeout=120000  give-up timeout (ms) if it never converges
  *   ?benchStable=8        consecutive stable polls required to call it converged
  *   ?benchLabel=<name>    label echoed into the report
+ *   ?benchOrbit=<deg>     after converging, orbit the camera by <deg> and time the re-converge
  *   ?report=<url>         POST the JSON report here when done
  */
 
@@ -46,11 +47,29 @@ interface BenchStats {
 }
 
 /** Minimal structural view of KilnViewer — only what the bench reads. */
+type OrbitState = [number, number, number, number, number, number];
+
 export interface BenchViewer {
   renderer: { isConverged: boolean; numChannels: number };
   streamingManager: { baseLodLoaded: boolean; getStats(): BenchStats };
   metadata: { name: string };
   milestones: LoadMilestones;
+  camera: { getOrbitState(): OrbitState; setOrbitState(s: OrbitState): void };
+}
+
+/** Interaction phase: a camera jump after convergence and the streaming it triggers. */
+export interface OrbitReport {
+  deg: number;
+  /** ms from the camera jump to the first newly committed brick; null if none arrived. */
+  firstCommitMs: number | null;
+  /** ms from the camera jump until pipeline idle + converged again. */
+  reconvergeMs: number;
+  timedOut: boolean;
+  requests: number;
+  bytesDownloaded: number;
+  committed: number;
+  cancelled: number;
+  discarded: number;
 }
 
 export interface BenchReport {
@@ -80,6 +99,7 @@ export interface BenchReport {
   chunkCacheHitRatio: number;
   timings: { queueMs: number; fetchMs: number; assemblyMs: number; uploadMs: number };
   userAgent: string;
+  orbit?: OrbitReport;
 }
 
 const POLL_MS = 100;
@@ -132,8 +152,45 @@ function formatReport(r: BenchReport): string {
     `${pad('chunk cache hit')}${(r.chunkCacheHitRatio * 100).toFixed(0)}%`,
     `${pad('pipeline avg ms')}queue ${r.timings.queueMs.toFixed(0)} · fetch ${r.timings.fetchMs.toFixed(0)} · assembly ${r.timings.assemblyMs.toFixed(0)} · upload ${r.timings.uploadMs.toFixed(0)}`,
     `${pad('resident/desired')}${r.loadedCount} / ${r.desiredCount}`,
+    ...(r.orbit ? [
+      `${pad(`orbit ${r.orbit.deg}°`)}first commit ${ms(r.orbit.firstCommitMs)} · reconverge ${Math.round(r.orbit.reconvergeMs)} ms${r.orbit.timedOut ? '  ⚠ TIMED OUT' : ''}`,
+      `${pad('orbit traffic')}${r.orbit.requests} req · ${mb(r.orbit.bytesDownloaded)} MB · committed ${r.orbit.committed} · cancelled ${r.orbit.cancelled} · discarded ${r.orbit.discarded}`,
+    ] : []),
     '==================',
   ].join('\n');
+}
+
+/** Jump the camera and measure how the streaming pipeline recovers. */
+async function runOrbit(v: BenchViewer, deg: number, timeoutMs: number, stablePolls: number): Promise<OrbitReport> {
+  const s0 = v.streamingManager.getStats();
+  const [rx, ry, dist, tx, ty, tz] = v.camera.getOrbitState();
+  const t0 = performance.now();
+  v.camera.setOrbitState([rx, ry + (deg * Math.PI) / 180, dist, tx, ty, tz]);
+
+  let firstCommitMs: number | null = null;
+  let stable = 0;
+  let timedOut = true;
+  const deadline = t0 + timeoutMs;
+  while (performance.now() < deadline) {
+    const s = v.streamingManager.getStats();
+    if (firstCommitMs === null && s.bricksCommitted > s0.bricksCommitted) firstCommitMs = performance.now() - t0;
+    const idle = s.pendingCount === 0 && v.renderer.isConverged;
+    stable = idle ? stable + 1 : 0;
+    if (stable >= stablePolls) { timedOut = false; break; }
+    await sleep(POLL_MS);
+  }
+  const s1 = v.streamingManager.getStats();
+  return {
+    deg,
+    firstCommitMs,
+    reconvergeMs: performance.now() - t0,
+    timedOut,
+    requests: s1.requestCount - s0.requestCount,
+    bytesDownloaded: s1.totalBytesDownloaded - s0.totalBytesDownloaded,
+    committed: s1.bricksCommitted - s0.bricksCommitted,
+    cancelled: s1.bricksCancelled - s0.bricksCancelled,
+    discarded: s1.bricksDiscarded - s0.bricksDiscarded,
+  };
 }
 
 /**
@@ -185,6 +242,9 @@ export async function maybeRunBench(viewer: BenchViewer): Promise<void> {
     },
     userAgent: navigator.userAgent,
   };
+
+  const orbitDeg = num(params, 'benchOrbit', 0);
+  if (orbitDeg !== 0 && settled) report.orbit = await runOrbit(viewer, orbitDeg, timeoutMs, stablePolls);
 
   const json = JSON.stringify(report);
   // eslint-disable-next-line no-console

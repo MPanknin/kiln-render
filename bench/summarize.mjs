@@ -24,6 +24,8 @@ const cols = [
   ['requests', r => r.requestCount],
   ['MB', r => r.bytesDownloaded / 1e6],
   ['wire MB', r => (r.proxy?.bytes ?? NaN) / 1e6],
+  ['orbit first', r => r.orbit?.firstCommitMs],
+  ['reconverge', r => r.orbit?.reconvergeMs],
 ];
 
 const groups = new Map();

@@ -25,6 +25,12 @@ export const WORKLOADS = {
     query: 'up=-y&mode=slice&scale=0.50&cam=-0.380%2C3.140%2C1.261%2C-0.001%2C0.074%2C0.007&channels=0%2C0%2C255%2C1.00%2C1%2C0.00%2C0.04%3B255%2C255%2C0%2C1.00%2C1%2C0.02%2C0.04%3B255%2C0%2C0%2C1.00%2C1%2C0.01%2C0.09%3B255%2C255%2C255%2C1.00%2C1%2C0.01%2C0.05&slice=1024%2C1024%2C13%2C1%2C1%2C1',
     note: '2048²×25, 4ch uint16, whole-plane 2048² chunks, 6 levels (XY-only)',
   },
+  'yeast-mip': {
+    app: 'multichannel',
+    dataset: 'https://d39zu0xtgv0613.cloudfront.net/multichannel/4496763.zarr/4496763.zarr',
+    query: 'up=-y&mode=mip&scale=0.50&cam=-0.380%2C3.140%2C1.261%2C-0.001%2C0.074%2C0.007&channels=0%2C0%2C255%2C1.00%2C1%2C0.00%2C0.04%3B255%2C255%2C0%2C1.00%2C1%2C0.02%2C0.04%3B255%2C0%2C0%2C1.00%2C1%2C0.01%2C0.09%3B255%2C255%2C255%2C1.00%2C1%2C0.01%2C0.05&slice=1024%2C1024%2C13%2C1%2C1%2C1',
+    note: 'same view as yeast but MIP — exercises volume streaming instead of one slice',
+  },
   fly: {
     app: 'multichannel',
     dataset: 'https://d39zu0xtgv0613.cloudfront.net/Fly-eFISH/NP01_1_1_SS00790_AstA546_CCHa1_647_1x_LOL.chunked.zarr/',

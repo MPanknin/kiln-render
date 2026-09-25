@@ -164,6 +164,12 @@ export interface DataProvider {
   /** Load a single brick's voxel data with inline statistics. */
   loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex?: number, signal?: AbortSignal): Promise<BrickLoadResult | null>;
 
+  /**
+   * Relative cost of loading one brick, e.g. the number of source chunks it
+   * touches. Optional; the base load uses it to fetch cheap bricks first.
+   */
+  estimateBrickCost?(lod: number, bx: number, by: number, bz: number): number;
+
   /** Check if a brick is empty (below threshold). */
   isBrickEmpty(lod: number, bx: number, by: number, bz: number, maxThreshold?: number): Promise<boolean>;
 

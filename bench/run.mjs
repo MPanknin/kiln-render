@@ -63,7 +63,7 @@ try {
       log(`warm  ${w}  ${path.basename(s.dist)}`);
       const r = await runOnce(url, timeoutMs * 3, null);
       const st = await control(s.origin, 'stats');
-      log(`      converge ${fmt(r?.convergeMs)}  misses ${st.misses}  cached ${(st.bytes / 1e6).toFixed(1)} MB${r?.timedOut ? '  ⚠ timed out' : ''}`);
+      log(`      converge ${fmt(r?.convergeMs)}  misses ${st.misses}  served ${(st.bytes / 1e6).toFixed(1)} MB${r?.timedOut ? '  ⚠ timed out' : ''}`);
     }
   }
 
@@ -149,6 +149,7 @@ function summarize(rs) {
     ['converge', r => r.convergeMs],
     ['requests', r => r.requestCount],
     ['MB', r => r.bytesDownloaded / 1e6],
+    ['wire MB', r => (r.proxy?.bytes ?? NaN) / 1e6],
   ];
   out.push(`| workload | profile | variant | ${cols.map(c => c[0]).join(' | ')} | notes |`);
   out.push(`|---|---|---|${cols.map(() => '---').join('|')}|---|`);

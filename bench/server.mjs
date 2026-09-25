@@ -97,7 +97,7 @@ function cachePaths(host, upstreamPath, range) {
 async function readCached(p) {
   try {
     const meta = JSON.parse(await fsp.readFile(p.meta, 'utf8'));
-    const body = meta.status === 404 ? Buffer.alloc(0) : await fsp.readFile(p.body);
+    const body = meta.status === 404 || meta.status === 403 ? Buffer.alloc(0) : await fsp.readFile(p.body);
     return { meta, body };
   } catch { return null; }
 }
@@ -110,11 +110,11 @@ async function fetchUpstream(host, upstreamPath, range, p) {
   const body = Buffer.from(await r.arrayBuffer());
   const meta = {
     status,
-    headers: pick(r.headers, ['content-type', 'content-range', 'content-length', 'accept-ranges', 'last-modified', 'etag']),
+    headers: pick(r.headers, ['content-type', 'content-range', 'content-length', 'accept-ranges', 'last-modified', 'etag', 'cache-control', 'expires']),
   };
-  if (status === 200 || status === 206 || status === 404) {
+  if (status === 200 || status === 206 || status === 404 || status === 403) {
     await fsp.mkdir(path.dirname(p.body), { recursive: true });
-    if (status !== 404) await fsp.writeFile(p.body, body);
+    if (status === 200 || status === 206) await fsp.writeFile(p.body, body);
     await fsp.writeFile(p.meta, JSON.stringify(meta));
   } else {
     stats.upstreamErrors++;
@@ -150,7 +150,8 @@ async function handleProxy(req, res, url) {
     const h = { ...entry.meta.headers, ...cors() };
     delete h['content-length'];
     h['content-length'] = String(entry.body.length);
-    h['cache-control'] = 'no-store';
+    // Upstream cache headers are forwarded as-is so Chrome's HTTP cache
+    // behaves like it does against the real CDN (heuristic freshness).
     res.writeHead(entry.meta.status, h);
     stats.bytes += entry.body.length;
     await link.send(res, entry.body);

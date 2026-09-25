@@ -6,7 +6,7 @@
 import { open, root, Array as ZarrArray } from 'zarrita';
 import type { DataType } from 'zarrita';
 import { FileSystemStore } from './filesystem-store.js';
-import { BaseZarrProvider, detectCompression, type LodParams } from './base-zarr-provider.js';
+import { BaseZarrProvider, detectCompression } from './base-zarr-provider.js';
 import { float32ToFloat16Bits, getUint16ToFloat16Lut } from '../utils/float16.js';
 import type { VolumeMetadata, BrickData, BrickLoadResult, BrickStats, PipelineTimings } from './data-provider.js';
 import { UnsupportedDatasetError } from './data-provider.js';
@@ -17,7 +17,6 @@ import { clampedLutEntry, computeBrickChunkFootprint, chunkCoords, chunkLayout }
 export class LocalZarrDataProvider extends BaseZarrProvider {
   private dirHandle: FileSystemDirectoryHandle;
   private arrays: ZarrArray<DataType, any>[] = [];
-  private lodParams: LodParams[] = [];
   private targetFormat: 'r8unorm' | 'r16float' = 'r16float';
 
   // Per-stage rolling averages (last 32 bricks)

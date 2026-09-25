@@ -18,7 +18,7 @@ import type {
 import { UnsupportedDatasetError } from './data-provider.js';
 import { NetworkTracker } from './network-tracker.js';
 import { extractMultiscales, normalizeAxes, validateZarrSupport } from './zarr-validator.js';
-import { estimateBrickChunkFanout } from './chunk-math.js';
+import { estimateBrickChunkFanout, computeBrickChunkFootprint } from './chunk-math.js';
 import { buildPyramid } from '../core/pyramid.js';
 import type { Vec3, PyramidPolicy } from '../core/pyramid.js';
 
@@ -109,6 +109,8 @@ export abstract class BaseZarrProvider implements DataProvider {
   protected metadata: VolumeMetadata | null = null;
   protected brickStatsCache = new Map<string, BrickStats>();
   protected pyramidPolicy: PyramidPolicy = 'native';
+  /** Per-LOD chunk geometry from parseOmeMetadata(); subclasses assign it in initialize(). */
+  protected lodParams: LodParams[] = [];
   private networkTracker = new NetworkTracker();
 
   /** Must be called before initialize(); the policy shapes levels, brick grids and worker mappings. */
@@ -132,6 +134,14 @@ export abstract class BaseZarrProvider implements DataProvider {
       throw new Error('Metadata not loaded. Call initialize() first.');
     }
     return this.metadata;
+  }
+
+  /** Number of source chunks one brick touches at this LOD (1 if geometry is unknown). */
+  estimateBrickCost(lod: number, bx: number, by: number, bz: number): number {
+    const p = this.lodParams[lod];
+    if (!p) return 1;
+    const f = computeBrickChunkFootprint(p, bx, by, bz, LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE);
+    return (f.maxCx - f.minCx + 1) * (f.maxCy - f.minCy + 1) * (f.maxCz - f.minCz + 1);
   }
 
   /**

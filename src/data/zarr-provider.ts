@@ -82,6 +82,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
     const urlParts = this.url.split('/');
     const name = urlParts[urlParts.length - 1]?.replace(/\.ome\.zarr|\.zarr/, '') ?? 'zarr-volume';
     const { metadata, lodParams } = this.parseOmeMetadata(attrs, arrays, name);
+    this.lodParams = lodParams;
 
     // Provisional dataRange for float data without OMERO window — real range
     // is derived incrementally during base LOD loading.

@@ -6,6 +6,7 @@
 import { mat4 } from 'wgpu-matrix';
 import { extractFrustumPlanes, isAABBInFrustum } from '../core/camera.js';
 import type { ViewParams } from '../core/view.js';
+import { upsampleFromAncestor } from './placeholder.js';
 import type { VolumeResources } from '../core/volume-resources.js';
 import type { DataProvider, VolumeMetadata, BrickLoadResult, LodLevel } from '../data/data-provider.js';
 import { AtlasSlot } from './atlas-allocator.js';
@@ -183,6 +184,7 @@ export class StreamingManager {
   // fetched for resident bricks when they become visible (setVisibleChannels).
   private visibleMask = 0xf;
   private fillAbort: AbortController | null = null;
+
   // Channels shown while the base was still loading; backfilled once it completes.
   private pendingVisibleBits = 0;
   private fillPending = 0;
@@ -552,6 +554,7 @@ export class StreamingManager {
       if (this.milestones.firstBrickDecoded === null) this.milestones.firstBrickDecoded = performance.now();
       accumulateStats(ch, r);
       if (ch === 0) allBrickData.push(r.data);
+      this.brickCache.put(`ch${ch}:${key}`, r.data);
 
       const tUpload = performance.now();
       if (!st.slot) {
@@ -1143,6 +1146,11 @@ export class StreamingManager {
     // Caching deferred until after emptiness check (empty bricks shouldn't evict useful cache entries).
     const numChannels = this.resources.numChannels;
     const loadChannels = this.channelsToLoad();
+    // Multichannel: show the brick on its first channel, fill the rest in as they land.
+    if (loadChannels.length > 1) {
+      await this.loadBrickProgressive(request, signal, loadChannels);
+      return;
+    }
     const fromCache: boolean[] = new Array(numChannels).fill(false);
     const channelResults: (BrickLoadResult | null)[] = new Array(numChannels).fill(null);
     await Promise.all(
@@ -1206,7 +1214,185 @@ export class StreamingManager {
       return;
     }
 
-    // Handle eviction
+    this.releaseEvicted(result);
+
+    // Upload each channel to its atlas at the same slot coordinates (timed for pipeline telemetry).
+    // failed channels are zero-filled — the slot may be a reused
+    // (evicted) slot still holding a previous brick's data for that channel.
+    const tUpload = performance.now();
+    const dirty = this.dirtyChannels.get(result.slotIndex) ?? 0;
+    this.slotChannels.set(result.slotIndex, 0);
+    for (let ch = 0; ch < numChannels; ch++) {
+      const data = channelResults[ch]?.data ?? null;
+      // Channels not loaded (hidden or failed) are zeroed only if the slot region is stale.
+      if (data || (dirty >> ch) & 1) this.writeSlotChannel(result.slotIndex, result.slot, ch, data);
+    }
+    this.uploadAvg.add(performance.now() - tUpload);
+
+    // Update indirection
+    this.resources.indirection.setBrick(bx, by, bz, result.slot.x, result.slot.y, result.slot.z, lod);
+
+    // Set metadata for future eviction
+    this.resources.allocator.setMetadata(result.slotIndex, { lod, bx, by, bz, key });
+
+    // Track
+    this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
+    this.bricksCommitted++;
+
+    // A channel shown while this fetch was in flight is not in loadChannels: backfill it.
+    const missing = this.visibleMask & ~(this.slotChannels.get(result.slotIndex) ?? 0) & ((1 << numChannels) - 1);
+    if (missing) this.fillMissingChannels(missing);
+
+    // Record end-to-end latency (dispatch → committed)
+    const dispatchTime = this.dispatchTimestamps.get(key);
+    if (dispatchTime !== undefined) {
+      this.brickLatencyAvg.add(performance.now() - dispatchTime);
+    }
+
+    this.notifyContentChanged();
+  }
+
+  /**
+   * Multichannel refinement that shows data as soon as it exists: the brick is
+   * committed on its first non-empty channel, channels still in flight get the
+   * displayed ancestor's data resampled (no dropout), real data replaces it on
+   * arrival. Falls back to an all-channels commit when no placeholder exists.
+   */
+  private async loadBrickProgressive(request: BrickRequest, signal: AbortSignal, loadChannels: number[]): Promise<void> {
+    const { lod, bx, by, bz, key } = request;
+    const numChannels = this.resources.numChannels;
+    const threshold = this.config.emptyBrickThreshold ?? 1;
+    const results: (BrickLoadResult | null)[] = new Array(numChannels).fill(null);
+    const fromCache: boolean[] = new Array(numChannels).fill(false);
+    const arrived = new Set<number>();
+    // Typed via assertion: assigned inside closures, which control-flow narrowing does not see.
+    let slot = null as AllocationResult | null;
+    let gaveUp = false;
+
+    const hasSignal = (ch: number) => !!results[ch] && (fromCache[ch] || results[ch]!.max >= threshold);
+    const owns = () => slot !== null && this.loadedBricks.get(key)?.slotIndex === slot.slotIndex;
+
+    const commit = (placeholders: Map<number, Uint8Array | Uint16Array>): void => {
+      const result = this.resources.allocator.allocate(this.frameCount);
+      if (!result) {
+        // backpressure: stays desired, retried after the next desired-set recompute
+        this.allocationStalled = true;
+        this.lastStats.allocationsRefused++;
+        gaveUp = true;
+        return;
+      }
+      this.releaseEvicted(result);
+      slot = result;
+      const tUpload = performance.now();
+      const dirty = this.dirtyChannels.get(result.slotIndex) ?? 0;
+      this.slotChannels.set(result.slotIndex, 0);
+      for (let ch = 0; ch < numChannels; ch++) {
+        const real = arrived.has(ch) ? results[ch]?.data ?? null : null;
+        const ph = placeholders.get(ch);
+        if (real) {
+          this.writeSlotChannel(result.slotIndex, result.slot, ch, real);
+        } else if (ph) {
+          this.writeSlotChannel(result.slotIndex, result.slot, ch, ph);
+          // a placeholder is not this brick's data: keep the channel marked missing
+          this.slotChannels.set(result.slotIndex, (this.slotChannels.get(result.slotIndex) ?? 0) & ~(1 << ch));
+        } else if ((dirty >> ch) & 1) {
+          this.writeSlotChannel(result.slotIndex, result.slot, ch, null);
+        }
+      }
+      this.uploadAvg.add(performance.now() - tUpload);
+      this.resources.indirection.setBrick(bx, by, bz, result.slot.x, result.slot.y, result.slot.z, lod);
+      this.resources.allocator.setMetadata(result.slotIndex, { lod, bx, by, bz, key });
+      this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
+      this.bricksCommitted++;
+      const dispatchTime = this.dispatchTimestamps.get(key);
+      if (dispatchTime !== undefined) this.brickLatencyAvg.add(performance.now() - dispatchTime);
+      this.notifyContentChanged();
+    };
+
+    const tryCommit = (): void => {
+      if (slot || gaveUp || signal.aborted) return;
+      if (![...arrived].some(hasSignal)) return; // a dark first channel proves nothing yet
+      if (!this.desiredKeys.has(key)) { gaveUp = true; this.bricksDiscarded++; return; }
+      const placeholders = new Map<number, Uint8Array | Uint16Array>();
+      for (const ch of loadChannels) {
+        if (arrived.has(ch)) continue;
+        const ph = this.placeholderFor(lod, bx, by, bz, ch);
+        if (!ph) return; // no ancestor data to stand in: wait for all channels
+        placeholders.set(ch, ph);
+      }
+      commit(placeholders);
+    };
+
+    const fetchChannel = async (ch: number): Promise<void> => {
+      const cached = this.brickCache.get(`ch${ch}:${key}`);
+      let r: BrickLoadResult | null;
+      if (cached) {
+        fromCache[ch] = true;
+        r = { data: cached, min: 0, max: 1, avg: 0 };
+      } else {
+        r = await this.dataProvider.loadBrick(lod, bx, by, bz, ch, signal);
+      }
+      if (signal.aborted) return;
+      results[ch] = r;
+      arrived.add(ch);
+      if (slot) {
+        if (r && owns()) {
+          this.writeSlotChannel(slot.slotIndex, slot.slot, ch, r.data);
+          this.notifyContentChanged();
+        }
+      } else {
+        tryCommit();
+      }
+    };
+    // First visible channel alone, then the rest: in-flight bricks otherwise share the link
+    // across all channels and every channel lands at the same late moment.
+    await fetchChannel(loadChannels[0]!);
+    if (signal.aborted) return;
+    await Promise.all(loadChannels.slice(1).map(fetchChannel));
+    if (signal.aborted) return;
+
+    if (!loadChannels.some(ch => results[ch])) {
+      this.bricksFailed++;
+      return;
+    }
+    if (!loadChannels.some(hasSignal)) {
+      // every channel below threshold: empty, exactly as the all-at-once path decides
+      this.emptyBricks.add(key);
+      this.resources.indirection.setEmpty(bx, by, bz, lod);
+      this.notifyContentChanged();
+      return;
+    }
+    for (const ch of loadChannels) {
+      const r = results[ch];
+      if (r && !fromCache[ch]) this.brickCache.put(`ch${ch}:${key}`, r.data);
+    }
+    if (!slot && !gaveUp) {
+      if (!this.desiredKeys.has(key)) { this.bricksDiscarded++; return; }
+      commit(new Map());
+    }
+    if (slot && owns()) {
+      // Channels still missing (failed, or shown mid-flight) are fetched again.
+      const missing = this.visibleMask & ~(this.slotChannels.get(slot.slotIndex) ?? 0) & ((1 << numChannels) - 1);
+      if (missing) this.fillMissingChannels(missing);
+    }
+  }
+
+  /** The displayed ancestor's data for one channel, resampled into this brick; null if unavailable. */
+  private placeholderFor(lod: number, bx: number, by: number, bz: number, ch: number): Uint8Array | Uint16Array | null {
+    for (let a = lod + 1; a <= this.maxLod; a++) {
+      const ratio = this.config.levelRatio(a, lod);
+      const anc: [number, number, number] = [Math.floor(bx / ratio[0]), Math.floor(by / ratio[1]), Math.floor(bz / ratio[2])];
+      const ancKey = `lod${a}:${anc[2]}/${anc[1]}/${anc[0]}`;
+      if (!this.loadedBricks.has(ancKey)) continue;
+      // Only the nearest resident ancestor is what the screen shows now; anything coarser would blur it.
+      const data = this.brickCache.get(`ch${ch}:${ancKey}`);
+      return data ? upsampleFromAncestor(data, [bx, by, bz], anc, ratio, LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE) : null;
+    }
+    return null;
+  }
+
+  /** Point an evicted brick's region back at its displayed ancestor (or empty / unloaded). */
+  private releaseEvicted(result: AllocationResult): void {
     if (result.evicted) {
       this.lastStats.evictedCount++;
       const evictedKey = result.evicted.key;
@@ -1247,40 +1433,6 @@ export class StreamingManager {
 
     }
 
-    // Upload each channel to its atlas at the same slot coordinates (timed for pipeline telemetry).
-    // failed channels are zero-filled — the slot may be a reused
-    // (evicted) slot still holding a previous brick's data for that channel.
-    const tUpload = performance.now();
-    const dirty = this.dirtyChannels.get(result.slotIndex) ?? 0;
-    this.slotChannels.set(result.slotIndex, 0);
-    for (let ch = 0; ch < numChannels; ch++) {
-      const data = channelResults[ch]?.data ?? null;
-      // Channels not loaded (hidden or failed) are zeroed only if the slot region is stale.
-      if (data || (dirty >> ch) & 1) this.writeSlotChannel(result.slotIndex, result.slot, ch, data);
-    }
-    this.uploadAvg.add(performance.now() - tUpload);
-
-    // Update indirection
-    this.resources.indirection.setBrick(bx, by, bz, result.slot.x, result.slot.y, result.slot.z, lod);
-
-    // Set metadata for future eviction
-    this.resources.allocator.setMetadata(result.slotIndex, { lod, bx, by, bz, key });
-
-    // Track
-    this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
-    this.bricksCommitted++;
-
-    // A channel shown while this fetch was in flight is not in loadChannels: backfill it.
-    const missing = this.visibleMask & ~(this.slotChannels.get(result.slotIndex) ?? 0) & ((1 << numChannels) - 1);
-    if (missing) this.fillMissingChannels(missing);
-
-    // Record end-to-end latency (dispatch → committed)
-    const dispatchTime = this.dispatchTimestamps.get(key);
-    if (dispatchTime !== undefined) {
-      this.brickLatencyAvg.add(performance.now() - dispatchTime);
-    }
-
-    this.notifyContentChanged();
   }
 
   /** Bumped on every visible content commit (brick upload or empty marker). */

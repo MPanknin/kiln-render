@@ -182,6 +182,9 @@ export class StreamingManager {
   private readonly channelDemand = isFlagEnabled('p25');
   private visibleMask = 0xf;
   private fillAbort: AbortController | null = null;
+  // Channels shown while the base was still loading; backfilled once it completes.
+  private pendingVisibleBits = 0;
+  private fillPending = 0;
 
   // Stats from last update
   private lastStats: StreamingStats = {
@@ -318,7 +321,9 @@ export class StreamingManager {
     if (!this.channelDemand || this.disposed) return;
     const added = mask & ~this.visibleMask;
     this.visibleMask = mask;
-    if (added && this.baseLodLoaded) this.fillMissingChannels(added);
+    if (!added) return;
+    if (this.baseLodLoaded) this.fillMissingChannels(added);
+    else this.pendingVisibleBits |= added;
   }
 
   private fillMissingChannels(bits: number): void {
@@ -337,6 +342,7 @@ export class StreamingManager {
     }
     if (work.length === 0) return;
     this.notifyContentChanged();
+    this.fillPending += work.length;
 
     const runOne = async ({ key, slotIndex, slot, ch }: typeof work[0]) => {
       const m = /^lod(\d+):(\d+)\/(\d+)\/(\d+)$/.exec(key);
@@ -355,7 +361,9 @@ export class StreamingManager {
     const concurrency = Math.min(queue.length, this.maxConcurrentRequests);
     void Promise.all(Array.from({ length: concurrency }, async () => {
       let item;
-      while ((item = queue.shift()) !== undefined && gen === this.generation) await runOne(item);
+      while ((item = queue.shift()) !== undefined && gen === this.generation) {
+        try { await runOne(item); } finally { this.fillPending--; }
+      }
     }));
   }
 
@@ -466,7 +474,7 @@ export class StreamingManager {
     // ?p20w=<n> — initial ramp-up window (1 = first task owns the link; 2 avoids
     // serialising tiny two-brick base levels such as the sharded chameleon).
     let window = rampUp ? Math.max(1, Math.min(maxConcurrency, flagNumber('p20w', 1))) : maxConcurrency;
-    console.log(`[Kiln] loadBaseLod: ${bricks.length} bricks × ${numChannels} channels (concurrency: ${maxConcurrency}${rampUp ? ', ramp-up' : ''}${channelProgressive ? ', channel-major' : ''})`);
+    console.log(`[Kiln] loadBaseLod: ${bricks.length} bricks × ${loadChannels.length}/${numChannels} channels (concurrency: ${maxConcurrency}${rampUp ? ', ramp-up' : ''}${channelProgressive ? ', channel-major' : ''})`);
 
     // Process bricks with bounded concurrency — avoids firing all N×channels network
     // requests simultaneously, which saturates the browser's HTTP connection pool.
@@ -708,6 +716,13 @@ export class StreamingManager {
     // Show the completed base LOD right away, even if the camera never moves again
     this.flushAccumulationReset();
 
+    // Channels made visible during the base load could not join it; fetch them now.
+    if (this.pendingVisibleBits) {
+      const bits = this.pendingVisibleBits;
+      this.pendingVisibleBits = 0;
+      this.fillMissingChannels(bits);
+    }
+
     console.log(
       `[Kiln] loadBaseLod done: ${brickCount}/${bricks.length} bricks loaded in ${totalMs.toFixed(0)}ms` +
       ` | first brick: ${firstBrickStr}ms` +
@@ -871,6 +886,8 @@ export class StreamingManager {
     this.resources.allocator.reset();
     this.fillAbort?.abort();
     this.fillAbort = null;
+    this.fillPending = 0;
+    this.pendingVisibleBits = 0;
     this.slotChannels.clear();
     this.loadedBricks.clear();
     this.pinnedBricks.clear();
@@ -897,7 +914,7 @@ export class StreamingManager {
     };
     return {
       ...this.lastStats,
-      pendingCount: this.lastStats.pendingCount + this.baseLodPending,
+      pendingCount: this.lastStats.pendingCount + this.baseLodPending + this.fillPending,
       totalBytesDownloaded: networkStats.totalBytesDownloaded,
       bytesPerSecond: networkStats.recentBytesPerSecond,
       requestCount: networkStats.requestCount,

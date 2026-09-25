@@ -195,6 +195,24 @@ describe('?p25=1 visible-channel demand', () => {
     expect(calls.filter(c => c === 1).length).toBe(1);
   });
 
+  it('a channel shown while the base is still loading is backfilled once the base completes', async () => {
+    flags.add('p21'); flags.add('p25');
+    const meta = metadataFor(2, 1);
+    const calls: number[] = [];
+    const ch0 = deferred<BrickLoadResult | null>();
+    const provider = makeProvider(meta, (_l, _x, _y, _z, ch) => { calls.push(ch!); return ch === 0 ? ch0.promise : Promise.resolve(brick()); });
+    const sm = make(makeResources(2), provider, meta, 0b01);
+    await flush();
+    sm.setVisibleChannels(0b11); // base not done yet → queued
+    await flush();
+    expect(calls).toEqual([0]);
+    ch0.resolve(brick());
+    await vi.waitFor(() => expect(sm.baseLodLoaded).toBe(true));
+    await vi.waitFor(() => expect(calls).toEqual([0, 1]));
+    await vi.waitFor(() => expect(writeToCanvas).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(sm.getStats().pendingCount).toBe(0));
+  });
+
   it('never loads zero channels: an all-hidden mask falls back to channel 0', async () => {
     flags.add('p21'); flags.add('p25');
     const meta = metadataFor(2, 1);

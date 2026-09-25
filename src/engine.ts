@@ -66,6 +66,11 @@ export interface EngineOptions {
   outputFormat?: GPUTextureFormat;
   /** Level model: 'native' per-axis factors from metadata (default) or 'legacy' uniform 2:1 virtual pyramid. Comparison switch. */
   pyramid?: PyramidPolicy;
+  /**
+   * Initial per-channel visibility (multichannel). Hidden channels start with
+   * alpha 0 and are not streamed until shown; overrides OMERO `active`.
+   */
+  visibleChannels?: boolean[];
 }
 
 /** How long after the last view change the camera still counts as interacting (ms). */
@@ -333,6 +338,14 @@ export class KilnEngine {
     if (options.showAxis !== undefined) renderer.showAxis = options.showAxis;
 
     // Streaming manager
+    if (options.visibleChannels && metadata.numChannels > 1) {
+      options.visibleChannels.forEach((visible, ch) => {
+        if (ch >= metadata.numChannels) return;
+        const c = renderer.channelColors;
+        renderer.setChannelColor(ch, c[ch * 4]!, c[ch * 4 + 1]!, c[ch * 4 + 2]!, visible ? 1 : 0);
+      });
+    }
+
     const streamingManager = new StreamingManager(
       resources,
       dataProvider,

@@ -41,8 +41,10 @@ const SCEN_COLS = [
   ['after stop', s => s.afterStopMs],
   ['wire MB', s => s.wireBytes / 1e6],
   ['store MB', s => s.bytesDownloaded / 1e6],
+  ['q@1.5s', s => s.progress?.[1500]],
+  ['q@3s', s => s.progress?.[3000]],
+  ['q@6s', s => s.progress?.[6000]],
   ['cancelled', s => s.cancelled],
-  ['discarded', s => s.discarded],
 ];
 
 // Flatten: { workload, variant, phase, sample, image }
@@ -51,7 +53,18 @@ for (const r of runs) {
   if (r.failed) { rows.push({ workload: r.workload, variant: r.variant, phase: 'load', failed: true }); continue; }
   const frame = phase => path.join(dir, `${r.workload}.${r.profile}.${r.variant}.${r.run}.${phase}.gray.gz`);
   rows.push({ workload: r.workload, variant: r.variant, phase: 'load', sample: r, image: r.image, frame: frame('load'), timedOut: r.timedOut, misses: r.proxy?.misses });
-  for (const sc of r.scenarios ?? []) rows.push({ workload: r.workload, variant: r.variant, phase: sc.name, sample: sc, image: sc.image, frame: frame(sc.name), timedOut: sc.timedOut });
+  for (const sc of r.scenarios ?? []) {
+    // q@t: PSNR of the frame shown t ms after the change vs this run's final frame (99 = already final).
+    const fin = loadFrame(frame(sc.name));
+    if (fin && sc.motionMs === 0) {
+      sc.progress = {};
+      for (const t of [1500, 3000, 6000]) {
+        const f = loadFrame(frame(`${sc.name}@${t}`));
+        sc.progress[t] = f ? Math.min(99, psnrOf(f, fin) ?? NaN) : 99;
+      }
+    }
+    rows.push({ workload: r.workload, variant: r.variant, phase: sc.name, sample: sc, image: sc.image, frame: frame(sc.name), timedOut: sc.timedOut });
+  }
 }
 const groups = new Map();
 for (const row of rows) {

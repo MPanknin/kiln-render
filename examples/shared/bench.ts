@@ -275,8 +275,11 @@ async function runScenario(v: BenchViewer, name: string, target: OrbitState, tim
   let stable = 0;
   let timedOut = true;
   let peakPending = 0;
+  // Progress snapshots after a jump: what the user sees at these times, scored later vs the final frame.
+  const checkpoints = motionMs === 0 ? [1500, 3000, 6000] : [];
   const deadline = t0 + timeoutMs;
   while (performance.now() < deadline) {
+    if (checkpoints.length && performance.now() - t0 >= checkpoints[0]!) await signImage(v, `${name}@${checkpoints.shift()}`);
     const s = v.streamingManager.getStats();
     const now = performance.now() - t0;
     if (firstCommitMs === null && s.bricksCommitted > s0.bricksCommitted) firstCommitMs = now;

@@ -41,6 +41,18 @@ const traverse = (bx, by, bz, lod) => {
 - Field of view (narrower FOV = more detail at same distance)
 - Anisotropic voxel spacing (non-uniform datasets)
 
+## Base load
+
+Before any refinement, the coarsest level is loaded in full and pinned in the atlas. How that load is ordered decides how soon the user sees anything, so it is deliberately not "everything at once":
+
+1. **Cheapest bricks first.** Each provider can estimate a brick's cost (`estimateBrickCost`, the number of source chunks it touches). Bricks are sorted by cost, then centre-out, so the first image needs the fewest bytes.
+2. **Ramp-up window.** The load starts with two tasks in flight and doubles the window every time a task finishes, up to `maxConcurrentRequests × channels`. On a bandwidth-bound link this lets the first brick own the connection instead of sharing it with eleven others that would all land together at the end.
+3. **Channel-major order.** For multichannel data every brick's first visible channel is fetched before any brick's second channel. A brick is committed to the atlas the moment its first channel arrives (a recycled slot has its stale channels zeroed first), so a complete one-channel image appears in roughly 1/N of the full base time and the other channels fill in afterwards. The `baseChannel0Complete` milestone marks that point.
+4. **Visible channels only.** Channels the renderer hides (alpha weight 0, from OMERO `active` or `visibleChannels`) are not streamed. When a channel is shown later, resident bricks are backfilled with it; hiding a channel costs nothing.
+5. **First frame now.** The first committed brick bypasses the accumulation-reset debounce so it is presented immediately.
+
+Measured on a throttled 10 MB/s, 40 ms link this took first content for a 4-channel light-sheet embryo (whole-plane chunks) from 3.3 s to 0.6 s, and for a 4-channel 128³-chunked fly brain from 13.6 s to 0.5 s; time to a fully loaded base is unchanged because it is bandwidth-bound.
+
 ## Priority queue and request management
 
 After computing the desired set, the manager:

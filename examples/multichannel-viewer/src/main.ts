@@ -121,6 +121,8 @@ async function main() {
     cam: urlParams.cam,
     renderScale: urlParams.scale,
     pyramid: urlParams.pyramid,
+    // Hidden channels in the share URL must not be streamed for the base load
+    visibleChannels: urlParams.channels?.map(ch => ch.visible),
   };
 
   // Show spinner during metadata fetch + any pre-scans (cause 1: main-thread

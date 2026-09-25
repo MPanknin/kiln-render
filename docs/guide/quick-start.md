@@ -61,6 +61,7 @@ const viewer = await KilnViewer.create(canvas, url, {
   showSliceZ: true,     // show/hide the Z slice plane
   showWireframe: false, // bounding box wireframe overlay
   showAxis: false,      // world-space axis overlay
+  visibleChannels: [true, true, false, false], // multichannel: hidden channels are not streamed until shown
 });
 ```
 

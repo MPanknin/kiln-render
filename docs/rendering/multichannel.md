@@ -139,5 +139,5 @@ Channel state encodes each channel as `r,g,b,a,visible,windowMin,windowMax` (0�
 - **No transfer function** — Multichannel mode uses additive compositing with direct per-channel colours. The transfer function editor is not available.
 - **No ISO mode** — Isosurface rendering is not supported for multichannel datasets.
 - **VRAM scales with channel count** — Each channel gets its own atlas texture, so the atlas grid shrinks as channels increase to stay within the VRAM budget. See [Architecture → Memory Budget](/architecture/memory-budget) for the exact grid sizes.
-- **Increased network load** — Each brick requires one fetch per channel, so a 4-channel dataset issues 4× the network requests of a single-channel dataset.
+- **Network load scales with visible channels** — Each brick requires one fetch per channel, so a 4-channel dataset issues up to 4× the requests of a single-channel one. Hidden channels are not streamed; the base level loads channel by channel so the first channel is visible early.
 - **Kiln binary format** — The sharded binary format is single-channel only. Multichannel requires OME-Zarr.

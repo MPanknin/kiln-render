@@ -16,6 +16,8 @@ import { gunzipSync } from 'node:zlib';
 
 const dir = process.argv[2];
 if (!dir) { console.error('usage: node bench/summarize.mjs <results-dir> [--baseline name]'); process.exit(1); }
+const frameCache = new Map();
+const detailCache = new Map();
 const bi = process.argv.indexOf('--baseline');
 const baseline = bi > 0 ? process.argv[bi + 1] : null;
 
@@ -99,7 +101,6 @@ await fsp.writeFile(path.join(dir, 'summary.md'), md);
 console.log(md);
 
 // ---- full-resolution frame metrics -------------------------------------------------------------
-const frameCache = new Map();
 function loadFrame(file) {
   if (!file || !fs.existsSync(file)) return null;
   if (!frameCache.has(file)) {
@@ -114,7 +115,6 @@ function psnrOf(a, b) {
   for (let i = 0; i < a.px.length; i++) { const d = a.px[i] - b.px[i]; se += d * d; }
   return se === 0 ? Infinity : 10 * Math.log10((255 * 255) / (se / a.px.length));
 }
-const detailCache = new Map();
 function detailOf(f) {
   if (detailCache.has(f)) return detailCache.get(f);
   let sum = 0;

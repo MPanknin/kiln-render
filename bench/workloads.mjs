@@ -55,6 +55,12 @@ export const WORKLOADS = {
     query: 'mode=dvr&wc=0.50&ww=1.00&iso=0.20&tf=grayscale-inverted&tfpts=0.00%2C1.00%2C1.00%2C1.00&up=-z&scale=0.50&cam=0.550%2C12.050%2C1.203%2C0.046%2C0.017%2C0.146&clipMin=0.00%2C0.00%2C0.37&wireframe=1',
     note: 'cryo-ET float32 tomogram with a Z clip plane — exercises clip-aware demand',
   },
+  'beechnut-xslice': {
+    app: 'basic',
+    dataset: 'https://d39zu0xtgv0613.cloudfront.net/beechnut.ome.zarr',
+    query: 'mode=slice&wc=0.22&ww=0.14&iso=0.20&tf=grayscale&up=-y&scale=0.5&cam=-0.090%2C2.130%2C3.171%2C-0.072%2C-0.025%2C-0.013&slices=0.5%2C0.5%2C0.5&sliceVis=1',
+    note: 'beechnut (128³-ish chunks) in slice mode, X plane only — slice-aware demand on chunked data',
+  },
   chameleon: {
     app: 'basic',
     dataset: 'https://d39zu0xtgv0613.cloudfront.net/chameleon-16bit',

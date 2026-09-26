@@ -639,23 +639,23 @@ export class VolumeUI {
     // for iso, matching the shader's per-mode TF sampling); Window/Level
     // shown everywhere except the standalone LOD debug view; Density is
     // DVR-only (the only shader that reads densityScale); ISO gets its
-    // threshold slider instead of TF.
+    // threshold slider instead of TF. Slice mode samples the same TF and
+    // window, so its plane rows go below them (as in the multichannel viewer).
     const children: HTMLElement[] = [];
-    if (mode === 'slice') {
+    if (mode !== 'iso') {
+      children.push(this.tfPresetEl, this.tfCanvasContainer);
+    }
+    if (mode === 'iso') {
+      children.push(this.isoValueSlider.el);
+    }
+    if (!isLodDebug) {
+      children.push(this.windowCenterSlider.el, this.windowWidthSlider.el, this.autoContrastRow.el);
+    }
+    if (mode === 'dvr') {
+      children.push(this.densitySlider.el);
+    }
+    if (isSlice) {
       children.push(this.sliceRows[0].el, this.sliceRows[1].el, this.sliceRows[2].el);
-    } else {
-      if (mode !== 'iso') {
-        children.push(this.tfPresetEl, this.tfCanvasContainer);
-      }
-      if (mode === 'iso') {
-        children.push(this.isoValueSlider.el);
-      }
-      if (!isLodDebug) {
-        children.push(this.windowCenterSlider.el, this.windowWidthSlider.el, this.autoContrastRow.el);
-      }
-      if (mode === 'dvr') {
-        children.push(this.densitySlider.el);
-      }
     }
     this.modeSwap.setContent(children);
     this.colorbar.setVisible(mode !== 'iso' && !isLodDebug);

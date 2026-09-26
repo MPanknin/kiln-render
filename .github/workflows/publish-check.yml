@@ -31,8 +31,12 @@ jobs:
         run: npm run build:lib
 
       - name: Validate package (publint)
-        run: npx --yes publint
+        # publint picks the packer from lockfiles; bun.lock makes it run
+        # `bun pack`, and the runner has no bun. CI installs with npm, so pack with npm.
+        run: npx --yes publint --pack npm
 
       - name: Validate types against a consumer (are-the-types-wrong)
         # --pack packs the tarball and type-checks it the way an installer sees it.
-        run: npx --yes @arethetypeswrong/cli --pack .
+        # The package is ESM-only by design (exports has only "import"), so skip
+        # the CommonJS resolution modes instead of failing on "dynamic import only".
+        run: npx --yes @arethetypeswrong/cli --pack . --profile esm-only

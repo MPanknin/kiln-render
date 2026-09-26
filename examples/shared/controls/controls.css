@@ -611,6 +611,12 @@
   padding-top: 1px;
 }
 
+.ctl-channel-note {
+  font-size: 10px;
+  color: var(--text-dim);
+  padding: 4px 0 2px;
+}
+
 /* A disabled channel dims its identity and level — the toggle stays at full
    strength so the way back is obvious. */
 .ctl-channel-group.off .ctl-channel-name,

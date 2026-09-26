@@ -23,6 +23,7 @@ import {
 } from "../../../shared/controls/widgets.js";
 import { trackRenderMode } from "../../../shared/analytics.js";
 import { normalizeWindow } from "@kiln/core/config.js";
+import { channelDisplayName, hiddenChannelsNote } from "../../../shared/channel-names.js";
 
 /** Only 'dvr' | 'mip' | 'slice' are selectable via the Mode segmented control — 'slice-lod' is a debug visualization, relocated to the "LOD Levels" Advanced toggle (applied on top of the base mode). */
 type BaseRenderMode = "dvr" | "mip" | "slice";
@@ -336,8 +337,10 @@ export class MultichannelUI {
 
   private buildChannelRack(): void {
     this.channelRackEl = document.createElement("div");
+    const metaChannels = this.viewer.metadata.channels;
     for (let ch = 0; ch < this.renderer.numChannels; ch++) {
       const chParam = this.channelParams[ch]!;
+      const displayName = channelDisplayName(metaChannels?.[ch]?.label, ch);
 
       const row = document.createElement("div");
       row.className = "ctl-channel-row";
@@ -348,6 +351,7 @@ export class MultichannelUI {
 
       const toggle = createToggle({
         label: "",
+        ariaLabel: `Show ${displayName}`,
         value: chParam.visible,
         onChange: (v) => {
           chParam.visible = v;
@@ -380,9 +384,14 @@ export class MultichannelUI {
         },
       });
 
+      swatch.el.setAttribute("aria-label", `${displayName} colour`);
+
+      // OMERO label when the dataset has one; the full text is in the tooltip
+      // because long labels ("Alexa 488 – anti-tubulin") ellipsize in the row.
       const name = document.createElement("span");
       name.className = "ctl-channel-name";
-      name.textContent = `Channel ${ch}`;
+      name.textContent = displayName;
+      name.title = displayName;
 
       // Identity (swatch + name) reads left-to-right; the visibility toggle
       // right-aligns with every other control in the panel grid.
@@ -416,6 +425,15 @@ export class MultichannelUI {
 
       this.channelWidgets.push({ toggle, swatch, level, row: wrapper });
       this.channelRackEl.appendChild(wrapper);
+    }
+
+    // The renderer shows at most 4 channels; say so instead of silently dropping the rest.
+    const note = hiddenChannelsNote(this.renderer.numChannels, this.viewer.metadata.numChannels);
+    if (note) {
+      const noteEl = document.createElement("div");
+      noteEl.className = "ctl-channel-note";
+      noteEl.textContent = note;
+      this.channelRackEl.appendChild(noteEl);
     }
   }
 

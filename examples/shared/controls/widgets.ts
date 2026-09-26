@@ -124,6 +124,8 @@ export function createToggle(opts: {
   label: string;
   value: boolean;
   onChange: (v: boolean) => void;
+  /** Accessible name when `label` is empty (e.g. a channel row's visibility toggle). */
+  ariaLabel?: string;
 }): { el: HTMLElement; setValue(v: boolean): void } {
   const row = document.createElement("label");
   row.className = "ctl-toggle-row";
@@ -136,6 +138,7 @@ export function createToggle(opts: {
   input.type = "checkbox";
   input.className = "ctl-toggle-input";
   input.checked = opts.value;
+  if (opts.ariaLabel) input.setAttribute("aria-label", opts.ariaLabel);
 
   const track = document.createElement("span");
   track.className = "ctl-toggle-track";

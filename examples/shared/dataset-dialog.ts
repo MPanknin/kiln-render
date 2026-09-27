@@ -170,9 +170,17 @@ export function showDialogError(reasons: string[], cleanUrl = false): void {
   const errorEl = document.getElementById('dialog-error');
   if (!dialog || !errorEl) return;
 
-  errorEl.innerHTML =
-    `<strong>Dataset not supported</strong>` +
-    `<ul>${reasons.map(r => `<li>${r}</li>`).join('')}</ul>`;
+  // Reasons echo dataset metadata (scale values, dimensions, axis names), which
+  // anyone can put behind a ?dataset= link: render them as text, never as HTML.
+  const heading = document.createElement('strong');
+  heading.textContent = 'Dataset not supported';
+  const list = document.createElement('ul');
+  for (const reason of reasons) {
+    const item = document.createElement('li');
+    item.textContent = reason;
+    list.appendChild(item);
+  }
+  errorEl.replaceChildren(heading, list);
   errorEl.style.display = 'block';
 
   if (!dialog.open) dialog.showModal();

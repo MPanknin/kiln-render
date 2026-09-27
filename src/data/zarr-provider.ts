@@ -13,6 +13,7 @@ import type { VolumeMetadata, BrickLoadResult, PipelineTimings } from './data-pr
 import { UnsupportedDatasetError } from './data-provider.js';
 import { extractMultiscales } from './zarr-validator.js';
 import { v2ToV3ArrayMetadata, compressionLabel } from './zarr-v2-metadata.js';
+import { provisionalDataRange } from './value-types.js';
 import type { ZarrV2ArrayJson } from './zarr-v2-metadata.js';
 
 /** Everything initialize() needs, opened in two round trips (see openV2Fast). */
@@ -144,7 +145,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
     // Provisional dataRange for float data without OMERO window — real range
     // is derived incrementally during base LOD loading.
     if (metadata.isFloat && !metadata.dataRange) {
-      metadata.dataRange = [0, 1];
+      metadata.dataRange = provisionalDataRange(metadata.dtype);
     }
 
     metadata.compression = compression;

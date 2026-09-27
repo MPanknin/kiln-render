@@ -12,9 +12,9 @@ import type {
   LodLevel,
   BrickLoadResult,
   BrickStats,
-  BitDepth,
   NetworkStats,
 } from './data-provider.js';
+import { valueTypeFor } from './value-types.js';
 import { UnsupportedDatasetError } from './data-provider.js';
 import { NetworkTracker } from './network-tracker.js';
 import { extractMultiscales, normalizeAxes, validateZarrSupport } from './zarr-validator.js';
@@ -257,21 +257,11 @@ export abstract class BaseZarrProvider implements DataProvider {
     const validationReasons = validateZarrSupport(ms, arrays[0]!.shape, String(dtype));
     if (validationReasons.length > 0) throw new UnsupportedDatasetError(validationReasons);
 
-    // Determine bit depth from dtype
+    // Storage mapping for the source dtype (bit depth, unorm vs raw-value path)
     const dtypeStr = String(dtype);
-    let bitDepth: BitDepth;
-    let isFloat = false;
-    if (dtypeStr === 'uint8' || dtypeStr === 'int8') {
-      bitDepth = 8;
-    } else if (dtypeStr === 'uint16' || dtypeStr === 'int16') {
-      bitDepth = 16;
-    } else if (dtypeStr === 'float32' || dtypeStr === 'float64') {
-      // Float data is normalised to [0, 65535] in the worker → 16-bit pipeline
-      bitDepth = 16;
-      isFloat = true;
-    } else {
-      bitDepth = 8; // unreachable after validation, satisfies type checker
-    }
+    const valueType = valueTypeFor(dtypeStr);
+    if (!valueType) throw new UnsupportedDatasetError([`Data type "${dtypeStr}" is not supported`]); // unreachable after validation
+    const { bitDepth, isFloat } = valueType;
 
     // Compute voxel spacing from coordinateTransformations if available.
     // v0.5: per-dataset transforms; v0.4: may be at group level instead.
@@ -406,6 +396,7 @@ export abstract class BaseZarrProvider implements DataProvider {
       numChannels,
       isFloat,
       dataRange,
+      dtype: dtypeStr,
     };
 
     // Fanout diagnostic: worst-case chunks per brick footprint and channel, per LOD.

@@ -61,6 +61,16 @@ export const gallery: GalleryItem[] = [
     source: { label: 'Open SciVis — Beechnut', url: `${SCIVIS}#beechnut` },
   },
   {
+    title: 'Pig heart',
+    meta: 'CT · int16 · 20.4 GB · 2048 × 2048 × 2612',
+    href: 'app/?dataset=https%3A%2F%2Fome-zarr-scivis.s3.us-east-1.amazonaws.com%2Fv0.5%2F96x2%2Fpig_heart.ome.zarr&mode=dvr&tf=grayscale&up=-y&scale=0.50',
+    thumb: 'gallery/pig-heart.webp',
+    alt: 'Pig heart CT scan',
+    description:
+      'CT scan of a pig heart stored as signed 16-bit (int16) values, streamed from a 20 GB OME-Zarr v0.5 store on S3. Opens with the dataset\'s own OMERO window.',
+    source: { label: 'Open SciVis Datasets', url: SCIVIS },
+  },
+  {
     title: 'Backpack',
     meta: 'CT · 16-bit · 187 MB · 512 × 512 × 373',
     href: 'app/?dataset=https%3A%2F%2Fome-zarr-scivis.s3.us-east-1.amazonaws.com%2Fv0.5%2F96x2%2Fbackpack.ome.zarr&mode=dvr&wc=0.03&ww=0.07&density=1.00&iso=0.20&tf=coolwarm&tfpts=0.00%2C0.00%2C0.25%2C0.00%2C1.00%2C1.00&up=-y&scale=0.50&cam=0.200%2C3.620%2C1.351%2C0.018%2C0.113%2C-0.037',

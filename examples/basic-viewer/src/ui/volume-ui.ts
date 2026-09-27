@@ -28,7 +28,7 @@ import {
   createButtonRow,
 } from '../../../shared/controls/widgets.js';
 import { percentileWindow, AUTO_CONTRAST_BINS } from '../../../shared/auto-contrast.js';
-import { toRawValue, formatRawValue, type ValueSpace } from '../../../shared/data-values.js';
+import { toRawValue, formatRawValue, isIntegerDtype, type ValueSpace } from '../../../shared/data-values.js';
 import { mountColorbar, type Colorbar } from '../../../shared/colorbar.js';
 
 /** Only 'dvr' | 'mip' | 'iso' | 'slice' are selectable via the Mode segmented control — 'lod'/'slice-lod' are debug visualizations, relocated to the "LOD Levels" Advanced toggle (applied on top of the base mode). */
@@ -523,7 +523,7 @@ export class VolumeUI {
 
   private valueSpace(): ValueSpace {
     const m = this.viewer.metadata;
-    return { isFloat: m.isFloat ?? false, bitDepth: m.bitDepth, floatMin: this.renderer.floatMin, floatMax: this.renderer.floatMax };
+    return { isFloat: m.isFloat ?? false, integer: isIntegerDtype(m.dtype), bitDepth: m.bitDepth, floatMin: this.renderer.floatMin, floatMax: this.renderer.floatMax };
   }
 
   /** Normalized (shader) value → raw data value text. */

@@ -20,6 +20,7 @@ import { UnsupportedDatasetError } from './data/data-provider.js';
 import { MAX_LOD_LEVELS } from './shaders/uniform-layout.js';
 import { ShardedDataProvider } from './data/sharded-provider.js';
 import { ZarrDataProvider } from './data/zarr-provider.js';
+import { initializeWithPyramidFallback } from './data/pyramid-fallback.js';
 
 export interface EngineOptions {
   /** Initial render mode */
@@ -64,7 +65,11 @@ export interface EngineOptions {
   showAxis?: boolean;
   /** Format of the colour view passed to render() (default: preferred canvas format) */
   outputFormat?: GPUTextureFormat;
-  /** Level model: 'native' per-axis factors from metadata (default) or 'legacy' uniform 2:1 virtual pyramid. Comparison switch. */
+  /**
+   * Level model: 'native' per-axis factors from metadata, or 'legacy' uniform 2:1 virtual pyramid.
+   * Unset: native, falling back to legacy when the stored levels don't fit the native model
+   * (e.g. a coarse level a few voxels short of half its parent). Setting it disables the fallback.
+   */
   pyramid?: PyramidPolicy;
   /** Initial per-channel visibility (multichannel): hidden channels start with alpha 0 and are
    *  not streamed until shown. Overrides OMERO `active`. */
@@ -182,7 +187,6 @@ export class KilnEngine {
       gpuReady: null,
     };
     const format = options.outputFormat ?? navigator.gpu.getPreferredCanvasFormat();
-    const pyramid: PyramidPolicy = options.pyramid ?? 'native';
 
     // Data provider
     let dataProvider: DataProvider;
@@ -197,9 +201,9 @@ export class KilnEngine {
         : new ShardedDataProvider(dataset as string);
     }
 
-    // The level model must reach the provider before workers and brick loads exist
-    dataProvider.setPyramidPolicy?.(pyramid);
-    const metadata = await dataProvider.initialize();
+    // The level model must reach the provider before workers and brick loads exist.
+    // Native unless requested otherwise, falling back to legacy if native rejects the levels.
+    const { metadata, pyramid } = await initializeWithPyramidFallback(dataProvider, options.pyramid);
     milestones.metadataReady = performance.now();
     if ((metadata.pyramidPolicy ?? 'legacy') !== pyramid) {
       throw new Error(`Data provider uses pyramid "${metadata.pyramidPolicy ?? 'legacy'}" but the engine requested "${pyramid}"`);

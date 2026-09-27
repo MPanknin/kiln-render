@@ -114,14 +114,21 @@ describe('parseOmeMetadata — bit depth', () => {
     expect(metadata.bitDepth).toBe(16);
   });
 
-  // int8/int16 are rejected by validateZarrSupport before bit depth detection is used.
-  // The bit depth detection code handles them, but validation fires first — dead code.
+  // int8 is still rejected by validateZarrSupport before bit depth detection is used.
   it('rejects int8 (not yet allowed through validation)', () => {
     expect(() => provider.parse(attrs, [arr(shape, chunks, 'int8')])).toThrow(UnsupportedDatasetError);
   });
 
-  it('rejects int16 (not yet allowed through validation)', () => {
-    expect(() => provider.parse(attrs, [arr(shape, chunks, 'int16')])).toThrow(UnsupportedDatasetError);
+  it('accepts int16 on the raw-value path', () => {
+    const { metadata } = provider.parse(attrs, [arr(shape, chunks, 'int16')]);
+    expect(metadata.bitDepth).toBe(16);
+    expect(metadata.isFloat).toBe(true);
+    expect(metadata.dtype).toBe('int16');
+  });
+
+  it('still rejects uint32 and int32', () => {
+    expect(() => provider.parse(attrs, [arr(shape, chunks, 'uint32')])).toThrow(UnsupportedDatasetError);
+    expect(() => provider.parse(attrs, [arr(shape, chunks, 'int32')])).toThrow(UnsupportedDatasetError);
   });
 
   it('accepts float32 as 16-bit with isFloat flag', () => {

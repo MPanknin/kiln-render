@@ -6,6 +6,7 @@
 
 - **Chameleon** — CT scan of *Chamaeleo calyptratus*. Digital Morphology, 2003.
 - **Beechnut** — MicroCT scan. Computer-Assisted Paleoanthropology group, University of Zurich.
+- **Pig heart** — CT scan (int16), from the Open SciVis Datasets collection.
 - **Stag Beetle** — Industrial CT scan. Meister Eduard Gröller, Georg Glaeser, Johannes Kastner, 2005.
 - **Vibrio cholerae** — Cryo-ET tomogram. [CryoET Data Portal](https://cryoetdataportal.czscience.com/).
 - **IDR0079** — Zebrafish lateral line cellular architecture. [Hartmann et al., 2020](https://doi.org/10.7554/eLife.55913). [Image Data Resource](https://idr.openmicroscopy.org/).

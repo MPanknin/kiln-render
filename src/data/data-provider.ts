@@ -86,10 +86,16 @@ export interface VolumeMetadata {
   channels?: Array<{ label?: string; color?: [number, number, number]; active: boolean }>;
   /** Number of channels in the volume (1 for single-channel, N for multi-channel) */
   numChannels: number;
-  /** Whether source data is floating-point (float32/float64) */
+  /**
+   * Raw-value path: voxels are stored as float16 raw values and normalised by dataRange in the
+   * shader. True for float32/float64 and int16 sources; false for uint8/uint16, which are stored
+   * normalised by their dtype range.
+   */
   isFloat?: boolean;
-  /** Data range [min, max] in original float values, used for normalisation to [0, 65535] */
+  /** Data range [min, max] in raw source values; the shader maps it to [0, 1] on the raw-value path */
   dataRange?: [number, number];
+  /** Source data type as stored in the Zarr array (e.g. 'uint16', 'int16', 'float32') */
+  dtype?: string;
   /** Compression codec used by the zarr array (e.g. 'zstd', 'blosc/lz4', 'gzip', 'none') */
   compression?: string;
 }

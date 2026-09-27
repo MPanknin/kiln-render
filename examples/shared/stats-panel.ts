@@ -136,10 +136,10 @@ export class StatsPanel {
     this.rows.dimensions!.textContent = `${dims[0]} × ${dims[1]} × ${dims[2]}${chSuffix}`;
 
     const totalVoxels = dims[0] * dims[1] * dims[2];
-    const bytesPerVoxel = metadata.bitDepth === 16 ? 2 : 1;
+    const bytesPerVoxel = dtypeBytes(metadata);
     const channelMultiplier = opts.fileSizeChannelMultiplier ?? 1;
     const fileSizeMB = (totalVoxels * bytesPerVoxel * channelMultiplier) / (1024 * 1024);
-    this.rows.fileSize!.textContent = `${fileSizeMB.toFixed(1)} MB (raw ${metadata.bitDepth}-bit)`;
+    this.rows.fileSize!.textContent = `${fileSizeMB.toFixed(1)} MB (raw ${dtypeLabel(metadata)})`;
 
     const spacing = metadata.voxelSpacing ?? [1, 1, 1];
     this.rows.spacing!.textContent = `${spacing[0].toFixed(2)} × ${spacing[1].toFixed(2)} × ${spacing[2].toFixed(2)}`;
@@ -149,7 +149,7 @@ export class StatsPanel {
 
     this.rows.textureFormat!.textContent = textureFormat + (textureFormat === 'r8unorm' && metadata.bitDepth === 16 ? ' (⚠️ downsampled)' : '');
 
-    const stripSummary = `${dims[0]}×${dims[1]}×${dims[2]}${chSuffix} · ${metadata.bitDepth}-bit`;
+    const stripSummary = `${dims[0]}×${dims[1]}×${dims[2]}${chSuffix} · ${dtypeLabel(metadata)}`;
     if (this.stripDatasetText) this.stripDatasetText.textContent = stripSummary;
   }
 
@@ -230,4 +230,16 @@ export class StatsPanel {
     }
     this.lastFrameTime = now;
   }
+}
+
+/** Bytes per source voxel: from the dtype when known (float32 is 4), else the stored bit depth. */
+function dtypeBytes(metadata: VolumeMetadata): number {
+  const bits = /(\d+)$/.exec(metadata.dtype ?? '')?.[1];
+  return bits ? Number(bits) / 8 : metadata.bitDepth / 8;
+}
+
+/** "16-bit" for the unsigned integer types shown so far; the dtype name for int16 and floats. */
+function dtypeLabel(metadata: VolumeMetadata): string {
+  const d = metadata.dtype;
+  return !d || d === 'uint8' || d === 'uint16' ? `${metadata.bitDepth}-bit` : d;
 }

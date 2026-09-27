@@ -10,6 +10,7 @@ import { BaseZarrProvider, detectCompression } from './base-zarr-provider.js';
 import { float32ToFloat16Bits, getUint16ToFloat16Lut } from '../utils/float16.js';
 import type { VolumeMetadata, BrickData, BrickLoadResult, BrickStats, PipelineTimings } from './data-provider.js';
 import { UnsupportedDatasetError } from './data-provider.js';
+import { provisionalDataRange } from './value-types.js';
 import { extractMultiscales } from './zarr-validator.js';
 import { RollingAvg } from './network-tracker.js';
 import { clampedLutEntry, computeBrickChunkFootprint, chunkCoords, chunkLayout } from './chunk-math.js';
@@ -76,7 +77,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
 
     // Provisional dataRange — real range derived during base LOD loading
     if (metadata.isFloat && !metadata.dataRange) {
-      metadata.dataRange = [0, 1];
+      metadata.dataRange = provisionalDataRange(metadata.dtype);
     }
 
     metadata.compression = await detectCompression(store, `${subGroupPath}${ms.datasets[0]!.path}`);

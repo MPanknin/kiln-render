@@ -33,6 +33,6 @@ The rest of this section covers each layer in turn:
 
 - **[Virtual texturing](/architecture/virtual-texturing)** — brick decomposition, the indirection table, and the atlas texture.
 - **[Streaming manager](/architecture/streaming)** — desired-set computation, the priority queue, and LRU eviction.
-- **[Network & formats](/architecture/network-formats)** — HTTP Range streaming, compression, and 16-bit/float32 support.
+- **[Network & formats](/architecture/network-formats)** — HTTP Range streaming, compression, and supported data types.
 - **[Memory budget](/architecture/memory-budget)** — VRAM accounting.
 - **[Design decisions](/architecture/design-decisions)** — the rationale behind the key choices.

@@ -51,9 +51,9 @@ When a finer LOD brick loads, it **overwrites** only its specific cell, leaving 
 ## 3. Atlas texture
 
 The **atlas** is a single 3D texture organized as a grid of 66³ slots. Its size adapts to fit a VRAM budget — up to `660³` (a 10×10×10 grid), shrinking for multichannel datasets (see below). The texture format depends on the source data:
-- **8-bit volumes**: `r8unorm` (1 byte per voxel)
-- **16-bit integer volumes**: `r16float` (2 bytes per voxel) — `uint16` values are converted to half-precision on ingest
-- **float32 volumes**: `r16float` (2 bytes per voxel) — repacked to half-precision on ingest
+- **`uint8`**: `r8unorm` (1 byte per voxel)
+- **`uint16`**: `r16float` (2 bytes per voxel) — value / 65535, converted to half precision on ingest
+- **`int16` and `float32`**: `r16float` (2 bytes per voxel) — raw values in half precision; the shader normalises them by the data range
 - **Fallback**: if `r16float` is unsupported, the atlas drops to `r8unorm` (16→8-bit, quality loss)
 
 > **Note:** The maximum atlas grid (`660³`, 1,000 slots) is defined in `src/core/config.ts`. The actual size is chosen at startup by `computeAtlasGrid()` to fit a VRAM budget — `numChannels × atlasSize³ × bytesPerVoxel` stays under the budget (default ~1.3 GiB, overridable via `ViewerOptions.atlasBudgetBytes`). Single- and dual-channel datasets keep the full `660³`.

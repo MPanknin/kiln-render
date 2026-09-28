@@ -32,8 +32,8 @@ const features = [
     body: 'Brick-aware DVR, MIP, isosurface, and slice rendering on a WebGPU compute pipeline, with temporal accumulation to reduce sampling noise.',
   },
   {
-    title: 'uint8, uint16, float32 input',
-    body: 'uint16 and float32 input are converted to r16float for GPU storage, with window/level controls. Up to 4 channels (beta) with per-channel color and windowing.',
+    title: 'uint8, uint16, int16, float32 input',
+    body: 'Everything except uint8 is stored as r16float on the GPU, with window/level controls. Up to 4 channels (beta) with per-channel color and windowing.',
   },
 ];
 

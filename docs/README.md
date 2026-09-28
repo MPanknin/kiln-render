@@ -27,7 +27,7 @@ New to Kiln? Start with the **[Introduction](guide/introduction.md)** — what i
 - [System overview](architecture/overview.md) — the layer stack
 - [Virtual texturing](architecture/virtual-texturing.md) — bricks, indirection, atlas
 - [Streaming manager](architecture/streaming.md) — desired set, priority queue, LRU
-- [Network & formats](architecture/network-formats.md) — Range streaming, 16-bit/float32
+- [Network & formats](architecture/network-formats.md) — Range streaming, supported data types
 - [Memory budget](architecture/memory-budget.md)
 - [Design decisions](architecture/design-decisions.md)
 

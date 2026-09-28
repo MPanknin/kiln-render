@@ -42,11 +42,12 @@ Pass an optional third argument to set the initial viewer state:
 ```typescript
 const viewer = await KilnViewer.create(canvas, url, {
   mode: 'dvr',          // 'dvr' | 'mip' | 'iso' | 'lod' | 'slice'
-  windowCenter: 0.35,   // 0–1 (16-bit window centre)
-  windowWidth: 0.55,    // 0–1 (16-bit window width)
+  windowCenter: 0.35,   // 0–1 (normalised window centre)
+  windowWidth: 0.55,    // 0–1 (normalised window width)
   isoValue: 0.2,        // 0–1 (isosurface threshold)
   renderScale: 0.5,     // 0.25–1.0 (render resolution multiplier)
   maxPixelError: 2.0,   // LOD screen-space error threshold in pixels
+  pyramid: 'native',    // level model: omit for native with automatic legacy fallback
   tfPreset: 'grayscale',// transfer function colour preset
   tfPoints: [{ x: 0, y: 0 }, { x: 1, y: 1 }], // TF opacity control points (overrides preset defaults)
   upAxis: '-y',         // camera up axis

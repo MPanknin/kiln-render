@@ -9,10 +9,13 @@ Control rendering settings via URL parameters to share or bookmark specific view
 | `wc` | 0-1 | Window center | `wc=0.35` |
 | `ww` | 0-1 | Window width | `ww=0.55` |
 | `iso` | 0-1 | Isosurface threshold | `iso=0.15` |
+| `density` | 0.1-10 | DVR density (opacity) scale | `density=1.5` |
 | `tf` | `grayscale`, `grayscale-inverted`, `coolwarm`, `hot`, `cool`, `viridis`, `plasma`, `seismic` | Transfer function preset | `tf=coolwarm` |
 | `tfpts` | x,y pairs | TF opacity control points (comma-separated) | `tfpts=0,0,0.5,0.8,1,1` |
 | `up` | `x`, `y`, `z`, `-x`, `-y`, `-z` | Camera up axis | `up=-y` |
 | `scale` | 0.25-1.0 | Render resolution | `scale=1.0` |
+| `sse` | pixels | LOD screen-space error threshold (default 8; lower = sharper, more data) | `sse=4` |
+| `pyramid` | `native`, `legacy` | Level model. Omitted: native, falling back to legacy when the stored levels don't fit; setting it turns the fallback off | `pyramid=legacy` |
 | `cam` | 6 numbers | Camera state (rotation, distance, target) | `cam=0.1,2.3,3.5,0,0,0` |
 | `clipMin` | x,y,z | Clipping min (normalised 0–1) | `clipMin=0.2,0.1,0` |
 | `clipMax` | x,y,z | Clipping max (normalised 0–1) | `clipMax=0.8,0.9,1` |

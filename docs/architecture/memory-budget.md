@@ -2,7 +2,7 @@
 
 For a 1024 × 512 × 1024 volume with 4 LOD levels:
 
-**8-bit volume:**
+**8-bit volume (`uint8`):**
 
 | Resource | Size | Notes |
 |----------|------|-------|
@@ -11,7 +11,7 @@ For a 1024 × 512 × 1024 volume with 4 LOD levels:
 | Brick indices (CPU) | ~2 MiB | JSON with offsets/stats |
 | Volume-residency resources | **~274 MiB** | Atlas + indirection table; bounded by the atlas budget, not volume size. Excludes render targets and other GPU allocations |
 
-**16-bit volume:**
+**16-bit volume (`uint16`, `int16`, `float32`):**
 
 | Resource | Size | Notes |
 |----------|------|-------|

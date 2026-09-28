@@ -19,7 +19,7 @@ Multichannel rendering works with OME-Zarr datasets that have a channel (`c`) ax
 
 - **OME-NGFF v0.4 and v0.5**
 - **Up to 4 channels** (datasets with more channels will use the first 4)
-- **Supported dtypes:** `uint8`, `uint16`, `float32`
+- **Supported dtypes:** `uint8`, `uint16`, `int16`, `float32`
 - OMERO metadata is used for per-channel window auto-leveling when available
 
 The Kiln sharded binary format is single-channel only.

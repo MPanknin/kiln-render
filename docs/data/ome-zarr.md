@@ -16,12 +16,12 @@ Kiln is listed in the [OME-NGFF tools registry](https://ngff.openmicroscopy.org/
 - **OME-NGFF v0.4 and v0.5** with `multiscales` metadata in group attributes
 - **Single-channel or multichannel** — up to 4 channels (see [Multichannel](/rendering/multichannel))
 - **3D arrays** with dimensions ordered `[z, y, x]` (standard C-order); multichannel datasets use a `c` axis
-- **Supported dtypes:** `uint8`, `uint16`, `float32` input (signed integers and `float64` not supported)
-- Multiple resolution levels (datasets within `multiscales`) are used as LODs
+- **Supported dtypes:** `uint8`, `uint16`, `int16`, `float32` (`float64` is read as `float32`). Other types, such as `int8` or `uint32`, are rejected with an explanation
+- Multiple resolution levels (datasets within `multiscales`) are used as LODs. Kiln reads each level's own size and per-axis downsampling (1× or 2×). If the stored levels don't fit that model, for example a coarse level a few slices short of half its parent, it falls back to a uniform 2:1 model and logs why. Force either model with `?pyramid=native` or `?pyramid=legacy`
 - Voxel spacing is read from `coordinateTransformations` if present
 - OMERO metadata is used for per-channel window auto-leveling when available
 
-> **Note:** Currently unsupported: more than 4 channels, signed integer types (`int8`, `int16`), and `float64`. `uint16` and `float32` volumes are stored internally as `r16float` (WebGPU filterable-float32 is not universally available, and there's no native 16-bit-integer alternative in use here); this is not bit-exact across the full `uint16` range. min/max range is read from metadata and used to normalise values in the shader.
+> **Note:** Currently unsupported: more than 4 channels, and data types other than the ones listed above. `uint8` is stored as `r8unorm`; every other type is stored as `r16float` (half precision; WebGPU filterable-float32 is not universally available), which is not bit-exact across a full 16-bit range. `uint16` is normalised by its type range. `int16` and floats keep their raw values and are normalised in the shader by a data range: the OMERO window's min/max when present, otherwise the 0.1–99.9th percentile of the coarsest level.
 
 ## Usage
 

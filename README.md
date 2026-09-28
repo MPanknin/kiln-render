@@ -54,9 +54,9 @@ try {
 
 - **Out-of-core streaming** — Fixed VRAM footprint, SSE-based LOD selection, LRU brick cache
 - **Multichannel rendering** — Up to 4 channels with per-channel colour, windowing, and visibility controls ([details](docs/rendering/multichannel.md))
-- **OME-Zarr & Kiln binary** — Stream from S3, CDN, or load local files (OME-Zarr v0.4/v0.5, uint8/uint16/float32)
+- **OME-Zarr & Kiln binary** — Stream from S3, CDN, or load local files (OME-Zarr v0.4/v0.5, uint8/uint16/int16/float32)
 - **Local filesystem** — Load local `.zarr` / `.ome.zarr` directories via the File System Access API (Chrome/Edge)
-- **uint8, uint16 & float32 input** — `uint16` and `float32` are converted to `r16float` for GPU storage, with window/level controls
+- **uint8, uint16, int16 & float32 input** — everything except `uint8` is stored as `r16float` on the GPU, with window/level controls
 - **Compute shader raymarching** — Brick-aware DVR (with density scale), MIP, isosurface, and slice plane rendering
 
 ## Developing from source

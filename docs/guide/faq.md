@@ -8,7 +8,7 @@ If WebGPU is unavailable, `KilnViewer.create()` rejects with a descriptive error
 
 ## Can Kiln read my data?
 
-- **OME-Zarr (NGFF v0.4/v0.5)** — compatible multiscale datasets load directly from a URL or local directory, with no Kiln-specific conversion. Input can be `uint8`, `uint16`, or `float32` (not signed integers or `float64`); `uint16` and `float32` are converted to `r16float` internally.
+- **OME-Zarr (NGFF v0.4/v0.5)** — compatible multiscale datasets load directly from a URL or local directory, with no Kiln-specific conversion. Input can be `uint8`, `uint16`, `int16` or `float32` (`float64` is read as `float32`); everything except `uint8` is stored as `r16float` internally.
 - **Raw volumes** (and other formats) are converted once to Kiln's compressed [sharded binary format](/data/sharded-binary) with the bundled CLI, then streamed the same way.
 - Full requirements are in the [Data Guide](/data/ome-zarr).
 

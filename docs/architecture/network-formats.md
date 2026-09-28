@@ -55,21 +55,24 @@ The compression is transparent to the rest of the system—bricks are decompress
 
 The **ZarrDataProvider** (`src/data/zarr-provider.ts`) loads OME-Zarr volumes directly over HTTP using zarrita.js. A pool of Web Workers handles chunk fetching, decompression, and re-chunking into 66³ bricks with ghost borders. Since Zarr chunk boundaries don't align with Kiln's brick grid, workers fetch the overlapping chunks and assemble each brick from the relevant regions.
 
-## 16-bit and float32 volume support
+## Supported data types
 
-Kiln supports 8-bit unsigned, 16-bit unsigned, and 32-bit float volumes:
+Kiln renders `uint8`, `uint16`, `int16` and `float32` volumes (`float64` is read as `float32`):
 
-| Feature | 8-bit | 16-bit integer | float32 |
-|---------|-------|----------------|---------|
-| Source dtype | `uint8` | `uint16` | `float32` |
-| Texture format | `r8unorm` | `r16float` | `r16float` |
-| Bytes per voxel (GPU) | 1 | 2 | 2 |
-| Atlas size | ~274 MiB | ~548 MiB | ~548 MiB |
-| WebGPU feature | (none) | (none) | (none) |
+| Feature | `uint8` | `uint16` | `int16` | `float32` |
+|---------|---------|----------|---------|-----------|
+| Texture format | `r8unorm` | `r16float` | `r16float` | `r16float` |
+| Stored value | value / 255 | value / 65535 | raw value | raw value |
+| Normalised by | type range | type range | data range | data range |
+| Bytes per voxel (GPU) | 1 | 2 | 2 | 2 |
+| Atlas size | ~274 MiB | ~548 MiB | ~548 MiB | ~548 MiB |
+| WebGPU feature | (none) | (none) | (none) | (none) |
+
+The **data range** for `int16` and `float32` is the OMERO window's min/max when present, otherwise the 0.1–99.9th percentile of the coarsest level. Half precision holds `int16` values exactly up to ±2048, which covers CT in Hounsfield units.
 
 ### Windowing/leveling
 
-16-bit data often uses only a portion of the full 0-65535 range. **Windowing** remaps a sub-range to the visible 0-1 output:
+Data often uses only part of its range: a 12-bit sensor stored as `uint16`, or soft tissue within a CT. **Windowing** remaps a sub-range to the visible 0-1 output:
 
 ```wgsl
 fn applyWindow(density: f32, windowCenter: f32, windowWidth: f32) -> f32 {

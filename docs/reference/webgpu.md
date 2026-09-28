@@ -8,7 +8,7 @@ Kiln is built on WebGPU rather than WebGL. This section documents the technical 
 
 ### 16-bit and float texture support
 
-WebGPU's `r16float` format stores half-precision floats with hardware trilinear filtering, and is a core feature (no extension required). Kiln stores all 16-bit and float data in `r16float`: `uint16` values are converted to half-precision and `float32` inputs are repacked to half-precision on ingest.
+WebGPU's `r16float` format stores half-precision floats with hardware trilinear filtering, and is a core feature (no extension required). Kiln stores all `uint16`, `int16` and `float32` data in `r16float`: `uint16` values are normalised by 65535 and converted to half precision, while `int16` and `float32` values are stored as raw half-precision values and normalised in the shader.
 
 **Fallback chain**: Kiln detects format support at runtime:
 - **r16float** (preferred) — half-precision, filterable, core WebGPU

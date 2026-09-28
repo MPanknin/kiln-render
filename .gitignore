@@ -16,3 +16,8 @@ bench/cache/
 bench/results/
 bench/certs/
 bench/dists/
+
+# bun is the package manager; bun.lock is the only lockfile
+package-lock.json
+yarn.lock
+pnpm-lock.yaml

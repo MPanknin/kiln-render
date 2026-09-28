@@ -69,23 +69,23 @@ try {
 
 ## Developing from source
 
-Clone the repo and install dev dependencies (this is for working on Kiln itself — consumers only need `npm install kiln-render`, above):
+Clone the repo and install dev dependencies with [Bun](https://bun.sh) (this is for working on Kiln itself — consumers only need `npm install kiln-render`, above):
 
 ```bash
 # Install dependencies
-npm install
+bun install
 
 # Start development server (single-channel demo)
-npm run dev
+bun run dev
 
 # Start multichannel demo
-npm run dev:multichannel
+bun run dev:multichannel
 
 # Build demo for production
-npm run build
+bun run build
 
 # Build the library (outputs to lib/)
-npm run build:lib
+bun run build:lib
 ```
 
 The demo loads a sample dataset from S3. To load custom datasets, see [Loading data](docs/guide/loading-data.md).

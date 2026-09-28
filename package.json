@@ -51,12 +51,12 @@
     "build:multichannel": "vite build --config vite.multichannel.config.ts",
     "build:site": "vitepress build docs",
     "preview:site": "vitepress preview docs",
-    "build:all": "npm run build:site && npm run build && npm run build:multichannel",
+    "build:all": "bun run build:site && bun run build && bun run build:multichannel",
     "build:lib": "vite build --config vite.lib.config.ts && tsc -p tsconfig.lib.json && rm -rf lib/assets && node scripts/postbuild-lib.mjs",
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",
-    "lint:publish": "npm run build:lib && npx --yes publint && npx --yes @arethetypeswrong/cli --pack ."
+    "lint:publish": "bun run build:lib && bunx publint && bunx @arethetypeswrong/cli --pack . --profile esm-only"
   },
   "dependencies": {
     "@webgpu/types": "^0.1.69"
@@ -72,8 +72,7 @@
     "zarrita": "^0.6.1"
   },
   "overrides": {
-    "vitepress": {
-      "vite": "$vite"
-    }
-  }
+    "vite": "^6.4.3"
+  },
+  "packageManager": "bun@1.3.13"
 }

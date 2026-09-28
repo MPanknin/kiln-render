@@ -7,7 +7,7 @@ Common issues when converting raw volumes to the [sharded binary](/data/sharded-
 Specify dimensions explicitly:
 
 ```bash
-npx tsx scripts/decompose-volume.ts data.raw 512 512 256
+bun scripts/decompose-volume.ts data.raw 512 512 256
 ```
 
 ## Large volumes run out of memory

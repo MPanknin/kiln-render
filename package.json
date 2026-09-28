@@ -3,7 +3,7 @@
   "version": "0.4.1",
   "description": "A WebGPU-native out-of-core renderer for large virtualized volumetric data",
   "author": {
-    "name": "mpanknin",
+    "name": "Martin Panknin",
     "email": "martinpanknin@gmail.com",
     "url": "https://github.com/MPanknin"
   },
@@ -12,6 +12,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mpanknin/kiln-render.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MPanknin/kiln-render/issues"
   },
   "type": "module",
   "exports": {
@@ -27,9 +30,12 @@
     "volume-rendering",
     "raymarching",
     "ome-zarr",
+    "ngff",
     "zarr",
     "3d",
     "medical-imaging",
+    "microscopy",
+    "bioimaging",
     "scientific-visualization",
     "out-of-core",
     "streaming"

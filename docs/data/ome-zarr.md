@@ -9,7 +9,7 @@ Kiln supports two input formats:
 
 Kiln can load compatible multiscale [OME-Zarr](https://ngff.openmicroscopy.org/) volumes directly over HTTP, with no Kiln-specific conversion. Point it at a `.ome.zarr` URL and it streams chunk data on demand.
 
-Kiln is listed in the [OME-NGFF tools registry](https://ngff.openmicroscopy.org/tools/).
+Kiln is listed in the [OME-NGFF tools registry](https://ngff.openmicroscopy.org/resources/tools/index.html).
 
 ## Requirements
 

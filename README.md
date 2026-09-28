@@ -1,5 +1,16 @@
 # Kiln
 
+[![npm](https://img.shields.io/npm/v/kiln-render?color=cb3837)](https://www.npmjs.com/package/kiln-render)
+[![CI](https://github.com/MPanknin/kiln-render/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MPanknin/kiln-render/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![OME-NGFF tools registry](https://img.shields.io/badge/OME--NGFF-tools%20registry-2b8cbe)](https://ngff.openmicroscopy.org/resources/tools/index.html)
+[![Docs](https://img.shields.io/badge/docs-kilnrender.com-0a7ea4)](https://kilnrender.com/guide/introduction.html)
+[![Live demo](https://img.shields.io/badge/live%20demo-open%20viewer-7c3aed)](https://kilnrender.com/app/)
+[![WebGPU](https://img.shields.io/badge/WebGPU-native-005a9c)](#browser-requirements)
+<!-- Add after the first Zenodo-archived release (replace XXXXXXX with the concept DOI record ID):
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX)
+-->
+
 A WebGPU-native out-of-core volume rendering system for large virtualized volumetric datasets.
 
 Kiln streams multi-gigabyte volumes over HTTP, rendering them at interactive framerates using a bounded GPU residency/atlas cache and virtual-texture indirection. It handles single-channel and multichannel OME-Zarr datasets (up to 4 channels).
@@ -82,6 +93,8 @@ npm run build:lib
 
 The demo loads a sample dataset from S3. To load custom datasets, see [Loading data](docs/guide/loading-data.md).
 
+Before opening a pull request, see [Contributing](#contributing).
+
 ## Browser Requirements
 
 Kiln requires **WebGPU** support:
@@ -91,9 +104,17 @@ Kiln requires **WebGPU** support:
 
 Make sure hardware acceleration is enabled in your browser settings.
 
+## Contributing
+
+Bug reports, dataset problems and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) for setup and guidelines, and [CHANGELOG.md](CHANGELOG.md) for what's changed between releases. Questions go to [GitHub Discussions](https://github.com/MPanknin/kiln-render/discussions). Please report security issues privately as described in [SECURITY.md](SECURITY.md). Everyone participating is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Citing Kiln
+
+If you use Kiln in your research, please cite it. The repository's **Cite this repository** button (in the sidebar) gives APA and BibTeX entries generated from [CITATION.cff](CITATION.cff).
+
 ## License
 
-Apache 2.0
+Apache 2.0 — see [LICENSE](LICENSE).
 
 ---
 

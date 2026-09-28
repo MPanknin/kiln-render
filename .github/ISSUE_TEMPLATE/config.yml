@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and usage help
+    url: https://github.com/MPanknin/kiln-render/discussions
+    about: Ask questions and share what you're building with Kiln.
+  - name: image.sc forum
+    url: https://forum.image.sc/
+    about: Bioimaging community forum; mention Kiln in your post.
+  - name: Documentation
+    url: https://kilnrender.com/guide/introduction.html
+    about: Guide, data requirements, FAQ and troubleshooting.
+  - name: Report a security vulnerability
+    url: https://github.com/MPanknin/kiln-render/security/advisories/new
+    about: Please report security issues privately, not as public issues.

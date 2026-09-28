@@ -3,19 +3,9 @@ description: Suggest a new feature or an improvement
 labels: ["enhancement"]
 body:
   - type: textarea
-    id: problem
+    id: request
     attributes:
       label: What are you trying to do?
-      description: Describe the use case and the data involved (modality, size, format). Knowing the workflow helps more than a proposed solution.
+      description: The use case and the data involved (modality, size, format), and what would help.
     validations:
       required: true
-  - type: textarea
-    id: proposal
-    attributes:
-      label: What would help?
-      description: The feature or change you have in mind, if any.
-  - type: textarea
-    id: alternatives
-    attributes:
-      label: Alternatives
-      description: Workarounds you use today, or other tools that handle this.

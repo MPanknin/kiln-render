@@ -2,32 +2,30 @@
 
 All notable changes to Kiln are documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). While Kiln is below 1.0, minor versions may include breaking API changes.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Kiln uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before 1.0, minor versions may include breaking API changes.
 
 ## [Unreleased]
 
 ### Added
-- Native support for OME-Zarr pyramids with per-axis downsampling factors (for example anisotropic or XY-only levels), used by default, with fallback to the previous pyramid model when a dataset's levels are rejected.
+- Native OME-Zarr pyramids with per-axis downsampling (for example anisotropic or XY-only levels), with automatic fallback to the previous 2:1 model when a dataset's levels don't fit.
 - `int16` volumes.
-- Progressive loading: the base level loads progressively, and only visible channels are streamed and refined in multichannel datasets.
-- OMERO channel names shown in the multichannel viewer; OMERO metadata applied to channel windows.
-- Exact source data types shown in the viewer and gallery.
-- Worker chunk cache sized to the dataset.
-- Pipeline milestones for load-time telemetry.
-- CI runs the type check and unit tests on every push and pull request, and validates the published package shape and types.
+- Progressive loading: the base level fills in progressively, and multichannel datasets stream only visible channels.
+- OMERO channel names and windows in the multichannel viewer.
+- The viewer shows the source data type (`uint8`, `uint16`, `int16`, `float32`).
+- `KilnEngine`, a headless engine for hosts that bring their own device, camera and frame loop. `KilnViewer` is now built on it.
 
-### Changed
-- Split into a headless engine and the `KilnViewer` wrapper.
-- Improved metadata fetching and viewer UI tools.
+### Removed
+- The `pageLoadStart` option. Load timings are available from `viewer.milestones`.
 
 ### Fixed
-- Chunk-to-brick assembly addressing, chunk strides, and packed channel chunks.
-- Empty-brick classification now accounts for data type and window.
-- Sharded binary path: deduplicated index loads, range validation, conversion by source data type.
-- Engine-owned GPU resources are disposed on teardown.
-- Redraw notifications stay bounded while bricks arrive continuously.
-- Normalization window, missing channel controls in slice view, and contrast and colormap controls in single-channel slice mode.
-- Dataset rejection reasons are rendered as plain text.
+- Chunk-to-brick assembly for some chunk layouts and packed channels.
+- Empty-brick detection now accounts for the data type and window.
+- Sharded binary format: duplicate index loads, range validation, and conversion by source data type.
+- GPU resources are released when a viewer is disposed.
+- Slice view: missing channel controls, and contrast and colormap controls in single-channel mode.
+
+### Security
+- Dataset rejection messages are rendered as plain text, so crafted metadata can't inject HTML.
 
 ## [0.4.1] - 2026-07-12
 

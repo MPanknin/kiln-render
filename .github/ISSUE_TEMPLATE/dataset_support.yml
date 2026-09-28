@@ -1,62 +1,32 @@
 name: Dataset doesn't load
-description: A dataset is rejected, fails to load, or loads with wrong values
+description: A dataset is rejected, fails to load, or looks wrong
 labels: ["dataset support"]
 body:
   - type: markdown
     attributes:
       value: |
-        Before filing, please check that the data host sends CORS headers ([Hosting](https://github.com/MPanknin/kiln-render/blob/main/docs/data/hosting.md)) and that the dataset meets the [OME-Zarr requirements](https://github.com/MPanknin/kiln-render/blob/main/docs/data/ome-zarr.md).
+        Remote datasets need CORS headers on the host; see [Hosting](https://kilnrender.com/data/hosting.html).
   - type: input
     id: url
     attributes:
       label: Dataset URL
-      description: A public URL to the dataset root, if you can share one. Leave empty for private or local data and paste the metadata below instead.
+      description: A public URL to the dataset root, if you can share one.
       placeholder: "https://example.org/data/sample.ome.zarr"
-  - type: dropdown
-    id: format
-    attributes:
-      label: Format
-      options:
-        - OME-Zarr v0.5 (Zarr v3)
-        - OME-Zarr v0.4 (Zarr v2)
-        - Kiln sharded binary
-        - Other or not sure
-    validations:
-      required: true
   - type: textarea
     id: message
     attributes:
-      label: What the viewer shows
-      description: The rejection or error message shown in the viewer, or a description of what looks wrong.
+      label: What happens?
+      description: The message the viewer shows, or what looks wrong.
     validations:
       required: true
   - type: textarea
     id: metadata
     attributes:
-      label: Dataset metadata
-      description: The root `zarr.json` (v0.5) or `.zattrs` (v0.4), plus the array metadata of the highest-resolution level (`0/zarr.json` or `0/.zarray`). This shows shape, chunking, data type, codecs and pyramid scales.
+      label: Metadata
+      description: If the dataset isn't public, paste the root `zarr.json` (or `.zattrs`) and the first level's array metadata.
       render: json
   - type: input
     id: writer
     attributes:
       label: How was the dataset written?
-      placeholder: "ome-zarr-py 0.11, bioformats2raw, zarr-python 3, custom script"
-  - type: input
-    id: version
-    attributes:
-      label: Kiln version
-      description: The `kiln-render` npm version, or "hosted viewer" if you used kilnrender.com.
-      placeholder: "0.4.1"
-    validations:
-      required: true
-  - type: input
-    id: browser
-    attributes:
-      label: Browser and version
-      placeholder: "Chrome 140"
-  - type: checkboxes
-    id: checks
-    attributes:
-      label: Checks
-      options:
-        - label: The dataset opens with another OME-Zarr reader (for example zarr-python, napari or Neuroglancer).
+      placeholder: "ome-zarr-py, bioformats2raw, ngff-zarr, custom script"

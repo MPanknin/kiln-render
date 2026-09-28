@@ -2,56 +2,23 @@ name: Bug report
 description: Something renders incorrectly, crashes, or behaves unexpectedly
 labels: ["bug"]
 body:
-  - type: markdown
-    attributes:
-      value: |
-        Thanks for reporting! If a dataset fails to load or is rejected, please use the **Dataset doesn't load** template instead.
   - type: textarea
     id: what-happened
     attributes:
       label: What happened?
-      description: What did you expect, and what happened instead? Screenshots help a lot for rendering issues.
+      description: What did you expect, and what happened instead? A viewer link (the URL includes dataset, camera and settings) and screenshots help a lot.
     validations:
       required: true
-  - type: textarea
-    id: reproduce
+  - type: input
+    id: environment
     attributes:
-      label: Steps to reproduce
-      description: A viewer link with URL parameters is ideal (the viewer URL encodes dataset, camera and render settings).
-      placeholder: |
-        1. Open https://kilnrender.com/app/?...
-        2. Switch to ISO mode
-        3. Zoom in on ...
-    validations:
-      required: true
+      label: Browser, OS and GPU
+      placeholder: "Chrome 140, macOS 26, Apple M2"
   - type: input
     id: version
     attributes:
       label: Kiln version
       description: The `kiln-render` npm version, or "hosted viewer" if you used kilnrender.com.
-      placeholder: "0.4.1"
-    validations:
-      required: true
-  - type: input
-    id: browser
-    attributes:
-      label: Browser and version
-      placeholder: "Chrome 140"
-    validations:
-      required: true
-  - type: input
-    id: os
-    attributes:
-      label: Operating system
-      placeholder: "macOS 26.1"
-    validations:
-      required: true
-  - type: input
-    id: gpu
-    attributes:
-      label: GPU
-      description: Listed at chrome://gpu (Chrome/Edge) or about:support (Firefox).
-      placeholder: "Apple M2 / NVIDIA RTX 3070 / Intel UHD 620"
   - type: textarea
     id: console
     attributes:

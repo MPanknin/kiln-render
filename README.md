@@ -1,5 +1,13 @@
 # Kiln
 
+[![npm](https://img.shields.io/npm/v/kiln-render?color=cb3837)](https://www.npmjs.com/package/kiln-render)
+[![CI](https://github.com/MPanknin/kiln-render/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MPanknin/kiln-render/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![OME-NGFF tools registry](https://img.shields.io/badge/OME--NGFF-tools%20registry-2b8cbe)](https://ngff.openmicroscopy.org/resources/tools/index.html)
+<!-- Add after the first Zenodo-archived release (replace XXXXXXX with the concept DOI record ID):
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX)
+-->
+
 A WebGPU-native out-of-core volume rendering system for large virtualized volumetric datasets.
 
 Kiln streams multi-gigabyte volumes over HTTP, rendering them at interactive framerates using a bounded GPU residency/atlas cache and virtual-texture indirection. It handles single-channel and multichannel OME-Zarr datasets (up to 4 channels).
@@ -91,9 +99,17 @@ Kiln requires **WebGPU** support:
 
 Make sure hardware acceleration is enabled in your browser settings.
 
+## Contributing
+
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Questions go to [Discussions](https://github.com/MPanknin/kiln-render/discussions).
+
+## Citing Kiln
+
+If you use Kiln in your research, please cite it. The **Cite this repository** button in the GitHub sidebar gives APA and BibTeX entries.
+
 ## License
 
-Apache 2.0
+Apache 2.0 — see [LICENSE](LICENSE).
 
 ---
 

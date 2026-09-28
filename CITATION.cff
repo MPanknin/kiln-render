@@ -1,0 +1,37 @@
+cff-version: 1.2.0
+message: >-
+  If you use Kiln in your research, please cite it using the metadata below.
+title: "Kiln: WebGPU-native out-of-core volume rendering"
+abstract: >-
+  Kiln is a WebGPU-native, out-of-core volume renderer for large volumetric
+  datasets. It streams multiscale OME-Zarr (NGFF v0.4/v0.5) and a sharded
+  binary format over HTTP into a bounded GPU residency cache using
+  virtual-texture indirection, and renders them in the browser with
+  compute-shader ray marching (direct volume rendering, maximum intensity
+  projection, isosurface and slice views) at interactive frame rates.
+type: software
+authors:
+  - given-names: Martin
+    family-names: Panknin
+    orcid: "https://orcid.org/0009-0004-1257-1705"
+repository-code: "https://github.com/MPanknin/kiln-render"
+url: "https://kilnrender.com"
+license: Apache-2.0
+version: 0.4.1
+date-released: "2026-07-12"
+keywords:
+  - WebGPU
+  - volume rendering
+  - out-of-core rendering
+  - virtual texturing
+  - OME-Zarr
+  - NGFF
+  - Zarr
+  - scientific visualization
+  - microscopy
+  - bioimaging
+# After the first Zenodo-archived release, add the concept DOI here:
+# identifiers:
+#   - type: doi
+#     value: "10.5281/zenodo.XXXXXXX"
+#     description: Concept DOI (resolves to the latest archived release)

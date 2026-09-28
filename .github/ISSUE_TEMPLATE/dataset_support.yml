@@ -1,0 +1,32 @@
+name: Dataset doesn't load
+description: A dataset is rejected, fails to load, or looks wrong
+labels: ["dataset support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remote datasets need CORS headers on the host; see [Hosting](https://kilnrender.com/data/hosting.html).
+  - type: input
+    id: url
+    attributes:
+      label: Dataset URL
+      description: A public URL to the dataset root, if you can share one.
+      placeholder: "https://example.org/data/sample.ome.zarr"
+  - type: textarea
+    id: message
+    attributes:
+      label: What happens?
+      description: The message the viewer shows, or what looks wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: metadata
+    attributes:
+      label: Metadata
+      description: If the dataset isn't public, paste the root `zarr.json` (or `.zattrs`) and the first level's array metadata.
+      render: json
+  - type: input
+    id: writer
+    attributes:
+      label: How was the dataset written?
+      placeholder: "ome-zarr-py, bioformats2raw, ngff-zarr, custom script"

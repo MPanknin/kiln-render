@@ -1,0 +1,27 @@
+name: Bug report
+description: Something renders incorrectly, crashes, or behaves unexpectedly
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead? A viewer link (the URL includes dataset, camera and settings) and screenshots help a lot.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Browser, OS and GPU
+      placeholder: "Chrome 140, macOS 26, Apple M2"
+  - type: input
+    id: version
+    attributes:
+      label: Kiln version
+      description: The `kiln-render` npm version, or "hosted viewer" if you used kilnrender.com.
+  - type: textarea
+    id: console
+    attributes:
+      label: Browser console output
+      description: Errors or warnings from the developer console, if any.
+      render: text

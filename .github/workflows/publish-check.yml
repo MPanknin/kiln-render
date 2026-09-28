@@ -22,21 +22,23 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
 
       - name: Install dependencies
-        run: npm install
+        run: bun install --frozen-lockfile
 
       - name: Build library
-        run: npm run build:lib
+        run: bun run build:lib
 
       - name: Validate package (publint)
-        # publint picks the packer from lockfiles; bun.lock makes it run
-        # `bun pack`, and the runner has no bun. CI installs with npm, so pack with npm.
-        run: npx --yes publint --pack npm
+        run: bunx publint --pack bun
 
       - name: Validate types against a consumer (are-the-types-wrong)
         # --pack packs the tarball and type-checks it the way an installer sees it.
         # The package is ESM-only by design (exports has only "import"), so skip
         # the CommonJS resolution modes instead of failing on "dynamic import only".
-        run: npx --yes @arethetypeswrong/cli --pack . --profile esm-only
+        run: bunx @arethetypeswrong/cli --pack . --profile esm-only

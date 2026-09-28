@@ -4,13 +4,13 @@
  * Decomposes the volume into a multi-LOD brick pyramid and packs into
  * binary sharded format (volume.json + lodN.bin + lodN_index.json).
  *
- * Usage: npx tsx scripts/decompose-volume.ts <input.raw> <output-dir> [options]
- *   OR:  npx tsx scripts/decompose-volume.ts <input.raw> <W> <H> <D> [options]
+ * Usage: bun scripts/decompose-volume.ts <input.raw> <output-dir> [options]
+ *   OR:  bun scripts/decompose-volume.ts <input.raw> <W> <H> <D> [options]
  *        (output dir defaults to public/datasets/<input-name>/)
  *
  * Examples:
- *   npx tsx scripts/decompose-volume.ts data.raw public/datasets/mydata
- *   npx tsx scripts/decompose-volume.ts data.raw 832 832 494 --bits 16
+ *   bun scripts/decompose-volume.ts data.raw public/datasets/mydata
+ *   bun scripts/decompose-volume.ts data.raw 832 832 494 --bits 16
  */
 
 import * as fs from 'fs';
@@ -33,8 +33,8 @@ function parseArgs(): Config {
   const args = process.argv.slice(2);
 
   if (args.length < 2) {
-    console.error('Usage: npx tsx scripts/decompose-volume.ts <input.raw> <output-dir> [options]');
-    console.error('   OR: npx tsx scripts/decompose-volume.ts <input.raw> <W> <H> <D> [options]');
+    console.error('Usage: bun scripts/decompose-volume.ts <input.raw> <output-dir> [options]');
+    console.error('   OR: bun scripts/decompose-volume.ts <input.raw> <W> <H> <D> [options]');
     console.error('');
     console.error('Options:');
     console.error('  --output DIR         Output directory (default: public/datasets/<name>)');

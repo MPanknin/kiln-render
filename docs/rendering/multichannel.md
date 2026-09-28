@@ -110,7 +110,7 @@ viewer.onChannelWindowsChanged = () => {
 A dedicated multichannel demo is included at `examples/multichannel-viewer/`:
 
 ```bash
-npm run dev:multichannel   # http://localhost:3001
+bun run dev:multichannel   # http://localhost:3001
 ```
 
 The demo provides per-channel UI controls (colour picker, window sliders, visibility toggle) and supports URL-shareable state.

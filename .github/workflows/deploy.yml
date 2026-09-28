@@ -18,10 +18,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
 
       - name: Install dependencies
-        run: npm install
+        run: bun install --frozen-lockfile
 
       # Landing/gallery/docs at the site root (dist/), viewers under dist/app/.
       # Repo-agnostic base so this is safe on BOTH remotes:
@@ -37,17 +41,17 @@ jobs:
       # emptyOutDir is scoped to those subfolders). App before multichannel so
       # the app build doesn't wipe dist/app/multichannel/.
       - name: Build marketing site (landing / gallery / docs)
-        run: npm run build:site
+        run: bun run build:site
         env:
           VITE_BASE: ${{ github.event.repository.name == 'kiln-render' && '/' || format('/{0}/', github.event.repository.name) }}
 
       - name: Build viewer app
-        run: npm run build
+        run: bun run build
         env:
           VITE_BASE: ${{ github.event.repository.name == 'kiln-render' && '/' || format('/{0}/', github.event.repository.name) }}
 
       - name: Build multichannel viewer
-        run: npm run build:multichannel
+        run: bun run build:multichannel
         env:
           VITE_BASE: ${{ github.event.repository.name == 'kiln-render' && '/' || format('/{0}/', github.event.repository.name) }}
 

@@ -8,13 +8,13 @@ Thanks for your interest in Kiln! Bug reports, datasets that don't load, docs fi
 
 ## Development
 
-You need Node.js 20 or newer and a browser with WebGPU.
+You need [Bun](https://bun.sh), Node.js 20 or newer, and a browser with WebGPU.
 
 ```bash
-npm install
-npm run dev                # single-channel viewer
-npm run dev:multichannel   # multichannel viewer
-npm run dev:site           # documentation site
+bun install
+bun run dev                # single-channel viewer
+bun run dev:multichannel   # multichannel viewer
+bun run dev:site           # documentation site
 ```
 
 The [architecture docs](https://kilnrender.com/architecture/overview.html) explain how the pieces fit together.
@@ -22,8 +22,8 @@ The [architecture docs](https://kilnrender.com/architecture/overview.html) expla
 Before opening a pull request, run the checks CI runs:
 
 ```bash
-npx tsc --noEmit
-npm run test:run
+bunx tsc --noEmit
+bun run test:run
 ```
 
 ## Pull requests

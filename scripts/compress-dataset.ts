@@ -4,10 +4,10 @@
  * Takes an existing packed dataset (with lod*.bin files) and creates
  * a compressed version with gzip-compressed bricks.
  *
- * Usage: npx tsx scripts/compress-dataset.ts <input-dir> <output-dir>
+ * Usage: bun scripts/compress-dataset.ts <input-dir> <output-dir>
  *
  * Example:
- *   npx tsx scripts/compress-dataset.ts public/datasets/stag_beetle public/datasets/stag_beetle_compressed
+ *   bun scripts/compress-dataset.ts public/datasets/stag_beetle public/datasets/stag_beetle_compressed
  */
 
 import * as fs from 'fs';
@@ -50,7 +50,7 @@ function main() {
   const args = process.argv.slice(2);
 
   if (args.length < 2) {
-    console.error('Usage: npx tsx scripts/compress-dataset.ts <input-dir> <output-dir>');
+    console.error('Usage: bun scripts/compress-dataset.ts <input-dir> <output-dir>');
     process.exit(1);
   }
 

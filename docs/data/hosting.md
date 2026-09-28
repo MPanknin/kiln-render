@@ -15,7 +15,7 @@ Ensure CORS is configured to allow Range requests from your domain.
 Vite's dev server supports Range requests out of the box:
 
 ```bash
-npm run dev
+bun run dev
 # Volume available at http://localhost:5173/datasets/myvolume/volume.json
 ```
 
@@ -32,7 +32,7 @@ Converting the Stag Beetle dataset:
 curl -O https://example.com/stagbeetle_832x832x494_uint16.raw
 
 # Convert to streaming format
-npx tsx scripts/decompose-volume.ts \
+bun scripts/decompose-volume.ts \
   stagbeetle_832x832x494_uint16.raw \
   public/datasets/stagbeetle \
   --bits 16

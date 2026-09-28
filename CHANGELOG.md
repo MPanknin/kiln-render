@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-28
+
 ### Added
 - Native OME-Zarr pyramids with per-axis downsampling (for example anisotropic or XY-only levels), with automatic fallback to the previous 2:1 model when a dataset's levels don't fit.
 - `int16` volumes.
@@ -68,7 +70,8 @@ First release on npm.
 ### Changed
 - Licensed under Apache 2.0.
 
-[Unreleased]: https://github.com/MPanknin/kiln-render/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/MPanknin/kiln-render/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/MPanknin/kiln-render/releases/tag/v0.5.0
 [0.4.1]: https://github.com/MPanknin/kiln-render/releases/tag/v0.4.1
 [0.4.0]: https://github.com/MPanknin/kiln-render/releases/tag/v0.4.0
 [0.2.1]: https://github.com/MPanknin/kiln-render/releases/tag/v0.2.1

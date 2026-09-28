@@ -17,7 +17,7 @@ import { withBase } from 'vitepress';
     </div>
 
     <footer class="kiln-footer">
-      <p class="kiln-version">v0.4.1</p>
+      <p class="kiln-version">v0.5.0</p>
       <p class="kiln-copyright">© 2026 mpanknin</p>
     </footer>
   </main>

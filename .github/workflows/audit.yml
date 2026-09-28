@@ -1,0 +1,27 @@
+name: Audit
+
+# GitHub's dependency graph doesn't read bun.lock, so Dependabot only sees the
+# direct dependencies in package.json. bun audit checks the whole lockfile
+# against the npm advisory database; the weekly run catches new advisories
+# between pushes.
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '17 6 * * 1'
+
+jobs:
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Audit dependencies
+        run: bun audit

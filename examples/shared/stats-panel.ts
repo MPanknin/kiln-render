@@ -238,8 +238,8 @@ function dtypeBytes(metadata: VolumeMetadata): number {
   return bits ? Number(bits) / 8 : metadata.bitDepth / 8;
 }
 
-/** "16-bit" for the unsigned integer types shown so far; the dtype name for int16 and floats. */
+/** Source data type by its dtype name (uint8, uint16, int16, float32, …), as on the gallery cards.
+ *  Providers without a dtype (Kiln's sharded binary) store unsigned integers of their bit depth. */
 function dtypeLabel(metadata: VolumeMetadata): string {
-  const d = metadata.dtype;
-  return !d || d === 'uint8' || d === 'uint16' ? `${metadata.bitDepth}-bit` : d;
+  return metadata.dtype ?? (metadata.isFloat ? 'float32' : `uint${metadata.bitDepth}`);
 }

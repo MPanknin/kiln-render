@@ -62,13 +62,18 @@
     "@webgpu/types": "^0.1.69"
   },
   "devDependencies": {
-    "fflate": "^0.8.2",
+    "fflate": "^0.8.3",
     "typescript": "^5.7.2",
-    "vite": "^6.0.5",
+    "vite": "^6.4.3",
     "vitepress": "^1.6.4",
-    "vitest": "^4.0.18",
+    "vitest": "^4.1.11",
     "vue": "^3.5.39",
     "wgpu-matrix": "^3.4.0",
     "zarrita": "^0.6.1"
+  },
+  "overrides": {
+    "vitepress": {
+      "vite": "$vite"
+    }
   }
 }

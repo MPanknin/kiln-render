@@ -16,6 +16,7 @@ authors:
     orcid: "https://orcid.org/0009-0004-1257-1705"
 repository-code: "https://github.com/MPanknin/kiln-render"
 url: "https://kilnrender.com"
+doi: 10.5281/zenodo.23015442
 license: Apache-2.0
 version: 0.5.0
 date-released: "2026-09-28"
@@ -30,8 +31,3 @@ keywords:
   - scientific visualization
   - microscopy
   - bioimaging
-# After the first Zenodo-archived release, add the concept DOI here:
-# identifiers:
-#   - type: doi
-#     value: "10.5281/zenodo.XXXXXXX"
-#     description: Concept DOI (resolves to the latest archived release)

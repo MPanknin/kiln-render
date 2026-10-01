@@ -1,15 +1,15 @@
 # Kiln compatibility sweep
 
-2026-10-01 · Kiln 11580c0 · 336 datasets from 28 lists (up to 15 per list)
+2026-10-01 · Kiln 4fcad87 · 336 datasets from 28 lists (up to 15 per list)
 
-**159 of 336 open (47%).** 136 of them with caveats.
+**166 of 336 open (49%).** 143 of them with caveats.
 
 ## Why the rest don't open
 
 | Reason | Datasets | Share of all | Example |
 |---|---|---|---|
 | HCS plate or well, not a single image | 148 | 44% | https://livingobjects.ebi.ac.uk/idr/share/ome2024-ngff-challenge/idr0090/190129.zarr<br>first field: https://livingobjects.ebi.ac.uk/idr/share/ome2024-ngff-challenge/idr0090/190129.zarr/B/7/0 |
-| Unsupported axes or dimensions | 18 | 5% | https://livingobjects.ebi.ac.uk/idr/share/ome2024-ngff-challenge/idr0066/ExpA_VIP_ASLM_off_MIP_XZ_1084to1115.zarr<br>Array has 2 dimensions — a volume needs at least 3 |
+| Unsupported axes or dimensions | 11 | 3% | https://livingobjects.ebi.ac.uk/idr/share/ome2024-ngff-challenge/idr0066/ExpA_VIP_ASLM_off_MIP_XZ_1084to1115.zarr<br>Array has 2 dimensions — a volume needs at least 3 |
 | Metadata unreachable (404, 403 or network) | 8 | 2% | https://demo.data2-brain.esc.rzg.mpg.de/data/zarr3_experimental/62b17f19010000aa0075d7bb/color<br>HTTP network error |
 | No OME-NGFF multiscales metadata | 3 | 1% | https://radosgw.public.os.wwu.de/n4bi-goe/Platynereis-H2B-TL.ome.zarr<br>No OME-NGFF multiscales metadata found |
 
@@ -19,11 +19,11 @@ HCS plates: the first field of 119 of 148 plates opens in Kiln on its own (80%).
 
 | Caveat | Datasets | Share of opening |
 |---|---|---|
-| thin chunks (>32 chunks per brick) | 68 | 43% |
-| 2D (single z-slice) | 48 | 30% |
+| thin chunks (>32 chunks per brick) | 75 | 45% |
+| 2D (single z-slice) | 48 | 29% |
 | time series (first timepoint only) | 26 | 16% |
-| legacy pyramid fallback | 4 | 3% |
-| labels not shown | 4 | 3% |
+| legacy pyramid fallback | 5 | 3% |
+| labels not shown | 4 | 2% |
 | more than 4 channels (first 4 shown) | 3 | 2% |
 
 ## What the data looks like
@@ -32,14 +32,14 @@ From the 177 datasets whose level-0 metadata could be read.
 
 | Data type | Datasets | Open |
 |---|---|---|
-| uint16 | 97 | 87 (90%) |
-| uint8 | 75 | 67 (89%) |
+| uint16 | 97 | 88 (91%) |
+| uint8 | 75 | 73 (97%) |
 | float32 | 4 | 4 (100%) |
 | int16 | 1 | 1 (100%) |
 
 | OME-NGFF version | Datasets | Open |
 |---|---|---|
-| 0.5 | 160 | 144 (90%) |
+| 0.5 | 160 | 151 (94%) |
 | 0.4 | 7 | 7 (100%) |
 | 0.1 | 7 | 7 (100%) |
 | 0.3 | 2 | 0 (0%) |
@@ -49,7 +49,7 @@ From the 177 datasets whose level-0 metadata could be read.
 |---|---|
 | 1–8 | 68 |
 | 9–32 | 23 |
-| 33–128 | 37 |
+| 33–128 | 44 |
 | over 128 | 31 |
 
 | Z extent (level 0) | Datasets |
@@ -111,6 +111,6 @@ From the 177 datasets whose level-0 metadata could be read.
 | NFDI4BIOIMAGE · uni_muenster_samples | 15 | 1 (7%) | HCS plate or well, not a single image (14) |
 | OME-Zarr Open SciVis | 15 | 15 (100%) | – |
 | SSBD | 11 | 11 (100%) | – |
-| Webknossos | 15 | 0 (0%) | Metadata unreachable (404, 403 or network) (8) |
+| Webknossos | 15 | 7 (47%) | Metadata unreachable (404, 403 or network) (8) |
 
 Per-dataset details: `results.csv`.

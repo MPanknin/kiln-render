@@ -17,8 +17,9 @@ import type {
 import { valueTypeFor } from './value-types.js';
 import { UnsupportedDatasetError } from './data-provider.js';
 import { NetworkTracker } from './network-tracker.js';
-import { extractMultiscales, normalizeAxes, validateZarrSupport } from './zarr-validator.js';
-import { estimateBrickChunkFanout, computeBrickChunkFootprint } from './chunk-math.js';
+import { extractMultiscales, normalizeAxes, spatialOrder, validateZarrSupport } from './zarr-validator.js';
+import { estimateBrickChunkFanout, computeBrickChunkFootprint, pickXyz } from './chunk-math.js';
+import type { SpatialOrder } from './chunk-math.js';
 import { buildPyramid } from '../core/pyramid.js';
 import type { Vec3, PyramidPolicy } from '../core/pyramid.js';
 
@@ -53,12 +54,8 @@ export interface LodParams {
   channelAxisIdx: number;
   /** Channels stored per chunk along the channel axis (1 if none). */
   channelChunkSize: number;
-}
-
-/** Zarr vectors are [..., z, y, x]; Kiln works in [x, y, z]. */
-function lastThreeAsXyz(v: number[] | undefined): Vec3 | undefined {
-  if (!v || v.length < 3) return undefined;
-  return [v[v.length - 1]!, v[v.length - 2]!, v[v.length - 3]!];
+  /** Positions of x, y, z within the last three dims; absent means the usual z, y, x. */
+  spatialOrder?: SpatialOrder;
 }
 
 /** OMERO colours are "RRGGBB" hex strings; returns 0–1 RGB or undefined if malformed. */
@@ -257,6 +254,10 @@ export abstract class BaseZarrProvider implements DataProvider {
     const validationReasons = validateZarrSupport(ms, arrays[0]!.shape, String(dtype));
     if (validationReasons.length > 0) throw new UnsupportedDatasetError(validationReasons);
 
+    // Kiln works in [x, y, z]; Zarr vectors end in z, y, x, or in x, y, z for webKnossos
+    const order = spatialOrder(axisNames, arrays[0]!.shape.length);
+    const xyz = (v: number[] | undefined): Vec3 | undefined => (v && v.length >= 3 ? pickXyz(v, order) : undefined);
+
     // Storage mapping for the source dtype (bit depth, unorm vs raw-value path)
     const dtypeStr = String(dtype);
     const valueType = valueTypeFor(dtypeStr);
@@ -268,34 +269,24 @@ export abstract class BaseZarrProvider implements DataProvider {
     let voxelSpacing: [number, number, number] | undefined;
     const transforms = ms.datasets[0]?.coordinateTransformations ?? ms.coordinateTransformations;
     if (transforms) {
-      const scaleTransform = transforms.find(t => t.type === 'scale');
-      if (scaleTransform?.scale) {
-        const s = scaleTransform.scale;
-        // Zarr stores as [z, y, x], convert to [x, y, z]
-        voxelSpacing = [s[s.length - 1]!, s[s.length - 2]!, s[s.length - 3]!];
-      }
+      voxelSpacing = xyz(transforms.find(t => t.type === 'scale')?.scale);
     }
 
     // Build LOD levels with virtual dimensions for uniform 2:1 downsampling
-    const lod0Shape = arrays[0]!.shape; // [z, y, x]
-    const lod0Dims: [number, number, number] = [
-      lod0Shape[lod0Shape.length - 1]!, // x
-      lod0Shape[lod0Shape.length - 2]!, // y
-      lod0Shape[lod0Shape.length - 3]!, // z
-    ];
+    const lod0Dims = pickXyz(arrays[0]!.shape, order);
 
     // Native pyramid from per-level transforms; validated but not yet driving geometry
     const pyramidBuild = buildPyramid(
       arrays.map((arr, i) => {
         const t = ms.datasets[i]?.coordinateTransformations ?? [];
         return {
-          dims: lastThreeAsXyz(arr.shape)!,
-          scale: lastThreeAsXyz(t.find(x => x.type === 'scale')?.scale),
-          translation: lastThreeAsXyz(t.find(x => x.type === 'translation')?.translation),
+          dims: pickXyz(arr.shape, order),
+          scale: xyz(t.find(x => x.type === 'scale')?.scale),
+          translation: xyz(t.find(x => x.type === 'translation')?.translation),
         };
       }),
-      lastThreeAsXyz(ms.coordinateTransformations?.find(x => x.type === 'scale')?.scale),
-      lastThreeAsXyz(ms.coordinateTransformations?.find(x => x.type === 'translation')?.translation),
+      xyz(ms.coordinateTransformations?.find(x => x.type === 'scale')?.scale),
+      xyz(ms.coordinateTransformations?.find(x => x.type === 'translation')?.translation),
     );
     const native = this.pyramidPolicy === 'native';
     if (native && pyramidBuild.issues.length > 0) {
@@ -308,9 +299,7 @@ export abstract class BaseZarrProvider implements DataProvider {
     const lodParams: LodParams[] = [];
     const levels: LodLevel[] = arrays.map((arr, i) => {
       const shape = arr.shape;
-      const actualDimX = shape[shape.length - 1]!;
-      const actualDimY = shape[shape.length - 2]!;
-      const actualDimZ = shape[shape.length - 3]!;
+      const [actualDimX, actualDimY, actualDimZ] = pickXyz(shape, order);
 
       // Native: levels are what the file stores. Legacy: uniform 2:1 virtual dims, resampled in assembly.
       const virtualDimX = native ? actualDimX : Math.ceil(lod0Dims[0] / (1 << i));
@@ -319,6 +308,7 @@ export abstract class BaseZarrProvider implements DataProvider {
 
       const chunkShape = arr.chunks;
       const shapePrefixLength = shape.length - 3;
+      const [csx, csy, csz] = pickXyz(chunkShape, order);
       lodParams.push({
         scaleX: actualDimX / virtualDimX,
         scaleY: actualDimY / virtualDimY,
@@ -326,12 +316,13 @@ export abstract class BaseZarrProvider implements DataProvider {
         actualDimX,
         actualDimY,
         actualDimZ,
-        csx: chunkShape[chunkShape.length - 1]!,
-        csy: chunkShape[chunkShape.length - 2]!,
-        csz: chunkShape[chunkShape.length - 3]!,
+        csx,
+        csy,
+        csz,
         shapePrefixLength,
         channelAxisIdx,
         channelChunkSize: channelAxisIdx >= 0 && channelAxisIdx < shapePrefixLength ? (chunkShape[channelAxisIdx] ?? 1) : 1,
+        spatialOrder: order,
       });
 
       const brickGrid: [number, number, number] = [

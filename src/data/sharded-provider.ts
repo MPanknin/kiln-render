@@ -65,6 +65,14 @@ interface ShardedBrickEntry {
   avg: number;
 }
 
+/** A URL holds Kiln's sharded format when it serves a volume.json. Anything else is read
+ *  as OME-Zarr, with or without ".zarr" in the URL (webKnossos layers have none). */
+export async function isShardedUrl(url: string): Promise<boolean> {
+  if (url.includes('.zarr')) return false;
+  const response = await fetch(`${url.replace(/\/$/, '')}/volume.json`).catch(() => null);
+  return response?.ok === true;
+}
+
 /**
  * DataProvider implementation for Kiln's sharded binary format
  */

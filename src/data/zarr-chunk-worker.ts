@@ -44,6 +44,7 @@ export interface ZarrWorkerRequest {
     shapePrefixLength: number;
     channelAxisIdx: number;
     channelChunkSize: number;
+    spatialOrder?: [number, number, number];
   }[];
   /** Channel index to load (for datasets with a channel axis) */
   channelIndex?: number;
@@ -342,7 +343,7 @@ async function assembleBrick(
 ): Promise<{ buffer: ArrayBuffer; min: number; max: number; avg: number; rawMin?: number; rawMax?: number; fetchMs: number; assemblyMs: number; chunkHits: number; chunkTotal: number }> {
   const arr = arrays[lod]!;
   const params = lodParams![lod]!;
-  const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx, channelChunkSize } = params;
+  const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx, channelChunkSize, spatialOrder } = params;
   const physSize = PHYSICAL_SIZE;
   const channelChunk = Math.floor(channelIndex / channelChunkSize);
 
@@ -371,7 +372,7 @@ async function assembleBrick(
 
   const setChunkEntry = (fi: number, entry: DecodedChunk) => {
     chunkDataArr[fi] = entry.data;
-    const layout = chunkLayout(entry, channelAxisIdx, channelChunkSize, channelIndex);
+    const layout = chunkLayout(entry, channelAxisIdx, channelChunkSize, channelIndex, spatialOrder);
     chunkBase[fi] = layout.base;
     chunkStX[fi] = layout.strideX;
     chunkStY[fi] = layout.strideY;
@@ -393,7 +394,7 @@ async function assembleBrick(
           setChunkEntry(fi, cached);
           chunkHits++;
         } else {
-          const coords = chunkCoords(shapePrefixLength, channelAxisIdx, channelChunkSize, channelIndex, cz, cy, cx);
+          const coords = chunkCoords(shapePrefixLength, channelAxisIdx, channelChunkSize, channelIndex, cz, cy, cx, spatialOrder);
 
           if (refcountedAborts) {
             // ?p4=1 — see fetchChunkShared.

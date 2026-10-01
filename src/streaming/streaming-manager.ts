@@ -28,6 +28,15 @@ const RESET_MAX_WAIT_MS = 250;
 // bricks own the link; 2 keeps tiny two-brick base levels from serialising.
 const BASE_RAMP_START = 2;
 
+/** A provider or worker rejection never escapes as an unhandled rejection:
+ *  aborts are expected on reload and dispose, anything else is logged. */
+function warnUnlessAborted(context: string): (e: unknown) => void {
+  return (e) => {
+    if (e instanceof DOMException && e.name === 'AbortError') return;
+    console.warn(`[Kiln] ${context}:`, e);
+  };
+}
+
 export interface BrickRequest {
   lod: number;
   bx: number;
@@ -359,7 +368,7 @@ export class StreamingManager {
     void Promise.all(Array.from({ length: concurrency }, async () => {
       let item;
       while ((item = queue.shift()) !== undefined && gen === this.generation) {
-        try { await runOne(item); } finally { this.fillPending--; }
+        try { await runOne(item); } catch (e) { warnUnlessAborted('channel backfill failed')(e); } finally { this.fillPending--; }
       }
     }));
   }
@@ -461,7 +470,7 @@ export class StreamingManager {
     let window = Math.min(maxWindow, BASE_RAMP_START);
     console.log(`[Kiln] loadBaseLod: ${bricks.length} bricks × ${loadChannels.length}/${numChannels} channels (window ${window}→${maxWindow})`);
 
-    const allBrickData: (Uint8Array | Uint16Array)[] = [];
+    const allBrickData: (Uint8Array | Uint16Array)[] = []; // channel 0, for the base histogram
     const resolved = new Set<string>(); // bricks that reached resident or empty
     let sumIsEmptyMs = 0, sumFetchMs = 0, sumUploadMs = 0, brickCount = 0;
 
@@ -473,6 +482,9 @@ export class StreamingManager {
     let floatRangeMin = Infinity, floatRangeMax = -Infinity;
     const channelMins = needsChannelRanges ? new Array(numChannels).fill(Infinity) as number[] : [];
     const channelMaxs = needsChannelRanges ? new Array(numChannels).fill(-Infinity) as number[] : [];
+    // Every loaded channel feeds the raw-value range: the shader normalises all
+    // channels by it, so a range from channel 0 alone clips brighter channels.
+    const rangeBricks: Uint16Array[] = [];
 
     const accumulateStats = (ch: number, r: BrickLoadResult) => {
       if (needsFloatRange && r.rawMin !== undefined && r.rawMax !== undefined) {
@@ -554,6 +566,7 @@ export class StreamingManager {
       if (this.milestones.firstBrickDecoded === null) this.milestones.firstBrickDecoded = performance.now();
       accumulateStats(ch, r);
       if (ch === 0) allBrickData.push(r.data);
+      if (needsFloatRange) rangeBricks.push(r.data as Uint16Array);
       this.brickCache.put(`ch${ch}:${key}`, r.data);
 
       const tUpload = performance.now();
@@ -594,7 +607,7 @@ export class StreamingManager {
         while (active < window && tasks.length > 0 && !stale()) {
           const task = tasks.shift()!;
           active++;
-          task().finally(() => {
+          task().catch(warnUnlessAborted('loadBaseLod: brick failed')).finally(() => {
             active--;
             window = Math.min(maxWindow, window * 2);
             pump();
@@ -613,7 +626,7 @@ export class StreamingManager {
       for (const brick of failed) {
         const st = states.get(brick.key);
         if (st) st.settled = 0;
-        for (const ch of loadChannels) await processBrickChannel(brick, ch);
+        for (const ch of loadChannels) await processBrickChannel(brick, ch).catch(warnUnlessAborted('loadBaseLod: retry failed'));
       }
     }
     if (stale()) return;
@@ -664,13 +677,13 @@ export class StreamingManager {
       // Percentile-clip (p0.1 / p99.9) using the in-memory base bricks —
       // absolute per-brick extremes let one hot voxel compress the whole
       // contrast range. (Falls back to raw extremes if no brick data.)
-      const clipped = allBrickData.length > 0
-        ? this.computeFloatPercentileRange(allBrickData as Uint16Array[], floatRangeMin, floatRangeMax)
+      const clipped = rangeBricks.length > 0
+        ? this.computeFloatPercentileRange(rangeBricks, floatRangeMin, floatRangeMax)
         : ([floatRangeMin, floatRangeMax] as [number, number]);
       derivedRanges.dataRange = clipped;
       this.metadata.dataRange = clipped;
       // Update workers so future brick stats use the real range
-      this.dataProvider.setFloatRange?.(clipped[0], clipped[1]);
+      this.dataProvider.setFloatRange?.(clipped[0], clipped[1])?.catch(warnUnlessAborted('setFloatRange failed'));
       console.log(`[Kiln] derived float range: [${clipped[0]}, ${clipped[1]}] (raw extremes: [${floatRangeMin}, ${floatRangeMax}])`);
     }
 

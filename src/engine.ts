@@ -18,7 +18,7 @@ import type { ViewParams } from './core/view.js';
 import type { DataProvider, VolumeMetadata } from './data/data-provider.js';
 import { UnsupportedDatasetError } from './data/data-provider.js';
 import { MAX_LOD_LEVELS } from './shaders/uniform-layout.js';
-import { ShardedDataProvider } from './data/sharded-provider.js';
+import { ShardedDataProvider, isShardedUrl } from './data/sharded-provider.js';
 import { ZarrDataProvider } from './data/zarr-provider.js';
 import { initializeWithPyramidFallback } from './data/pyramid-fallback.js';
 
@@ -195,10 +195,10 @@ export class KilnEngine {
     if (isExternalProvider) {
       dataProvider = dataset as DataProvider;
     } else {
-      const isZarr = (dataset as string).includes('.zarr');
-      dataProvider = isZarr
-        ? new ZarrDataProvider(dataset as string)
-        : new ShardedDataProvider(dataset as string);
+      const url = dataset as string;
+      dataProvider = (await isShardedUrl(url))
+        ? new ShardedDataProvider(url)
+        : new ZarrDataProvider(url);
     }
 
     // The level model must reach the provider before workers and brick loads exist.
@@ -231,9 +231,8 @@ export class KilnEngine {
 
     // Configure worker target format (string-URL providers only)
     if (!isExternalProvider) {
-      const isHttpZarr = (dataset as string).includes('.zarr');
-      if (isHttpZarr) {
-        await (dataProvider as ZarrDataProvider).setTargetFormat(
+      if (dataProvider instanceof ZarrDataProvider) {
+        await dataProvider.setTargetFormat(
           textureFormat as 'r8unorm' | 'r16float',
         );
       } else if (textureFormat !== 'r16unorm' || sourceBitDepth !== 16) {

@@ -7,6 +7,8 @@ import { open, root } from 'zarrita';
 import { TolerantFetchStore } from './tolerant-fetch-store.js';
 import { FileSystemStore } from './filesystem-store.js';
 import { SUPPORTED_DTYPES } from './value-types.js';
+import { ZYX } from './chunk-math.js';
+import type { SpatialOrder } from './chunk-math.js';
 
 interface MultiscalesEntry {
   axes?: unknown; // may be string[] (v0.4) or {name,type}[] (v0.5) or absent
@@ -55,7 +57,7 @@ export function extractMultiscales(attrs: Record<string, unknown>): MultiscalesE
   );
 }
 
-/** Assembly indexes the last three array dims as [z, y, x]; reject layouts that do not match. */
+/** Assembly reads the volume from the last three array dims; reject layouts that do not match. */
 function validateSpatialLayout(axes: NormalizedAxis[], axesProvided: boolean, rank: number): string[] {
   if (rank < 3) return [`Array has ${rank} dimensions — a volume needs at least 3`];
   if (!axesProvided) return [];
@@ -64,12 +66,15 @@ function validateSpatialLayout(axes: NormalizedAxis[], axesProvided: boolean, ra
   const spatial = axes.map((a, i) => ({ ...a, i })).filter(a => a.type === 'space');
   if (spatial.length !== 3) return [`Expected 3 spatial axes, found ${spatial.length}`];
   if (spatial.some((a, k) => a.i !== rank - 3 + k)) return ['Spatial axes must be the last three array dimensions (…, z, y, x)'];
-
-  const names = spatial.map(a => a.name.toLowerCase());
-  if (names.every(n => 'xyz'.includes(n)) && names.join('') !== 'zyx') {
-    return [`Spatial axis order "${names.join(', ')}" is not supported (expected z, y, x)`];
-  }
   return [];
+}
+
+/** Where x, y and z sit within the last three array dimensions, from the axis names.
+ *  Unnamed or unrecognised spatial axes are taken as the usual z, y, x. */
+export function spatialOrder(axes: NormalizedAxis[], rank: number): SpatialOrder {
+  const names = axes.length === rank ? axes.slice(-3).map(a => a.name.toLowerCase()) : [];
+  const order = ['x', 'y', 'z'].map(n => names.indexOf(n));
+  return order.every(i => i >= 0) ? order as SpatialOrder : ZYX;
 }
 
 /**

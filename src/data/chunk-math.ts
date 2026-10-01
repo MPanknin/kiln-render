@@ -93,16 +93,31 @@ export function estimateDatasetFanoutMultiplier(lodParamsList: LodChunkParams[],
   return Math.max(1, ...lodParamsList.map(p => estimateBrickChunkFanout(p, physSize)));
 }
 
+/** Positions of x, y and z within the last three array dimensions. */
+export type SpatialOrder = [number, number, number];
+
+/** The usual OME-Zarr layout, `…, z, y, x`. webKnossos writes `…, x, y, z`, which is [0, 1, 2]. */
+export const ZYX: SpatialOrder = [2, 1, 0];
+
+/** The x, y and z entries of a per-dimension vector (shape, chunks, scale). */
+export function pickXyz(v: readonly number[], order: SpatialOrder = ZYX): [number, number, number] {
+  const b = v.length - 3;
+  return [v[b + order[0]]!, v[b + order[1]]!, v[b + order[2]]!];
+}
+
 /** Zarr chunk coordinates for `channel`; non-spatial prefix axes other than channel are pinned to 0. */
 export function chunkCoords(
   prefixLength: number, channelAxisIdx: number, channelChunkSize: number,
-  channel: number, cz: number, cy: number, cx: number,
+  channel: number, cz: number, cy: number, cx: number, order: SpatialOrder = ZYX,
 ): number[] {
-  const prefix = new Array<number>(prefixLength).fill(0);
+  const coords = new Array<number>(prefixLength + 3).fill(0);
   if (channelAxisIdx >= 0 && channelAxisIdx < prefixLength) {
-    prefix[channelAxisIdx] = Math.floor(channel / channelChunkSize);
+    coords[channelAxisIdx] = Math.floor(channel / channelChunkSize);
   }
-  return [...prefix, cz, cy, cx];
+  coords[prefixLength + order[0]] = cx;
+  coords[prefixLength + order[1]] = cy;
+  coords[prefixLength + order[2]] = cz;
+  return coords;
 }
 
 /** Flat-index layout of a decoded chunk, valid for C, F and transposed storage orders. */
@@ -116,17 +131,12 @@ export interface ChunkLayout {
 
 export function chunkLayout(
   chunk: { shape: number[]; stride?: number[] },
-  channelAxisIdx: number, channelChunkSize: number, channel: number,
+  channelAxisIdx: number, channelChunkSize: number, channel: number, order: SpatialOrder = ZYX,
 ): ChunkLayout {
-  const n = chunk.shape.length;
   const stride = chunk.stride ?? cOrderStrides(chunk.shape);
   const packedIdx = channelAxisIdx >= 0 && channelChunkSize > 1 ? channel % channelChunkSize : 0;
-  return {
-    base: packedIdx * (stride[channelAxisIdx] ?? 0),
-    strideX: stride[n - 1]!,
-    strideY: stride[n - 2]!,
-    strideZ: stride[n - 3]!,
-  };
+  const [strideX, strideY, strideZ] = pickXyz(stride, order);
+  return { base: packedIdx * (stride[channelAxisIdx] ?? 0), strideX, strideY, strideZ };
 }
 
 function cOrderStrides(shape: number[]): number[] {

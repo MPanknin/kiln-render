@@ -279,4 +279,10 @@ describe('chunkCoords / chunkLayout (storage order and packed channels)', () => 
   it('unpacked channel chunks never add a base offset', () => {
     expect(chunkLayout({ shape: [1, 4, 8, 16] }, 0, 1, 3).base).toBe(0);
   });
+
+  it('x, y, z order (webKnossos): coordinates and strides follow the axes', () => {
+    expect(chunkCoords(1, 0, 1, 0, 4, 5, 6, [0, 1, 2])).toEqual([0, 6, 5, 4]);
+    const l = chunkLayout({ shape: [1, 16, 8, 4], stride: [1, 1, 16, 128] }, 0, 1, 0, [0, 1, 2]);
+    expect(l).toEqual({ base: 0, strideX: 1, strideY: 16, strideZ: 128 });
+  });
 });

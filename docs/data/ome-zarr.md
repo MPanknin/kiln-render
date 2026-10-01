@@ -15,7 +15,7 @@ Kiln is listed in the [OME-NGFF tools registry](https://ngff.openmicroscopy.org/
 
 - **OME-NGFF v0.4 and v0.5** with `multiscales` metadata in group attributes
 - **Single-channel or multichannel** — up to 4 channels (see [Multichannel](/rendering/multichannel))
-- **3D arrays** with dimensions ordered `[z, y, x]` (standard C-order); multichannel datasets use a `c` axis
+- **3D arrays** with x, y and z as the last three dimensions, usually `[z, y, x]`; `[x, y, z]` as written by [webKnossos](https://webknossos.org) works too. Multichannel datasets use a `c` axis
 - **Supported dtypes:** `uint8`, `uint16`, `int16`, `float32` (`float64` is read as `float32`). Other types, such as `int8` or `uint32`, are rejected with an explanation
 - Multiple resolution levels (datasets within `multiscales`) are used as LODs. Kiln reads each level's own size and per-axis downsampling (1× or 2×). If the stored levels don't fit that model, for example a coarse level a few slices short of half its parent, it falls back to a uniform 2:1 model and logs why. Force either model with `?pyramid=native` or `?pyramid=legacy`
 - Voxel spacing is read from `coordinateTransformations` if present
@@ -33,7 +33,7 @@ import { KilnViewer } from 'kiln-render';
 const viewer = await KilnViewer.create(canvas, 'https://example.com/data/scan.ome.zarr');
 ```
 
-Kiln auto-detects the format from the URL. Brick assembly (fetching Zarr chunks, decompressing, and re-chunking into 66³ bricks with ghost borders) runs in a Web Worker pool off the main thread. For Zarr v2 stores (NGFF 0.4) the metadata is read in two round trips and shared with the workers, so they start without touching the network.
+Any URL that doesn't serve Kiln's sharded format (a `volume.json`) is read as OME-Zarr, so URLs without `.zarr`, such as webKnossos layers, work as well. Brick assembly (fetching Zarr chunks, decompressing, and re-chunking into 66³ bricks with ghost borders) runs in a Web Worker pool off the main thread. For Zarr v2 stores (NGFF 0.4) the metadata is read in two round trips and shared with the workers, so they start without touching the network.
 
 ### Layout tips for fast streaming
 
@@ -55,4 +55,4 @@ const viewer = await KilnViewer.create(
 
 ## Axis convention
 
-Zarr stores dimensions as `[z, y, x]` (C-order, x fastest-varying). Kiln uses `[x, y, z]` in its metadata. Only metadata tuples are swapped; no data transposition is needed since the memory layout is identical.
+Most OME-Zarr stores dimensions as `[z, y, x]`; webKnossos writes `[x, y, z]`. Kiln reads the order from the `axes` metadata and uses `[x, y, z]` internally. Chunks are read through their strides, so no data is transposed.

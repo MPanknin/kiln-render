@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { normalizeAxes, extractMultiscales, validateZarrSupport } from '../src/data/zarr-validator.js';
+import { normalizeAxes, extractMultiscales, validateZarrSupport, spatialOrder } from '../src/data/zarr-validator.js';
 
 // ---------------------------------------------------------------------------
 // normalizeAxes
@@ -260,9 +260,14 @@ describe('validateZarrSupport — spatial layout', () => {
     expect(reasons.join()).toMatch(/3 spatial axes, found 2/);
   });
 
-  it('rejects x, y, z order', () => {
-    const reasons = validateZarrSupport(ms(['x', 'y', 'z']), [64, 64, 64], 'uint8');
-    expect(reasons.join()).toMatch(/expected z, y, x/);
+  it('accepts x, y, z order (webKnossos)', () => {
+    expect(validateZarrSupport(ms(['c', 'x', 'y', 'z']), [1, 64, 64, 64], 'uint8')).toEqual([]);
+  });
+
+  it('finds x, y and z within the last three dimensions', () => {
+    expect(spatialOrder(normalizeAxes(['c', 'x', 'y', 'z']), 4)).toEqual([0, 1, 2]);
+    expect(spatialOrder(normalizeAxes(['t', 'c', 'z', 'y', 'x']), 5)).toEqual([2, 1, 0]);
+    expect(spatialOrder(normalizeAxes(undefined), 4)).toEqual([2, 1, 0]); // no axes: z, y, x
   });
 
   it('rejects a spatial axis in the prefix', () => {

@@ -361,7 +361,6 @@ const CATEGORY_LABEL: Record<string, string> = {
   'pyramid': 'Pyramid levels not supported',
   'no-cors': 'Host sends no CORS header (browser blocks it)',
   'decode': 'Chunk fails to decode',
-  'url-not-zarr': 'URL without ".zarr" (viewer treats it as sharded binary)',
   'error': 'Other error',
 };
 
@@ -396,7 +395,6 @@ function classify(d: Dataset, p: Probe, k: KilnResult | undefined, decode: strin
   }
   if (p.cors === 'missing') return { category: 'no-cors', detail: 'no Access-Control-Allow-Origin', caveats: [] };
   if (decode && decode !== 'ok' && decode !== 'missing-chunk') return { category: 'decode', detail: decode, caveats: [] };
-  if (!d.url.includes('.zarr')) return { category: 'url-not-zarr', detail: 'opens once the URL is treated as Zarr', caveats: [] };
 
   const caveats: string[] = [];
   if (axisSize(p, 't') > 1) caveats.push('time series (first timepoint only)');

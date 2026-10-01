@@ -1,8 +1,8 @@
 # Kiln compatibility sweep
 
-2026-10-01 · Kiln eb6b014 · 336 datasets from 28 lists (up to 15 per list)
+2026-10-01 · Kiln 11580c0 · 336 datasets from 28 lists (up to 15 per list)
 
-**158 of 336 open (47%).** 136 of them with caveats.
+**159 of 336 open (47%).** 136 of them with caveats.
 
 ## Why the rest don't open
 
@@ -10,7 +10,7 @@
 |---|---|---|---|
 | HCS plate or well, not a single image | 148 | 44% | https://livingobjects.ebi.ac.uk/idr/share/ome2024-ngff-challenge/idr0090/190129.zarr<br>first field: https://livingobjects.ebi.ac.uk/idr/share/ome2024-ngff-challenge/idr0090/190129.zarr/B/7/0 |
 | Unsupported axes or dimensions | 18 | 5% | https://livingobjects.ebi.ac.uk/idr/share/ome2024-ngff-challenge/idr0066/ExpA_VIP_ASLM_off_MIP_XZ_1084to1115.zarr<br>Array has 2 dimensions — a volume needs at least 3 |
-| Metadata unreachable (404, 403 or network) | 9 | 3% | https://d39zu0xtgv0613.cloudfront.net/Fly-eFISH/NP01_1_1_SS00790_AstA546_CCHa1_647_1x_LOL.chunked.zarr/<br>HTTP 403 |
+| Metadata unreachable (404, 403 or network) | 8 | 2% | https://demo.data2-brain.esc.rzg.mpg.de/data/zarr3_experimental/62b17f19010000aa0075d7bb/color<br>HTTP network error |
 | No OME-NGFF multiscales metadata | 3 | 1% | https://radosgw.public.os.wwu.de/n4bi-goe/Platynereis-H2B-TL.ome.zarr<br>No OME-NGFF multiscales metadata found |
 
 HCS plates: the first field of 119 of 148 plates opens in Kiln on its own (80%).
@@ -28,11 +28,11 @@ HCS plates: the first field of 119 of 148 plates opens in Kiln on its own (80%).
 
 ## What the data looks like
 
-From the 176 datasets whose level-0 metadata could be read.
+From the 177 datasets whose level-0 metadata could be read.
 
 | Data type | Datasets | Open |
 |---|---|---|
-| uint16 | 96 | 86 (90%) |
+| uint16 | 97 | 87 (90%) |
 | uint8 | 75 | 67 (89%) |
 | float32 | 4 | 4 (100%) |
 | int16 | 1 | 1 (100%) |
@@ -40,14 +40,14 @@ From the 176 datasets whose level-0 metadata could be read.
 | OME-NGFF version | Datasets | Open |
 |---|---|---|
 | 0.5 | 160 | 144 (90%) |
+| 0.4 | 7 | 7 (100%) |
 | 0.1 | 7 | 7 (100%) |
-| 0.4 | 6 | 6 (100%) |
 | 0.3 | 2 | 0 (0%) |
 | 0.2 | 1 | 1 (100%) |
 
 | Chunks per brick (level 0) | Datasets |
 |---|---|
-| 1–8 | 67 |
+| 1–8 | 68 |
 | 9–32 | 23 |
 | 33–128 | 37 |
 | over 128 | 31 |
@@ -57,26 +57,26 @@ From the 176 datasets whose level-0 metadata could be read.
 | 1 (2D) | 59 |
 | 2–63 | 33 |
 | 64–511 | 38 |
-| 512+ | 46 |
+| 512+ | 47 |
 
 | Size of level 0 (uncompressed) | Datasets |
 |---|---|
 | under 100 MB | 31 |
 | 100 MB – 1 GB | 24 |
 | 1–10 GB | 50 |
-| over 10 GB | 71 |
+| over 10 GB | 72 |
 
 | Storage | Datasets |
 |---|---|
 | sharded (Zarr v3) | 132 |
 | unsharded (Zarr v3) | 28 |
-| unsharded (Zarr v2) | 16 |
+| unsharded (Zarr v2) | 17 |
 
 | Codecs | Datasets |
 |---|---|
 | sharding+bytes+blosc | 132 |
 | bytes+zstd | 21 |
-| blosc/lz4 | 15 |
+| blosc/lz4 | 16 |
 | transpose+bytes | 7 |
 | zstd | 1 |
 
@@ -104,7 +104,7 @@ From the 176 datasets whose level-0 metadata could be read.
 | IDR OME-NGFF samples | 15 | 11 (73%) | HCS plate or well, not a single image (2) |
 | JAX · KOMP_adult_lacZ | 15 | 15 (100%) | – |
 | JAX · KOMP_histopathology | 15 | 15 (100%) | – |
-| Kiln gallery | 11 | 10 (91%) | Metadata unreachable (404, 403 or network) (1) |
+| Kiln gallery | 11 | 11 (100%) | – |
 | NFDI4BIOIMAGE · flamingo | 3 | 0 (0%) | No OME-NGFF multiscales metadata (3) |
 | NFDI4BIOIMAGE · fzj | 3 | 2 (67%) | Unsupported axes or dimensions (1) |
 | NFDI4BIOIMAGE · lin_samples | 15 | 15 (100%) | – |

@@ -120,7 +120,7 @@ async function loadList(url: string, label: string, perList: number, depth = 0):
     if (!u?.startsWith('http')) continue;
     const name = srcIdx >= 0 && row[srcIdx]?.trim() ? row[srcIdx]!.trim() : label;
     if (u.endsWith('.csv')) nested.push(loadList(u, depth === 0 ? name : `${label} · ${baseName(u)}`, perList, depth + 1));
-    else datasets.push({ source: depth === 0 ? label : `${label}`, url: u.replace(/\/$/, '') });
+    else datasets.push({ source: label, url: u });
   }
   return [...sample(datasets, perList), ...(await Promise.all(nested)).flat()];
 }
@@ -139,15 +139,21 @@ function gallery(): Dataset[] {
   return [...new Set(urls)].map(url => ({ source: 'Kiln gallery', url }));
 }
 
+/** Trailing slashes stripped (as the viewer does), duplicates across lists dropped. */
+function dedupe(datasets: Dataset[]): Dataset[] {
+  const seen = new Set<string>();
+  return datasets
+    .map(d => ({ ...d, url: d.url.replace(/\/+$/, '') }))
+    .filter(d => !seen.has(d.url) && (seen.add(d.url), true));
+}
+
 async function catalog(perList: number): Promise<Dataset[]> {
   const parts = await Promise.all([
     loadList(CHALLENGE_INDEX, 'NGFF Challenge', perList),
     loadList(IDR_SAMPLES, 'IDR OME-NGFF samples', perList),
     openSciVis(perList),
   ]);
-  const all = [...gallery(), ...parts.flat()];
-  const seen = new Set<string>();
-  return all.filter(d => !seen.has(d.url) && (seen.add(d.url), true));
+  return dedupe([...gallery(), ...parts.flat()]);
 }
 
 // ─── Structural probe (raw metadata, independent of Kiln) ──────────────────
@@ -528,7 +534,7 @@ const listFile = arg('list', '');
 const commit = process.env.GITHUB_SHA?.slice(0, 7) ?? 'local';
 
 const datasets: Dataset[] = listFile
-  ? readFileSync(listFile, 'utf8').split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')).map(url => ({ source: 'list', url }))
+  ? dedupe(readFileSync(listFile, 'utf8').split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')).map(url => ({ source: 'list', url })))
   : await catalog(perList);
 process.stdout.write(`Checking ${datasets.length} datasets…\n`);
 

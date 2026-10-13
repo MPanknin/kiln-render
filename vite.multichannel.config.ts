@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
+import { selectionDemo } from './vite.selection-demo';
 import { copyFavicons } from './vite.favicons';
 
 export default defineConfig({
@@ -8,7 +9,7 @@ export default defineConfig({
   // under <root>/app/multichannel/.
   base: (process.env.VITE_BASE ?? '/kiln-render/') + 'app/multichannel/',
   publicDir: resolve(__dirname, 'public'),
-  plugins: [copyFavicons()],
+  plugins: [copyFavicons(), selectionDemo()],
   server: {
     port: 3001,
     open: true,

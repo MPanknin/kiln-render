@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { channelDisplayName, hiddenChannelsNote } from '../examples/shared/channel-names.js';
+import { channelDisplayName } from '../examples/shared/channel-names.js';
 
 describe('channelDisplayName', () => {
   it('uses the OMERO label when present', () => {
@@ -17,13 +17,3 @@ describe('channelDisplayName', () => {
   });
 });
 
-describe('hiddenChannelsNote', () => {
-  it('is null when every channel is shown', () => {
-    expect(hiddenChannelsNote(2, 2)).toBeNull();
-    expect(hiddenChannelsNote(4, 4)).toBeNull();
-  });
-
-  it('names the shown and total counts when channels are dropped', () => {
-    expect(hiddenChannelsNote(4, 6)).toBe('Showing the first 4 of 6 channels');
-  });
-});

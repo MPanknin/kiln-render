@@ -12,6 +12,8 @@ import {
 import type { ViewerOptions, DataProvider, UpAxis } from 'kiln-render';
 import { MultichannelUI } from './ui/multichannel-ui.js';
 import type { ChannelState } from './ui/multichannel-ui.js';
+import { parseSourceSelection, writeSourceSelection, applySourceSelection, routeSourceSelection } from '../../shared/source-selection.js';
+import { timeShortcuts } from '../../shared/source-controls.js';
 import { mountDatasetDialog, showDialogError } from '../../shared/dataset-dialog.js';
 import { mountToast } from '../../shared/toast.js';
 import { setupShareButton } from '../../shared/share-button.js';
@@ -96,6 +98,7 @@ async function main() {
 
   const urlParams = parseURLParams();
   const volumeSource = urlParams.dataset;
+  if (routeSourceSelection(volumeSource)) return;
 
   let dataset: string | DataProvider;
 
@@ -117,6 +120,7 @@ async function main() {
   }
 
   const options: ViewerOptions = {
+    ...parseSourceSelection(params),
     upAxis: urlParams.up as UpAxis | undefined,
     cam: urlParams.cam,
     renderScale: urlParams.scale,
@@ -159,33 +163,33 @@ async function main() {
     { keys: ['r', 'R'], display: 'R', label: 'Reset view', run: () => gizmo.reset() },
     { keys: ['s', 'S'], display: 'S', label: 'Save screenshot', run: takeScreenshot },
     { keys: ['d', 'D'], display: 'D', label: 'Diagnostics panel' },
+    ...((viewer.metadata.timepointCount ?? 1) > 1 ? timeShortcuts((d) => ui.stepTimepoint(d)) : []),
   ]);
-  setupShareButton({
-    isLocalZarr,
-    toast,
-    buildShareUrl: () => {
-      const state = viewer.getState();
-      const p = new URLSearchParams();
-      if (volumeSource !== DEFAULT_VOLUME_SOURCE) p.set('dataset', volumeSource);
-      p.set('up', state.upAxis);
-      p.set('mode', state.mode);
-      p.set('scale', state.renderScale.toFixed(2));
-      // An explicitly chosen level model (it turns off the automatic legacy fallback) stays in shared links
-      if (urlParams.pyramid) p.set('pyramid', urlParams.pyramid);
-      const [rx, ry, dist, tx, ty, tz] = state.cam;
-      p.set('cam', `${rx.toFixed(3)},${ry.toFixed(3)},${dist.toFixed(3)},${tx.toFixed(3)},${ty.toFixed(3)},${tz.toFixed(3)}`);
-      const channelState = ui.getChannelState();
-      if (channelState.length > 0) {
-        p.set('channels', channelState.map(ch =>
-          `${ch.r},${ch.g},${ch.b},${ch.a.toFixed(2)},${ch.visible ? 1 : 0},${ch.min.toFixed(2)},${ch.max.toFixed(2)}`
-        ).join(';'));
-      }
-      const sliceState = ui.getSliceState();
-      p.set('slice', `${sliceState.x},${sliceState.y},${sliceState.z},${sliceState.showX ? 1 : 0},${sliceState.showY ? 1 : 0},${sliceState.showZ ? 1 : 0}`);
+  const buildShareUrl = () => {
+    const state = viewer.getState();
+    const p = new URLSearchParams();
+    writeSourceSelection(p, viewer.metadata);
+    if (volumeSource !== DEFAULT_VOLUME_SOURCE) p.set('dataset', volumeSource);
+    p.set('up', state.upAxis);
+    p.set('mode', state.mode);
+    p.set('scale', state.renderScale.toFixed(2));
+    // An explicitly chosen level model (it turns off the automatic legacy fallback) stays in shared links
+    if (urlParams.pyramid) p.set('pyramid', urlParams.pyramid);
+    const [rx, ry, dist, tx, ty, tz] = state.cam;
+    p.set('cam', `${rx.toFixed(3)},${ry.toFixed(3)},${dist.toFixed(3)},${tx.toFixed(3)},${ty.toFixed(3)},${tz.toFixed(3)}`);
+    const channelState = ui.getChannelState();
+    if (channelState.length > 0) {
+      p.set('channels', channelState.map(ch =>
+        `${ch.r},${ch.g},${ch.b},${ch.a.toFixed(2)},${ch.visible ? 1 : 0},${ch.min.toFixed(2)},${ch.max.toFixed(2)}`
+      ).join(';'));
+    }
+    const sliceState = ui.getSliceState();
+    p.set('slice', `${sliceState.x},${sliceState.y},${sliceState.z},${sliceState.showX ? 1 : 0},${sliceState.showY ? 1 : 0},${sliceState.showZ ? 1 : 0}`);
 
-      return `${window.location.origin}${window.location.pathname}?${p.toString()}`;
-    },
-  });
+    return `${window.location.origin}${window.location.pathname}?${p.toString()}`;
+  };
+  ui.applySelection = (selection) => applySourceSelection(viewer, selection, volumeSource, isLocalZarr, buildShareUrl);
+  setupShareButton({ isLocalZarr, toast, buildShareUrl });
 
   window.addEventListener('beforeunload', () => {
     viewer.dispose();

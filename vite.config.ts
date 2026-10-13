@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
+import { selectionDemo } from './vite.selection-demo';
 import { copyFavicons } from './vite.favicons';
 
 export default defineConfig({
@@ -9,7 +10,7 @@ export default defineConfig({
   // preview overrides VITE_BASE with a branch-specific prefix.
   base: (process.env.VITE_BASE || '/kiln-render/') + 'app/',
   publicDir: resolve(__dirname, 'public'),
-  plugins: [copyFavicons()],
+  plugins: [copyFavicons(), selectionDemo()],
   server: {
     port: 3000,
     open: true,

@@ -611,15 +611,127 @@
   padding-top: 1px;
 }
 
-.ctl-channel-note {
-  font-size: 10px;
+/* Source-channel picker standing in for the channel name: plain text at rest,
+   a select on hover/focus. The chevron matches .ctl-select-input. */
+.ctl-channel-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 1px 16px 1px 4px;
+  margin-left: -4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%238a8a90'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 5px center;
+  transition: background-color 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+.ctl-channel-select:hover,
+.ctl-channel-select:focus-visible {
+  background-color: rgba(187, 188, 196, 0.08);
+  border-color: var(--stroke);
+  outline: none;
+}
+
+/* Adds a display slot; dashed so it reads as an empty strip, not a channel. */
+.ctl-channel-add {
+  display: block;
+  width: 100%;
+  padding: 5px 8px;
+  margin-bottom: 6px;
+  border: 1px dashed var(--stroke);
+  border-radius: var(--radius);
+  background: transparent;
   color: var(--text-dim);
-  padding: 4px 0 2px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.ctl-channel-add:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+/* --- Time card: same strip as a channel so the stack reads as one list ---
+   [Time ………… 14 / 18] on top, [‹][scrubber][›] below. */
+.ctl-time-row {
+  background: rgba(255, 255, 255, 0.035);
+  border-radius: var(--radius);
+  padding: 5px 8px 3px;
+  margin-bottom: 6px;
+}
+
+.ctl-time-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 12px;
+}
+
+.ctl-time-head .ctl-slider-value {
+  flex: 0 0 auto;
+}
+
+.ctl-time-scrub {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-top: 1px;
+}
+
+.ctl-time-step {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ctl-time-step svg {
+  width: 10px;
+  height: 10px;
+  fill: currentColor;
+}
+
+.ctl-time-step.prev svg {
+  transform: scaleX(-1);
+}
+
+.ctl-time-step:hover:not(:disabled) {
+  background: rgba(187, 188, 196, 0.12);
+  color: var(--text);
+}
+
+.ctl-time-step:disabled {
+  opacity: 0.3;
+  cursor: default;
 }
 
 /* A disabled channel dims its identity and level — the toggle stays at full
    strength so the way back is obvious. */
 .ctl-channel-group.off .ctl-channel-name,
+.ctl-channel-group.off .ctl-channel-select,
 .ctl-channel-group.off .ctl-color-swatch,
 .ctl-channel-group.off .ctl-channel-level {
   opacity: 0.4;
@@ -697,6 +809,11 @@
   .ctl-toggle-row,
   .ctl-select-row {
     padding: 8px 0;
+  }
+
+  .ctl-time-step {
+    width: 28px;
+    height: 28px;
   }
 
   .ctl-panel-header {

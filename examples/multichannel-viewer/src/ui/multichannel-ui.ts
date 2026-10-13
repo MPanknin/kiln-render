@@ -23,7 +23,9 @@ import {
 } from "../../../shared/controls/widgets.js";
 import { trackRenderMode } from "../../../shared/analytics.js";
 import { normalizeWindow } from "@kiln/core/config.js";
-import { channelDisplayName, hiddenChannelsNote } from "../../../shared/channel-names.js";
+import { channelDisplayName } from "../../../shared/channel-names.js";
+import { createTimeSlider, createChannelPicker, withSlotSource, firstUnusedSource } from "../../../shared/source-controls.js";
+import type { ApplySelection, TimeSlider } from "../../../shared/source-controls.js";
 
 /** Only 'dvr' | 'mip' | 'slice' are selectable via the Mode segmented control — 'slice-lod' is a debug visualization, relocated to the "LOD Levels" Advanced toggle (applied on top of the base mode). */
 type BaseRenderMode = "dvr" | "mip" | "slice";
@@ -55,7 +57,6 @@ interface ChannelWidgets {
 
 export class MultichannelUI {
   private viewer: KilnViewer;
-  private renderer: Renderer;
   private camera: Camera;
   private stats: StatsPanel;
 
@@ -101,6 +102,9 @@ export class MultichannelUI {
     ReturnType<typeof createSliderToggleRow>,
   ];
   private channelRackEl!: HTMLElement;
+  private timeSlider: TimeSlider | null = null;
+  /** Set by the app: applies a source selection in place or opens the other viewer. */
+  applySelection?: ApplySelection;
   private upAxisSelect!: ReturnType<typeof createSelect>;
   private wireframeToggle!: ReturnType<typeof createToggle>;
   private axesToggle!: ReturnType<typeof createToggle>;
@@ -120,7 +124,6 @@ export class MultichannelUI {
     },
   ) {
     this.viewer = viewer;
-    this.renderer = viewer.renderer;
     this.camera = viewer.camera;
 
     // Sync initial values
@@ -131,7 +134,44 @@ export class MultichannelUI {
     this.params.showAxis = this.renderer.showAxis;
     this.params.renderScale = this.renderer.renderScale;
 
-    // Build per-channel params from renderer state (or URL-restored state)
+    this.syncChannelParams(initialChannels);
+
+    // Controls pane — top-left, below top bar
+    const controlsContainer = document.createElement("div");
+    controlsContainer.style.cssText =
+      "position: fixed; left: 8px; top: 44px; z-index: 1000;";
+    document.body.appendChild(controlsContainer);
+
+    // Stats pane — bottom-left
+    const statsContainer = document.createElement("div");
+    statsContainer.style.cssText =
+      "position: fixed; right: 8px; bottom: calc(36px + env(safe-area-inset-bottom, 0px)); z-index: 1000;";
+    document.body.appendChild(statsContainer);
+    this.stats = new StatsPanel(statsContainer);
+
+    this.buildPanel(controlsContainer);
+    this.initStreaming(viewer.streamingManager, viewer.metadata);
+  }
+
+  /** The viewer's renderer; replaced when the channel count changes, so never cache it. */
+  private get renderer(): Renderer {
+    return this.viewer.renderer;
+  }
+
+  /** Source channels/timepoint changed in place: rebuild the channel rack from the renderer. */
+  onSourceSelectionChanged(): void {
+    this.channelsRestoredFromURL = false;
+    this.channelParams = [];
+    this.channelWidgets = [];
+    this.syncChannelParams();
+    this.buildChannelRack();
+    this.updateVisibility();
+    this.timeSlider?.sync();
+    this.initStreaming(this.viewer.streamingManager, this.viewer.metadata);
+  }
+
+  /** Per-channel params from renderer state (the engine applied metadata defaults) or URL-restored state. */
+  private syncChannelParams(initialChannels?: ChannelState[]): void {
     if (initialChannels && initialChannels.length > 0) {
       this.channelsRestoredFromURL = true;
     }
@@ -162,7 +202,9 @@ export class MultichannelUI {
           b: 255,
         };
         const base = i * 4;
-        const { min, max } = this.metadataWindow(i) ?? { min: 0, max: 1 };
+        const center = this.renderer.channelWindowCenter[i]!;
+        const width = this.renderer.channelWindowWidth[i]!;
+        const [min, max] = [center - width / 2, center + width / 2];
         this.channelParams.push({
           color: {
             r: Math.round(
@@ -180,29 +222,8 @@ export class MultichannelUI {
           visible: (this.renderer.channelColors[base + 3] ?? 1.0) > 0,
           level: { min, max },
         });
-        this.renderer.setChannelWindow(
-          i,
-          (min + max) / 2,
-          Math.max(0.001, max - min),
-        );
       }
     }
-
-    // Controls pane — top-left, below top bar
-    const controlsContainer = document.createElement("div");
-    controlsContainer.style.cssText =
-      "position: fixed; left: 8px; top: 44px; z-index: 1000;";
-    document.body.appendChild(controlsContainer);
-
-    // Stats pane — bottom-left
-    const statsContainer = document.createElement("div");
-    statsContainer.style.cssText =
-      "position: fixed; right: 8px; bottom: calc(36px + env(safe-area-inset-bottom, 0px)); z-index: 1000;";
-    document.body.appendChild(statsContainer);
-    this.stats = new StatsPanel(statsContainer);
-
-    this.buildPanel(controlsContainer);
-    this.initStreaming(viewer.streamingManager, viewer.metadata);
   }
 
   /** Decompose a (possibly debug) renderer mode into { base mode, showLodLevels }. */
@@ -251,6 +272,13 @@ export class MultichannelUI {
       onChange: (v) => this.setBaseMode(v as BaseRenderMode),
     });
     body.appendChild(this.modeControl.el);
+
+    // Time scrubber: mode-independent, directly above the channel rack it changes.
+    this.timeSlider = createTimeSlider(this.viewer.metadata, (timepoint) => {
+      const meta = this.viewer.metadata;
+      this.applySelection?.({ sourceChannels: meta.sourceChannels ?? [0], timepoint });
+    });
+    if (this.timeSlider) body.appendChild(this.timeSlider.el);
 
     this.modeSwap = createSwapRegion();
     body.appendChild(this.modeSwap.el);
@@ -337,10 +365,10 @@ export class MultichannelUI {
 
   private buildChannelRack(): void {
     this.channelRackEl = document.createElement("div");
-    const metaChannels = this.viewer.metadata.channels;
+    const meta = this.viewer.metadata;
     for (let ch = 0; ch < this.renderer.numChannels; ch++) {
       const chParam = this.channelParams[ch]!;
-      const displayName = channelDisplayName(metaChannels?.[ch]?.label, ch);
+      const displayName = channelDisplayName(meta.channels?.[ch]?.label, meta.sourceChannels?.[ch] ?? ch);
 
       const row = document.createElement("div");
       row.className = "ctl-channel-row";
@@ -386,12 +414,18 @@ export class MultichannelUI {
 
       swatch.el.setAttribute("aria-label", `${displayName} colour`);
 
+      // The name doubles as the source-channel picker when the dataset offers a choice.
       // OMERO label when the dataset has one; the full text is in the tooltip
       // because long labels ("Alexa 488 – anti-tubulin") ellipsize in the row.
-      const name = document.createElement("span");
-      name.className = "ctl-channel-name";
-      name.textContent = displayName;
-      name.title = displayName;
+      let name: HTMLElement;
+      if ((meta.sourceChannelCount ?? 1) > 1 && meta.sourceChannels) {
+        name = createChannelPicker(meta, ch, (source) => this.pickSlotSource(ch, source));
+      } else {
+        name = document.createElement("span");
+        name.className = "ctl-channel-name";
+        name.textContent = displayName;
+        name.title = displayName;
+      }
 
       // Identity (swatch + name) reads left-to-right; the visibility toggle
       // right-aligns with every other control in the panel grid.
@@ -427,14 +461,37 @@ export class MultichannelUI {
       this.channelRackEl.appendChild(wrapper);
     }
 
-    // The renderer shows at most 4 channels; say so instead of silently dropping the rest.
-    const note = hiddenChannelsNote(this.renderer.numChannels, this.viewer.metadata.numChannels);
-    if (note) {
-      const noteEl = document.createElement("div");
-      noteEl.className = "ctl-channel-note";
-      noteEl.textContent = note;
-      this.channelRackEl.appendChild(noteEl);
+    // Up to four display slots; offer another while the dataset has channels not yet shown.
+    const unused = firstUnusedSource(meta);
+    if (unused !== null && this.renderer.numChannels < 4) {
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "ctl-channel-add";
+      add.textContent = "+ Add channel";
+      add.addEventListener("click", () => this.changeSelection([...(meta.sourceChannels ?? []), unused]));
+      this.channelRackEl.appendChild(add);
     }
+  }
+
+  /** Assign `source` to a display slot (null removes the slot); a channel shown elsewhere swaps in. */
+  private pickSlotSource(slot: number, source: number | null): void {
+    this.changeSelection(withSlotSource(this.viewer.metadata.sourceChannels ?? [], slot, source));
+  }
+
+  /** Switch channels in place through the app; rebuild the rack whether it succeeded or was refused. */
+  private changeSelection(sourceChannels: number[]): void {
+    const timepoint = this.viewer.metadata.timepoint ?? 0;
+    try {
+      if (this.applySelection?.({ sourceChannels, timepoint }) === false) return; // navigating away
+    } catch (e) {
+      console.warn("[Kiln] channel selection rejected:", e);
+    }
+    this.onSourceSelectionChanged();
+  }
+
+  /** Keyboard stepping through time (no-op without a time axis). */
+  stepTimepoint(delta: number): void {
+    this.timeSlider?.step(delta);
   }
 
   private buildSliceRows(): void {

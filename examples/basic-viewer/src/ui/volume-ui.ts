@@ -30,6 +30,8 @@ import {
 import { percentileWindow, AUTO_CONTRAST_BINS } from '../../../shared/auto-contrast.js';
 import { toRawValue, formatRawValue, isIntegerDtype, type ValueSpace } from '../../../shared/data-values.js';
 import { mountColorbar, type Colorbar } from '../../../shared/colorbar.js';
+import { createTimeSlider, sourceChannelOptions } from '../../../shared/source-controls.js';
+import type { ApplySelection, TimeSlider } from '../../../shared/source-controls.js';
 
 /** Only 'dvr' | 'mip' | 'iso' | 'slice' are selectable via the Mode segmented control — 'lod'/'slice-lod' are debug visualizations, relocated to the "LOD Levels" Advanced toggle (applied on top of the base mode). */
 type BaseRenderMode = 'dvr' | 'mip' | 'iso' | 'slice';
@@ -38,7 +40,6 @@ export class VolumeUI {
   private viewer: KilnViewer;
   private stats: StatsPanel;
   private colorbar: Colorbar;
-  private renderer: Renderer;
   private camera: Camera;
   private transferFunction: TransferFunction;
   private metadata: VolumeMetadata | null = null;
@@ -96,10 +97,13 @@ export class VolumeUI {
   private lodLevelsToggle!: ReturnType<typeof createToggle>;
   private tfPresetEl!: HTMLElement;
   private tfCanvasContainer!: HTMLElement;
+  private sourceChannelSelect: ReturnType<typeof createSelect> | null = null;
+  private timeSlider: TimeSlider | null = null;
+  /** Set by the app: applies a source selection in place or opens the other viewer. */
+  applySelection?: ApplySelection;
 
   constructor(viewer: KilnViewer) {
     this.viewer = viewer;
-    this.renderer = viewer.renderer;
     this.camera = viewer.camera;
     this.transferFunction = viewer.transferFunction;
 
@@ -142,6 +146,52 @@ export class VolumeUI {
     this.updateTFPreview();
     this.updateVisibility();
     this.initStreaming(viewer.streamingManager, viewer.metadata);
+  }
+
+  /** The viewer's renderer; replaced when the channel count changes, so never cache it. */
+  private get renderer(): Renderer {
+    return this.viewer.renderer;
+  }
+
+  /** Source channel/timepoint changed in place: the engine applied the new window; re-read it. */
+  onSourceSelectionChanged(): void {
+    this.autoContrastRow.setDisabled(true);
+    this.contrastHistogram = null;
+    this.syncFromState();
+    this.updateTFPreview();
+    this.sourceChannelSelect?.setValue(String(this.viewer.metadata.sourceChannels?.[0] ?? 0));
+    this.timeSlider?.sync();
+    this.initStreaming(this.viewer.streamingManager, this.viewer.metadata);
+  }
+
+  /** Keyboard stepping through time (no-op without a time axis). */
+  stepTimepoint(delta: number): void {
+    this.timeSlider?.step(delta);
+  }
+
+  /** Source channel picker and time scrubber, for datasets that offer a choice. */
+  private buildSourceRows(body: HTMLElement): void {
+    const meta = this.viewer.metadata;
+    if ((meta.sourceChannelCount ?? 1) > 1 && meta.sourceChannels) {
+      this.sourceChannelSelect = createSelect({
+        label: 'Channel',
+        options: sourceChannelOptions(meta),
+        value: String(meta.sourceChannels[0]),
+        onChange: (v) => {
+          try {
+            if (this.applySelection?.({ sourceChannels: [Number(v)], timepoint: meta.timepoint ?? 0 }) === false) return;
+          } catch (e) {
+            console.warn('[Kiln] channel selection rejected:', e);
+          }
+          this.onSourceSelectionChanged();
+        },
+      });
+      body.appendChild(this.sourceChannelSelect.el);
+    }
+    this.timeSlider = createTimeSlider(meta, (timepoint) => {
+      this.applySelection?.({ sourceChannels: meta.sourceChannels ?? [0], timepoint });
+    });
+    if (this.timeSlider) body.appendChild(this.timeSlider.el);
   }
 
   /** Decompose a (possibly debug) renderer mode into { base mode, showLodLevels }. */
@@ -193,6 +243,9 @@ export class VolumeUI {
       onChange: (v) => this.setBaseMode(v as BaseRenderMode),
     });
     body.appendChild(this.modeControl.el);
+
+    // --- Source rows (channel picker, time scrubber): mode-independent ---
+    this.buildSourceRows(body);
 
     // --- Mode-options swap region (contents depend on base mode) ---
     this.modeSwap = createSwapRegion();

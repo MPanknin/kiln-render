@@ -12,6 +12,8 @@ export interface Shortcut {
 
 function isTypingTarget(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
+  // Sliders are not typing targets: `,` and `.` keep stepping time right after a drag.
+  if (el instanceof HTMLInputElement && el.type === 'range') return false;
   return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
 }
 

@@ -16,6 +16,8 @@ import { LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE } from '../core/config.js';
 import type { DatasetConfig } from '../core/config.js';
 import { writeToCanvas } from '../core/volume.js';
 import { getFloat16ToFloat32Lut } from '../utils/float16.js';
+import { createRawHistogram, accumulateRaw, rebinHistogram } from '../core/histogram.js';
+import type { RawHistogram } from '../core/histogram.js';
 import type { PipelineTimings } from '../data/data-provider.js';
 import { RollingAvg } from '../data/network-tracker.js';
 import { createBrickMilestones, stampBaseCoverage } from '../core/milestones.js';
@@ -118,8 +120,10 @@ export class StreamingManager {
   // Max concurrent requests
   private maxConcurrentRequests = 12;
 
-  // Callback for when base LOD is loaded with brick data
-  private onBaseLodLoaded: ((brickData: (Uint8Array | Uint16Array)[]) => void) | null = null;
+  // Callback for when the base LOD, or a channel filled in later, finished loading
+  private onBaseLodLoaded: (() => void) | null = null;
+  // Per-channel value histograms of the resident base level, for windowing UIs
+  private baseHistograms: (RawHistogram | undefined)[] = [];
 
   // Callback for when base LOD derives float/channel ranges
   private onRangesDerived: ((opts: {
@@ -256,9 +260,26 @@ export class StreamingManager {
     this.loadBaseLod();
   }
 
-  /** Set callback to be invoked when base LOD is loaded with brick data */
-  setBaseLodLoadedCallback(callback: (brickData: (Uint8Array | Uint16Array)[]) => void): void {
+  /** Called when the base LOD has loaded, and again when a channel shown later has filled in. */
+  setBaseLodLoadedCallback(callback: () => void): void {
     this.onBaseLodLoaded = callback;
+  }
+
+  /**
+   * Value distribution of one channel over the loaded base level, in shader space (0–1,
+   * the units of channel windows). Null until the channel's base bricks have loaded.
+   */
+  getChannelHistogram(channel: number, bins = 256): Uint32Array | null {
+    const raw = this.baseHistograms[channel];
+    if (!raw) return null;
+    const m = this.metadata;
+    return rebinHistogram(raw, m.bitDepth, bins, m.isFloat ?? false, m.dataRange?.[0] ?? 0, m.dataRange?.[1] ?? 1,
+      this.resources.canvases[channel]?.format ?? 'r16unorm');
+  }
+
+  private histogramBrick(ch: number, data: Uint8Array | Uint16Array): void {
+    const hist = this.baseHistograms[ch] ??= createRawHistogram(data instanceof Uint8Array);
+    accumulateRaw(hist, data);
   }
 
   /** Set callback for when base LOD derives float/channel ranges */
@@ -357,6 +378,7 @@ export class StreamingManager {
       const cur = this.loadedBricks.get(key);
       if (!cur || cur.slotIndex !== slotIndex || !((this.visibleMask >> ch) & 1)) return; // evicted, replaced or hidden again
       if (!cached) this.brickCache.put(this.cacheKey(ch, key), r.data);
+      if (lod === this.maxLod) this.histogramBrick(ch, r.data);
       this.writeSlotChannel(slotIndex, slot, ch, r.data);
       this.notifyContentChanged();
     };
@@ -367,7 +389,7 @@ export class StreamingManager {
       while ((item = queue.shift()) !== undefined && gen === this.generation) {
         try { await runOne(item); } finally { this.fillPending--; }
       }
-    }));
+    })).then(() => { if (gen === this.generation) this.onBaseLodLoaded?.(); });
   }
 
   /**
@@ -438,6 +460,7 @@ export class StreamingManager {
     const [gridX, gridY, gridZ] = level.brickGrid;
     const numChannels = this.resources.numChannels;
     const loadChannels = this.channelsToLoad();
+    for (const ch of loadChannels) this.baseHistograms[ch] = undefined;
 
     // Build flat list of all brick coords
     const bricks: { bx: number; by: number; bz: number; key: string }[] = [];
@@ -569,6 +592,7 @@ export class StreamingManager {
       if (stale() || !r) return;
       if (this.milestones.firstBrickDecoded === null) this.milestones.firstBrickDecoded = performance.now();
       accumulateStats(ch, r);
+      this.histogramBrick(ch, r.data);
       if (ch === 0) allBrickData.push(r.data);
       this.brickCache.put(this.cacheKey(ch, key), r.data);
 
@@ -714,9 +738,7 @@ export class StreamingManager {
       this.onRangesDerived(derivedRanges);
     }
 
-    if (allBrickData.length > 0 && this.onBaseLodLoaded) {
-      this.onBaseLodLoaded(allBrickData);
-    }
+    this.onBaseLodLoaded?.();
   }
 
   /**
@@ -821,6 +843,7 @@ export class StreamingManager {
     this.loadedBricks.clear();
     this.pinnedBricks.clear();
     this.brickCache.clear();
+    this.baseHistograms = [];
     this.resources.indirection.clearAll();
 
     // Reload base LOD
@@ -837,6 +860,7 @@ export class StreamingManager {
   reload(changedChannels: number): void {
     if (this.disposed || !changedChannels) return;
     this.stopStreaming();
+    this.baseHistograms = this.baseHistograms.map((h, ch) => (changedChannels >> ch) & 1 ? undefined : h);
 
     this.resources.indirection.clearAll();
     for (const [key, entry] of this.loadedBricks) {

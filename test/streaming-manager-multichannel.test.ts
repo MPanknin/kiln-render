@@ -269,3 +269,32 @@ describe('StreamingManager — multi-channel base LOD loading', () => {
     expect(resources.allocator.allocate).not.toHaveBeenCalled();
   });
 });
+
+describe('StreamingManager — base-level histograms', () => {
+  it('exposes a per-channel histogram once the base LOD has loaded', async () => {
+    const provider = makeProvider(2);
+    const brick = new Uint8Array(66 * 66 * 66).fill(200);
+    (provider.loadBrick as ReturnType<typeof vi.fn>).mockResolvedValue({ data: brick, min: 200, max: 200, avg: 200 });
+    const loaded = vi.fn();
+
+    const sm = new StreamingManager(
+      makeResources(2) as any,
+      provider,
+      makeMetadata(2),
+      {} as GPUDevice,
+      makeConfig() as any,
+      vi.fn(),
+    );
+    expect(sm.getChannelHistogram(0)).toBeNull();
+    sm.setBaseLodLoadedCallback(loaded);
+
+    await vi.waitFor(() => { expect(loaded).toHaveBeenCalled(); });
+
+    for (const ch of [0, 1]) {
+      const h = sm.getChannelHistogram(ch, 256)!;
+      expect(h[200]).toBe(brick.length);
+      expect(h.reduce((a, b) => a + b, 0)).toBe(brick.length);
+    }
+    expect(sm.getChannelHistogram(2)).toBeNull();
+  });
+});

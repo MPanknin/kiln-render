@@ -159,6 +159,7 @@ async function main() {
   mountShortcuts([
     { keys: ['1', '2', '3'], display: '1 – 3', label: 'DVR / MIP / Slice',
       run: (e) => ui.setBaseMode((['dvr', 'mip', 'slice'] as const)[Number(e.key) - 1]!) },
+    { keys: ['a', 'A'], display: 'A', label: 'Auto contrast (visible channels)', run: () => ui.autoContrast() },
     axisSnapShortcut((dir) => gizmo.snap(dir)),
     { keys: ['r', 'R'], display: 'R', label: 'Reset view', run: () => gizmo.reset() },
     { keys: ['s', 'S'], display: 'S', label: 'Save screenshot', run: takeScreenshot },

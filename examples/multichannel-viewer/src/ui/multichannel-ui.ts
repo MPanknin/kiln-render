@@ -24,6 +24,8 @@ import {
 import { trackRenderMode } from "../../../shared/analytics.js";
 import { normalizeWindow } from "@kiln/core/config.js";
 import { channelDisplayName } from "../../../shared/channel-names.js";
+import { percentileWindow, windowDomain, AUTO_CONTRAST_BINS } from "../../../shared/auto-contrast.js";
+import { toRawValue, formatRawValue, isIntegerDtype, type ValueSpace } from "../../../shared/data-values.js";
 import { createTimeSlider, createChannelPicker, withSlotSource, firstUnusedSource } from "../../../shared/source-controls.js";
 import type { ApplySelection, TimeSlider } from "../../../shared/source-controls.js";
 
@@ -52,6 +54,7 @@ interface ChannelWidgets {
   toggle: ReturnType<typeof createToggle>;
   swatch: ReturnType<typeof createColorSwatch>;
   level: ReturnType<typeof createRangeSlider>;
+  auto: HTMLButtonElement;
   row: HTMLElement;
 }
 
@@ -82,6 +85,8 @@ export class MultichannelUI {
     level: { min: number; max: number };
   }> = [];
   private channelWidgets: ChannelWidgets[] = [];
+  /** Base-level value histograms per slot (shader space); null until that channel has loaded. */
+  private contrastHistograms: (Uint32Array | null)[] = [];
 
   private initialSlice?: {
     x: number;
@@ -163,6 +168,7 @@ export class MultichannelUI {
     this.channelsRestoredFromURL = false;
     this.channelParams = [];
     this.channelWidgets = [];
+    this.contrastHistograms = [];
     this.syncChannelParams();
     this.buildChannelRack();
     this.updateVisibility();
@@ -435,6 +441,7 @@ export class MultichannelUI {
 
       // No per-channel "Level" label — the strip layout makes it obvious, and
       // repeating the word four times was pure noise.
+      // Raw data values on the label; the range is fitted to the data in applyDomain.
       const level = createRangeSlider({
         label: "",
         min: 0,
@@ -442,22 +449,25 @@ export class MultichannelUI {
         step: 0.01,
         valueMin: chParam.level.min,
         valueMax: chParam.level.max,
-        onChange: (min, max) => {
-          chParam.level.min = min;
-          chParam.level.max = max;
-          this.renderer.setChannelWindow(
-            ch,
-            (min + max) / 2,
-            Math.max(0.001, max - min),
-          );
-        },
+        format: (v) => this.formatRaw(v),
+        onChange: (min, max) => this.setWindow(ch, min, max),
       });
       level.el.classList.add("ctl-channel-level");
+
+      const auto = document.createElement("button");
+      auto.type = "button";
+      auto.className = "ctl-button ctl-button-compact";
+      auto.textContent = "Auto";
+      auto.title = `Fit the ${displayName} window to its data (A fits all)`;
+      auto.disabled = !this.contrastHistograms[ch];
+      auto.addEventListener("click", () => this.autoContrast(ch));
+      level.el.appendChild(auto);
 
       wrapper.appendChild(row);
       wrapper.appendChild(level.el);
 
-      this.channelWidgets.push({ toggle, swatch, level, row: wrapper });
+      this.channelWidgets.push({ toggle, swatch, level, auto, row: wrapper });
+      this.applyDomain(ch);
       this.channelRackEl.appendChild(wrapper);
     }
 
@@ -573,7 +583,61 @@ export class MultichannelUI {
     this.stats.setDatasetInfo(metadata, this.renderer.canvas.format, {
       fileSizeChannelMultiplier: metadata.numChannels,
     });
+    manager.setBaseLodLoadedCallback(() => this.onBaseLodLoaded());
     this.stats.bindStreaming(manager, () => this.viewer.milestones);
+  }
+
+  /** Base level (re)loaded: per-channel histograms for Auto contrast and the slider ranges. */
+  private onBaseLodLoaded(): void {
+    const sm = this.viewer.streamingManager;
+    for (let ch = 0; ch < this.channelParams.length; ch++) {
+      this.contrastHistograms[ch] = sm.getChannelHistogram(ch, AUTO_CONTRAST_BINS);
+      const w = this.channelWidgets[ch];
+      if (w) w.auto.disabled = !this.contrastHistograms[ch];
+      this.applyDomain(ch);
+    }
+  }
+
+  /** The level slider spans the channel's data (or sits just above its window until it has loaded). */
+  private applyDomain(ch: number): void {
+    const widgets = this.channelWidgets[ch];
+    const params = this.channelParams[ch];
+    if (!widgets || !params) return;
+    const d = windowDomain(this.contrastHistograms[ch] ?? null, params.level.max, this.valueSpace());
+    widgets.level.setRange(0, d.max, d.step);
+  }
+
+  /** Fit a channel's window to its base-level values; all visible channels when none is given. */
+  autoContrast(channel?: number): void {
+    const channels = channel === undefined
+      ? this.channelParams.map((_, i) => i).filter((i) => this.channelParams[i]!.visible)
+      : [channel];
+    for (const ch of channels) {
+      const h = this.contrastHistograms[ch];
+      const w = h && percentileWindow(h);
+      if (!w) continue;
+      this.setWindow(ch, w.center - w.width / 2, w.center + w.width / 2);
+      this.channelWidgets[ch]?.level.setValue(this.channelParams[ch]!.level.min, this.channelParams[ch]!.level.max);
+      this.applyDomain(ch);
+    }
+  }
+
+  private setWindow(ch: number, min: number, max: number): void {
+    const params = this.channelParams[ch]!;
+    params.level.min = min;
+    params.level.max = max;
+    this.renderer.setChannelWindow(ch, (min + max) / 2, Math.max(0.001, max - min));
+  }
+
+  private valueSpace(): ValueSpace {
+    const m = this.viewer.metadata;
+    return { isFloat: m.isFloat ?? false, integer: isIntegerDtype(m.dtype), bitDepth: m.bitDepth, floatMin: this.renderer.floatMin, floatMax: this.renderer.floatMax };
+  }
+
+  /** Normalized (shader) value → raw data value text. */
+  private formatRaw(n: number): string {
+    const space = this.valueSpace();
+    return formatRawValue(toRawValue(n, space), space);
   }
 
   /**
@@ -590,15 +654,9 @@ export class MultichannelUI {
     for (let i = 0; i < this.channelParams.length; i++) {
       const w = this.metadataWindow(i);
       if (!w) continue;
-      const { min, max } = w;
-      this.channelParams[i]!.level.min = min;
-      this.channelParams[i]!.level.max = max;
-      this.renderer.setChannelWindow(
-        i,
-        (min + max) / 2,
-        Math.max(0.001, max - min),
-      );
-      this.channelWidgets[i]?.level.setValue(min, max);
+      this.setWindow(i, w.min, w.max);
+      this.channelWidgets[i]?.level.setValue(w.min, w.max);
+      this.applyDomain(i);
     }
   }
 

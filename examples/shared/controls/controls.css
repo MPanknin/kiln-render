@@ -850,3 +850,15 @@
   color: var(--text-dim);
   cursor: default;
 }
+
+/* Compact action inside a slider row (per-channel Auto contrast) */
+.ctl-button-compact {
+  flex: 0 0 auto;
+  font-size: 10px;
+  padding: 2px 6px;
+}
+
+/* Raw data values ("120–1480") need more room than the old 0.00–0.03 */
+.ctl-channel-level .ctl-slider-value {
+  flex-basis: 74px;
+}

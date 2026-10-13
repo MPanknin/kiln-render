@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 - OME-Zarr with x, y, z axis order and Zarr URLs without `.zarr`, so public [webKnossos](https://webknossos.org) datasets open directly.
+- Auto contrast per channel in the multichannel viewer (an **Auto** button on each channel, `A` fits all visible channels).
+- `StreamingManager.getChannelHistogram(channel, bins)`: the value distribution of a channel over the loaded base level.
+
+### Changed
+- Window, width, ISO and channel level sliders span the data's value range instead of the whole data type range, and label raw values. 12-bit microscopy stored as `uint16` used to live in the first two slider steps.
+- `StreamingManager.setBaseLodLoadedCallback` no longer passes brick data to the callback, and also fires when a channel shown later has filled in.
 
 ## [0.5.0] - 2026-09-28
 

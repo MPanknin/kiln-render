@@ -11,7 +11,6 @@ import type { Renderer, VolumeRenderMode } from '@kiln/core/renderer.js';
 import type { Camera, UpAxis } from '@kiln/core/camera.js';
 import type { StreamingManager } from '@kiln/streaming/streaming-manager.js';
 import type { VolumeMetadata } from '@kiln/data/data-provider.js';
-import { computeHistogram } from '@kiln/core/histogram.js';
 import type { KilnViewer } from 'kiln-render';
 import { StatsPanel } from '../../../shared/stats-panel.js';
 import { trackRenderMode } from '../../../shared/analytics.js';
@@ -27,7 +26,7 @@ import {
   createSliderToggleRow,
   createButtonRow,
 } from '../../../shared/controls/widgets.js';
-import { percentileWindow, AUTO_CONTRAST_BINS } from '../../../shared/auto-contrast.js';
+import { percentileWindow, windowDomain, AUTO_CONTRAST_BINS } from '../../../shared/auto-contrast.js';
 import { toRawValue, formatRawValue, isIntegerDtype, type ValueSpace } from '../../../shared/data-values.js';
 import { mountColorbar, type Colorbar } from '../../../shared/colorbar.js';
 import { createTimeSlider, sourceChannelOptions } from '../../../shared/source-controls.js';
@@ -42,7 +41,6 @@ export class VolumeUI {
   private colorbar: Colorbar;
   private camera: Camera;
   private transferFunction: TransferFunction;
-  private metadata: VolumeMetadata | null = null;
 
   private tfCanvas: HTMLCanvasElement;
   private isDraggingPoint = false;
@@ -453,13 +451,9 @@ export class VolumeUI {
   }
 
   private initStreaming(manager: StreamingManager, metadata: VolumeMetadata): void {
-    this.metadata = metadata;
     this.stats.setDatasetInfo(metadata, this.renderer.canvas.format, { includeCodec: true });
 
-    // Set up histogram computation when base LOD is loaded
-    manager.setBaseLodLoadedCallback((brickData) => {
-      this.onBaseLodLoaded(brickData);
-    });
+    manager.setBaseLodLoadedCallback(() => this.onBaseLodLoaded());
 
     this.stats.bindStreaming(manager, () => this.viewer.milestones);
   }
@@ -595,29 +589,33 @@ export class VolumeUI {
     this.isoValueSlider.setValue(this.renderer.isoValue);
     this.windowCenterSlider.setValue(this.renderer.windowCenter);
     this.windowWidthSlider.setValue(this.renderer.windowWidth);
+    this.applyValueDomain();
     this.updateColorbar();
+  }
+
+  /** Center, Width and ISO sliders span the data's values, not the whole dtype range. */
+  private applyValueDomain(): void {
+    const r = this.renderer;
+    const atLeast = Math.max(r.windowCenter + r.windowWidth / 2, r.isoValue);
+    const d = windowDomain(this.contrastHistogram, atLeast, this.valueSpace());
+    this.windowCenterSlider.setRange(0, d.max, d.step);
+    this.windowWidthSlider.setRange(d.step, d.max, d.step);
+    this.isoValueSlider.setRange(0, d.max, d.step);
   }
 
   refreshTFPreview(): void {
     this.updateTFPreview();
   }
 
-  /** Called when base LOD is loaded - computes and displays histogram */
-  private onBaseLodLoaded(brickData: (Uint8Array | Uint16Array)[]): void {
-    if (!this.metadata) return;
-
-    const histogramOf = (bins: number) => computeHistogram(
-      brickData,
-      this.metadata!.bitDepth,
-      bins,
-      this.metadata!.isFloat ?? false,
-      this.metadata!.dataRange?.[0] ?? 0,
-      this.metadata!.dataRange?.[1] ?? 1,
-      this.renderer.canvas.format,
-    );
-    this.transferFunction.setHistogram(histogramOf(256));
-    this.contrastHistogram = histogramOf(AUTO_CONTRAST_BINS);
-    this.autoContrastRow.setDisabled(false);
+  /** Base level loaded: histogram for the TF editor, Auto contrast and the slider ranges. */
+  private onBaseLodLoaded(): void {
+    const sm = this.viewer.streamingManager;
+    const tfHistogram = sm.getChannelHistogram(0, 256);
+    if (!tfHistogram) return;
+    this.transferFunction.setHistogram(tfHistogram);
+    this.contrastHistogram = sm.getChannelHistogram(0, AUTO_CONTRAST_BINS);
+    this.autoContrastRow.setDisabled(!this.contrastHistogram);
+    this.applyValueDomain();
     this.updateTFPreview();
   }
 
@@ -629,6 +627,7 @@ export class VolumeUI {
     this.renderer.windowWidth = w.width;
     this.windowCenterSlider.setValue(w.center);
     this.windowWidthSlider.setValue(w.width);
+    this.applyValueDomain();
     this.updateTFPreview();
   }
 
@@ -672,6 +671,7 @@ export class VolumeUI {
     this.sliceRows[2].setValue(this.params.sliceZ); this.sliceRows[2].setChecked(this.params.showSliceZ);
     this.wireframeToggle.setValue(this.params.showWireframe);
     this.axesToggle.setValue(this.params.showAxis);
+    this.applyValueDomain();
 
     this.updateVisibility();
     this.updateTFPreview();

@@ -164,9 +164,10 @@ export function createSlider(opts: {
   value: number;
   format?: (v: number) => string;
   onChange: (v: number) => void;
-}): { el: HTMLElement; setValue(v: number): void } {
+}): { el: HTMLElement; setValue(v: number): void; setRange(min: number, max: number, step: number): void } {
   const format = opts.format ?? ((v: number) => v.toFixed(2));
-  const pct = (v: number) => ((v - opts.min) / (opts.max - opts.min)) * 100;
+  let { min, max } = opts;
+  const pct = (v: number) => ((v - min) / (max - min)) * 100;
 
   const el = document.createElement("div");
   el.className = "ctl-slider-row";
@@ -218,6 +219,16 @@ export function createSlider(opts: {
       input.value = String(v);
       value.textContent = format(v);
     },
+    // The value is kept; callers pick a range that contains it.
+    setRange(lo: number, hi: number, step: number) {
+      const v = Number(input.value);
+      min = lo; max = hi;
+      input.min = String(lo);
+      input.max = String(hi);
+      input.step = String(step);
+      input.value = String(v);
+      setFill(v);
+    },
   };
 }
 
@@ -236,9 +247,10 @@ export function createRangeSlider(opts: {
   valueMax: number;
   format?: (v: number) => string;
   onChange: (min: number, max: number) => void;
-}): { el: HTMLElement; setValue(min: number, max: number): void } {
+}): { el: HTMLElement; setValue(min: number, max: number): void; setRange(min: number, max: number, step: number): void } {
   const format = opts.format ?? ((v: number) => v.toFixed(2));
-  const pct = (v: number) => ((v - opts.min) / (opts.max - opts.min)) * 100;
+  let { min: rangeMin, max: rangeMax } = opts;
+  const pct = (v: number) => ((v - rangeMin) / (rangeMax - rangeMin)) * 100;
 
   const el = document.createElement("div");
   el.className = "ctl-slider-row";
@@ -310,6 +322,19 @@ export function createRangeSlider(opts: {
       maxInput.value = String(max);
       value.textContent = `${format(min)}–${format(max)}`;
       setFill(min, max);
+    },
+    // Values are kept; callers pick a range that contains them.
+    setRange(lo: number, hi: number, step: number) {
+      const [vMin, vMax] = [Number(minInput.value), Number(maxInput.value)];
+      rangeMin = lo; rangeMax = hi;
+      for (const input of [minInput, maxInput]) {
+        input.min = String(lo);
+        input.max = String(hi);
+        input.step = String(step);
+      }
+      minInput.value = String(vMin);
+      maxInput.value = String(vMax);
+      setFill(vMin, vMax);
     },
   };
 }

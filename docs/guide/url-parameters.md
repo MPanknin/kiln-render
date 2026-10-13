@@ -32,3 +32,19 @@ Control rendering settings via URL parameters to share or bookmark specific view
 The **Share** button (top-right of the demo) copies the current view as a URL with all parameters filled in.
 
 > Multichannel datasets use a different set of URL parameters (per-channel colour, windowing, and visibility). See [Multichannel → URL parameters](/rendering/multichannel#url-parameters).
+
+## Source selection (OME-Zarr)
+
+Both viewers accept `sourceChannels` (1–4 distinct, comma-separated **zero-based**
+source indices) and `timepoint` (one **zero-based** time index). For example,
+`?dataset=...&sourceChannels=5,1&timepoint=3` opens source channels 6 and 2 at the
+fourth timepoint. Use the multichannel viewer when selecting multiple channels.
+These parameters are independent of `channels`, which controls channel display styles.
+Without them, the first four available channels and timepoint zero are used.
+
+In the viewer, channel names in the Controls panel are pickers for the source channel,
+and datasets with a time axis get a **Time** card (scrubber, step buttons, `,` / `.`).
+Every change switches the volume in place: camera, display settings and already loaded
+channels are kept, and only new data streams. Choosing one channel in the multichannel
+viewer (or several in the single-channel viewer) opens the other viewer. The UI counts
+timepoints from one; share links retain zero-based indices.

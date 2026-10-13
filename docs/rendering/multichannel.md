@@ -18,11 +18,54 @@ Multichannel:     per-channel intensity × per-channel colour → additive blend
 Multichannel rendering works with OME-Zarr datasets that have a channel (`c`) axis:
 
 - **OME-NGFF v0.4 and v0.5**
-- **Up to 4 channels** (datasets with more channels will use the first 4)
+- **Any 1–4 source channels** (defaults to the first four; pick others from the channel names in the Controls panel)
 - **Supported dtypes:** `uint8`, `uint16`, `int16`, `float32`
 - OMERO metadata is used for per-channel window auto-leveling when available
 
 The Kiln sharded binary format is single-channel only.
+
+## Source channels and timepoints
+
+Each channel's name in the Controls panel is a picker: choose any source channel for
+that display slot, or **Remove from view**. Picking a channel that is already shown
+swaps the two slots. **+ Add channel** appears below the rack while fewer than four
+slots are used and the dataset has channels not yet shown. Datasets with a time axis
+get a **Time** card above the rack: drag the scrubber, click the step buttons, or press
+`,` and `.` (Shift: ±10). Timepoints are numbered from **1** in the UI; API and URL
+indices start at **0**. Channel labels come from OMERO metadata when present.
+
+Every change switches in place: the dataset is not reopened, workers and their
+chunk caches stay, and the camera and render settings are kept. The previous picture
+stays on screen at base resolution while the new bricks land and detail re-streams.
+Channels that remain selected are served from the brick and chunk caches instead of
+being downloaded again, and the CPU brick cache is keyed by source channel and timepoint,
+so returning to a timepoint you have already seen is cheap. Time-only changes
+preserve display settings; a slot whose channel changed takes that channel's OMERO
+colour, window and visibility. Choosing one channel in the multichannel viewer (or
+several in the single-channel viewer) opens the other viewer, whose controls match
+that shader. This version does not animate or prefetch timepoints.
+
+```typescript
+const viewer = await KilnViewer.create(canvas, url, {
+  sourceChannels: [5, 1], // source channels 6 and 2, in that display order
+  timepoint: 3,          // fourth timepoint
+});
+// Renderer channel indices remain slots: setChannelColor(0, ...) affects source channel 6.
+console.log(viewer.metadata.sourceChannelCount, viewer.metadata.timepointCount);
+viewer.setSourceSelection({ sourceChannels: [5, 1], timepoint: 4 }); // next timepoint, same slots
+console.log(viewer.getState().sourceChannels, viewer.getState().timepoint);
+```
+
+`setSourceSelection` is synchronous and validates first: an invalid selection throws
+and changes nothing. A different channel count rebuilds the atlas and renderer on the
+same device, so read `viewer.renderer` and `viewer.streamingManager` per use rather
+than caching them. Local Zarr uses the same options. Custom providers may implement
+`setSourceSelection`; providers without it (including Kiln sharded binary) reject
+explicit selections. Invalid, duplicate or out-of-range indices fail explicitly. Time
+and channel axis sizes must match across pyramid levels.
+
+Share links preserve `sourceChannels=5,1&timepoint=3`. The existing `channels` URL
+parameter continues to describe display colours, visibility and windows.
 
 ## Per-channel controls
 

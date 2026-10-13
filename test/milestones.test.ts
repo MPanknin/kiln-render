@@ -33,8 +33,8 @@ describe('stampBaseCoverage', () => {
 function makeEngine() {
   const engine: any = Object.create(KilnEngine.prototype);
   engine.disposed = false;
-  engine.renderer = { render: vi.fn() };
-  engine.streamingManager = { milestones: createBrickMilestones() };
+  engine._renderer = { render: vi.fn() };
+  engine._streamingManager = { milestones: createBrickMilestones() };
   engine.setupMilestones = { datasetOpenStart: 1, deviceReady: null, metadataReady: 2, gpuReady: 3 };
   engine.firstContentSubmit = null;
   engine.firstContentFrame = null;

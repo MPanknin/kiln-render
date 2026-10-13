@@ -5,6 +5,14 @@
 
 import type { PyramidLevel, PyramidPolicy } from '../core/pyramid.js';
 
+/** Immutable source selection. Indices are zero-based; channel order defines GPU slots. */
+export interface SourceSelection {
+  /** One to four distinct source channel indices. Default: first four available. */
+  sourceChannels?: readonly number[];
+  /** Source time index. Default: 0. */
+  timepoint?: number;
+}
+
 /** Bit depth for volume data */
 export type BitDepth = 8 | 16;
 
@@ -86,6 +94,15 @@ export interface VolumeMetadata {
   channels?: Array<{ label?: string; color?: [number, number, number]; active: boolean }>;
   /** Number of channels in the volume (1 for single-channel, N for multi-channel) */
   numChannels: number;
+  /** Full source channel count, before selection (OME-Zarr). */
+  sourceChannelCount?: number;
+  /** Full source channel display hints, before selection (OME-Zarr). */
+  sourceChannelMetadata?: VolumeMetadata['channels'];
+  /** Source channel index for each rendered slot. */
+  sourceChannels?: number[];
+  /** Number of source timepoints and selected zero-based time index (OME-Zarr). */
+  timepointCount?: number;
+  timepoint?: number;
   /**
    * Raw-value path: voxels are stored as float16 raw values and normalised by dataRange in the
    * shader. True for float32/float64 and int16 sources; false for uint8/uint16, which are stored
@@ -144,6 +161,10 @@ export class UnsupportedDatasetError extends Error {
 
 /** Abstract interface for volume data providers. */
 export interface DataProvider {
+  /** Select source channels/timepoint. Before initialize() it shapes the metadata; afterwards it
+   *  switches the live metadata in place (the caller re-streams). Omit when unsupported. */
+  setSourceSelection?(selection: SourceSelection): void;
+
   /**
    * Select the level model before initialize(); it shapes level geometry and worker
    * mappings. Providers without a pyramid may omit it (they are legacy-only).

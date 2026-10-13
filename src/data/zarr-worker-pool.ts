@@ -237,7 +237,7 @@ export class ZarrWorkerPool {
   }
 
   /** Load a 66³ brick, routed to a worker by spatial+channel footprint. Supports AbortSignal cancellation. */
-  loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0, signal?: AbortSignal): Promise<BrickResult> {
+  loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0, signal?: AbortSignal, timepoint?: number): Promise<BrickResult> {
     return new Promise((resolve, reject) => {
       const id = this.requestId++;
       let workerIdx = this.workerIndexFor(lod, bx, by, bz, channelIndex);
@@ -252,7 +252,7 @@ export class ZarrWorkerPool {
 
       // Date.now(), not performance.now() — the worker diffs this against its
       // own clock, and only Date.now() shares an epoch across the worker boundary.
-      const req: ZarrWorkerRequest = { type: 'loadBrick', id, lod, bx, by, bz, channelIndex, dispatchTime: Date.now() };
+      const req: ZarrWorkerRequest = { type: 'loadBrick', id, lod, bx, by, bz, channelIndex, timepoint, dispatchTime: Date.now() };
       worker.postMessage(req);
 
       if (signal) {

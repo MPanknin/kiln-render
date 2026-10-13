@@ -100,7 +100,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     }
 
     try {
-      const result = await this.assembleBrick(lod, bx, by, bz, channelIndex);
+      const result = await this.assembleBrick(lod, bx, by, bz, this.sourceChannelFor(channelIndex));
 
       // Cache stats and track bytes
       this.cacheBrickStats(lod, bx, by, bz, result.stats);
@@ -134,7 +134,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
   private async assembleBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0): Promise<{ data: BrickData; stats: BrickStats; rawMin?: number; rawMax?: number }> {
     const arr = this.arrays[lod]!;
     const params = this.lodParams[lod]!;
-    const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx, channelChunkSize, spatialOrder } = params;
+    const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx, channelChunkSize, spatialOrder, timeAxisIdx, timeChunkSize, timepoint } = params;
     const physSize = this.metadata!.physicalBrickSize;
     const logicalSize = this.metadata!.brickSize;
 
@@ -170,11 +170,11 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
       for (let cy = minCy; cy <= maxCy; cy++) {
         for (let cx = minCx; cx <= maxCx; cx++) {
           const fi = (cz - minCz) * ncy * ncx + (cy - minCy) * ncx + (cx - minCx);
-          const coords = chunkCoords(shapePrefixLength, channelAxisIdx, channelChunkSize, channelIndex, cz, cy, cx, spatialOrder);
+          const coords = chunkCoords(shapePrefixLength, channelAxisIdx, channelChunkSize, channelIndex, cz, cy, cx, spatialOrder, timeAxisIdx, timeChunkSize, timepoint);
           chunkFetches.push(
             arr.getChunk(coords).then(chunk => {
               chunkDataArr[fi] = chunk.data as unknown as ArrayLike<number>;
-              const layout = chunkLayout(chunk, channelAxisIdx, channelChunkSize, channelIndex, spatialOrder);
+              const layout = chunkLayout(chunk, channelAxisIdx, channelChunkSize, channelIndex, spatialOrder, timeAxisIdx, timeChunkSize, timepoint);
               chunkBase[fi] = layout.base;
               chunkStX[fi] = layout.strideX;
               chunkStY[fi] = layout.strideY;

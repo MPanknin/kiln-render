@@ -188,7 +188,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
     }
 
     try {
-      const result = await this.workerPool!.loadBrick(lod, bx, by, bz, channelIndex, signal);
+      const result = await this.workerPool!.loadBrick(lod, bx, by, bz, this.sourceChannelFor(channelIndex), signal, meta.timepoint);
 
       // Cache stats for isBrickEmpty checks
       this.cacheBrickStats(lod, bx, by, bz, {

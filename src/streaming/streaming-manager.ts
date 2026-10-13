@@ -280,6 +280,12 @@ export class StreamingManager {
     return brick;
   }
 
+  /** CPU cache key by source identity (channel + timepoint), so slots can be remapped
+   *  and timepoints revisited without re-downloading. */
+  private cacheKey(ch: number, key: string): string {
+    return `c${this.metadata.sourceChannels?.[ch] ?? ch}@${this.metadata.timepoint ?? 0}:${key}`;
+  }
+
   /** Channels to fetch for a brick: the visible ones (never empty). */
   private channelsToLoad(): number[] {
     const n = this.resources.numChannels;
@@ -345,12 +351,12 @@ export class StreamingManager {
       const m = /^lod(\d+):(\d+)\/(\d+)\/(\d+)$/.exec(key);
       if (!m) return;
       const [lod, bz, by, bx] = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])];
-      const cached = this.brickCache.get(`ch${ch}:${key}`);
+      const cached = this.brickCache.get(this.cacheKey(ch, key));
       const r = cached ? { data: cached } : await this.dataProvider.loadBrick(lod, bx, by, bz, ch, signal);
       if (gen !== this.generation || !r) return;
       const cur = this.loadedBricks.get(key);
       if (!cur || cur.slotIndex !== slotIndex || !((this.visibleMask >> ch) & 1)) return; // evicted, replaced or hidden again
-      if (!cached) this.brickCache.put(`ch${ch}:${key}`, r.data);
+      if (!cached) this.brickCache.put(this.cacheKey(ch, key), r.data);
       this.writeSlotChannel(slotIndex, slot, ch, r.data);
       this.notifyContentChanged();
     };
@@ -463,7 +469,7 @@ export class StreamingManager {
 
     const allBrickData: (Uint8Array | Uint16Array)[] = [];
     const resolved = new Set<string>(); // bricks that reached resident or empty
-    let sumIsEmptyMs = 0, sumFetchMs = 0, sumUploadMs = 0, brickCount = 0;
+    let sumIsEmptyMs = 0, sumFetchMs = 0, sumUploadMs = 0;
 
     // Range accumulators — derive float data range and per-channel
     // min/max incrementally from BrickLoadResult stats during base LOD loading.
@@ -494,6 +500,15 @@ export class StreamingManager {
     const uploadChannel = (slot: AllocationResult, ch: number, data: Uint8Array | Uint16Array | null) =>
       this.writeSlotChannel(slot.slotIndex, slot.slot, ch, data);
 
+    // First visible content: present it now rather than after the
+    // accumulation-reset debounce (~100 ms) that coalesces later commits.
+    const stampFirstCommit = () => {
+      if (this.milestones.firstAtlasCommit !== null) return;
+      this.milestones.firstAtlasCommit = performance.now();
+      this.notifyContentChanged();
+      this.flushAccumulationReset();
+    };
+
     // Point the indirection table at the slot and pin it; first commit stamps the milestone.
     const registerSlot = (slot: AllocationResult, bx: number, by: number, bz: number, key: string) => {
       this.resources.indirection.setBrick(bx, by, bz, slot.slot.x, slot.slot.y, slot.slot.z, maxLod);
@@ -501,14 +516,7 @@ export class StreamingManager {
       this.resources.allocator.pin(slot.slotIndex);
       this.loadedBricks.set(key, { slot: slot.slot, slotIndex: slot.slotIndex });
       this.pinnedBricks.add(key);
-      brickCount++;
-      if (this.milestones.firstAtlasCommit === null) {
-        this.milestones.firstAtlasCommit = performance.now();
-        // First visible content: present it now rather than after the
-        // accumulation-reset debounce (~100 ms) that coalesces later commits.
-        this.notifyContentChanged();
-        this.flushAccumulationReset();
-      }
+      stampFirstCommit();
     };
 
     // A brick has settled once every channel task finished (loaded, empty or failed).
@@ -528,7 +536,13 @@ export class StreamingManager {
     let ch0Settled = 0;
     const stateFor = (key: string) => {
       let st = states.get(key);
-      if (!st) { st = { slot: null, settled: 0, empty: null, allocFailed: false }; states.set(key, st); }
+      if (!st) {
+        // A reload keeps the previous selection's base brick on screen and overwrites it in place.
+        const resident = this.loadedBricks.get(key);
+        const slot = resident ? { slot: resident.slot, slotIndex: resident.slotIndex, evicted: null } : null;
+        st = { slot, settled: 0, empty: null, allocFailed: false };
+        states.set(key, st);
+      }
       return st;
     };
 
@@ -541,6 +555,8 @@ export class StreamingManager {
         sumIsEmptyMs += performance.now() - tIsEmpty;
         if (stale()) return;
         if (st.empty) {
+          if (st.slot) this.releaseResident(key, st.slot.slot); // held the old selection's data
+          st.slot = null;
           this.emptyBricks.add(key);
           this.resources.indirection.setEmpty(bx, by, bz, maxLod);
         }
@@ -554,7 +570,7 @@ export class StreamingManager {
       if (this.milestones.firstBrickDecoded === null) this.milestones.firstBrickDecoded = performance.now();
       accumulateStats(ch, r);
       if (ch === 0) allBrickData.push(r.data);
-      this.brickCache.put(`ch${ch}:${key}`, r.data);
+      this.brickCache.put(this.cacheKey(ch, key), r.data);
 
       const tUpload = performance.now();
       if (!st.slot) {
@@ -569,6 +585,7 @@ export class StreamingManager {
         registerSlot(st.slot, bx, by, bz, key);
       } else {
         uploadChannel(st.slot, ch, r.data);
+        stampFirstCommit();
       }
       const uploadMs = performance.now() - tUpload;
       sumUploadMs += uploadMs;
@@ -626,6 +643,7 @@ export class StreamingManager {
       console.error(`[Kiln] loadBaseLod: ${stillFailed.length} bricks failed after retry — left unloaded`);
     }
 
+    const brickCount = bricks.filter(b => this.loadedBricks.has(b.key)).length;
     const now = performance.now();
     const totalMs = now - t0;
     const firstCommit = this.milestones.firstAtlasCommit;
@@ -792,39 +810,73 @@ export class StreamingManager {
 
   clear(): void {
     if (this.disposed) return;
-    // Cancel all in-flight requests
-    for (const controller of this.inFlightRequests.values()) {
-      controller.abort();
-    }
-    this.inFlightRequests.clear();
-    this.inFlightStaleTime.clear();
-    this.dispatchTimestamps.clear();
-    this.cancelAccumulationReset();
-    Object.assign(this.milestones, createBrickMilestones());
+    this.stopStreaming();
 
     // reset the allocator wholesale instead of freeing slot-by-slot.
     // The old per-slot free loop left every pinned base-LOD slot in the
     // allocator's pinned set; after reload those indices were permanently
     // unevictable. reset() clears used, pinned, metadata, and the free list.
     this.resources.allocator.reset();
+    this.slotChannels.clear();
+    this.loadedBricks.clear();
+    this.pinnedBricks.clear();
+    this.brickCache.clear();
+    this.resources.indirection.clearAll();
+
+    // Reload base LOD
+    this.loadBaseLod();
+  }
+
+  /**
+   * Re-stream after the provider switched source channels/timepoint (metadata is shared,
+   * so the new mapping is already visible here). The old picture stays up: base bricks keep
+   * their slots and are overwritten as the new data lands; finer bricks are released and
+   * refined again once the new base is complete. `changedChannels` = slot bitmask whose
+   * data is stale; the CPU brick cache is keyed by source identity and needs no flush.
+   */
+  reload(changedChannels: number): void {
+    if (this.disposed || !changedChannels) return;
+    this.stopStreaming();
+
+    this.resources.indirection.clearAll();
+    for (const [key, entry] of this.loadedBricks) {
+      const m = /^lod(\d+):(\d+)\/(\d+)\/(\d+)$/.exec(key);
+      if (!m) continue;
+      if (this.pinnedBricks.has(key)) {
+        this.resources.indirection.setBrick(Number(m[4]), Number(m[3]), Number(m[2]), entry.slot.x, entry.slot.y, entry.slot.z, Number(m[1]));
+        this.slotChannels.set(entry.slotIndex, (this.slotChannels.get(entry.slotIndex) ?? 0) & ~changedChannels);
+      } else {
+        this.releaseResident(key, entry.slot);
+      }
+    }
+    this.loadBaseLod();
+  }
+
+  /** Abort every fetch and forget queue, emptiness and milestones; resident slots are untouched. */
+  private stopStreaming(): void {
+    for (const controller of this.inFlightRequests.values()) controller.abort();
+    this.inFlightRequests.clear();
+    this.inFlightStaleTime.clear();
+    this.dispatchTimestamps.clear();
+    this.cancelAccumulationReset();
+    Object.assign(this.milestones, createBrickMilestones());
     this.fillAbort?.abort();
     this.fillAbort = null;
     this.fillPending = 0;
     this.pendingVisibleBits = 0;
-    this.slotChannels.clear();
-    this.loadedBricks.clear();
-    this.pinnedBricks.clear();
     this.emptyBricks.clear();
-    this.brickCache.clear();
     this.desiredKeys.clear();
     this.loadQueue = [];
     this.allocationStalled = false;
     this.baseLodPending = 0;
     this.baseLodLoaded = false;
-    this.resources.indirection.clearAll();
+  }
 
-    // Reload base LOD
-    this.loadBaseLod();
+  /** Give a resident brick's slot back (unpinned); the indirection entry is the caller's business. */
+  private releaseResident(key: string, slot: AtlasSlot): void {
+    this.resources.allocator.free(slot);
+    this.loadedBricks.delete(key);
+    this.pinnedBricks.delete(key);
   }
 
   /**
@@ -1155,7 +1207,7 @@ export class StreamingManager {
     const channelResults: (BrickLoadResult | null)[] = new Array(numChannels).fill(null);
     await Promise.all(
       loadChannels.map(async (ch) => {
-        const cacheKey = `ch${ch}:${key}`;
+        const cacheKey = this.cacheKey(ch, key);
         const cached = this.brickCache.get(cacheKey);
         if (cached) {
           fromCache[ch] = true;
@@ -1193,7 +1245,7 @@ export class StreamingManager {
     for (let ch = 0; ch < numChannels; ch++) {
       const r = channelResults[ch];
       if (r && !fromCache[ch]) {
-        this.brickCache.put(`ch${ch}:${key}`, r.data);
+        this.brickCache.put(this.cacheKey(ch, key), r.data);
       }
     }
 
@@ -1324,7 +1376,7 @@ export class StreamingManager {
     };
 
     const fetchChannel = async (ch: number): Promise<void> => {
-      const cached = this.brickCache.get(`ch${ch}:${key}`);
+      const cached = this.brickCache.get(this.cacheKey(ch, key));
       let r: BrickLoadResult | null;
       if (cached) {
         fromCache[ch] = true;
@@ -1364,7 +1416,7 @@ export class StreamingManager {
     }
     for (const ch of loadChannels) {
       const r = results[ch];
-      if (r && !fromCache[ch]) this.brickCache.put(`ch${ch}:${key}`, r.data);
+      if (r && !fromCache[ch]) this.brickCache.put(this.cacheKey(ch, key), r.data);
     }
     if (!slot && !gaveUp) {
       if (!this.desiredKeys.has(key)) { this.bricksDiscarded++; return; }
@@ -1385,7 +1437,7 @@ export class StreamingManager {
       const ancKey = `lod${a}:${anc[2]}/${anc[1]}/${anc[0]}`;
       if (!this.loadedBricks.has(ancKey)) continue;
       // Only the nearest resident ancestor is what the screen shows now; anything coarser would blur it.
-      const data = this.brickCache.get(`ch${ch}:${ancKey}`);
+      const data = this.brickCache.get(this.cacheKey(ch, ancKey));
       return data ? upsampleFromAncestor(data, [bx, by, bz], anc, ratio, LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE) : null;
     }
     return null;

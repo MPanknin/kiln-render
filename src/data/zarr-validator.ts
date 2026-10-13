@@ -94,17 +94,6 @@ export function validateZarrSupport(
     console.warn(`[Kiln] OME-NGFF version "${ms.version}" detected — parsing best-effort`);
   }
 
-  if (axes.some(a => a.type === 'time')) {
-    console.warn('[Kiln] Time series detected — loading timepoint 0 only');
-  }
-
-  const channelIdx = axes.findIndex(a => a.type === 'channel');
-  if (channelIdx >= 0 && (firstArrayShape[channelIdx] ?? 1) > 4) {
-    console.warn(
-      `[Kiln] Multi-channel dataset has ${firstArrayShape[channelIdx]} channels — only first 4 will be rendered`,
-    );
-  }
-
   if (!SUPPORTED_DTYPES.includes(dtype)) {
     reasons.push(`Data type "${dtype}" is not supported (only uint8, uint16, int16, or float32)`);
   } else if (dtype === 'float64') {

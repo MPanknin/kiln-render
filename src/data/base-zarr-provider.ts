@@ -7,6 +7,7 @@ import type { Array as ZarrArray } from 'zarrita';
 import type { DataType } from 'zarrita';
 import { LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE } from '../core/config.js';
 import type {
+  SourceSelection,
   DataProvider,
   VolumeMetadata,
   LodLevel,
@@ -14,6 +15,7 @@ import type {
   BrickStats,
   NetworkStats,
 } from './data-provider.js';
+import { resolveSourceSelection } from './source-selection.js';
 import { valueTypeFor } from './value-types.js';
 import { UnsupportedDatasetError } from './data-provider.js';
 import { NetworkTracker } from './network-tracker.js';
@@ -26,6 +28,9 @@ import type { Vec3, PyramidPolicy } from '../core/pyramid.js';
 interface OmeTransform { type: string; scale?: number[]; translation?: number[] }
 
 export const LEGACY_HINT = 'load with pyramid "legacy" to fall back to the uniform 2:1 model';
+
+/** OMERO channel window: display range (start–end) within the absolute data range (min–max). */
+export type OmeroWindow = { start: number; end: number; min: number; max: number };
 
 /** OME-NGFF multiscales metadata (from group attributes) */
 export interface OmeMultiscales {
@@ -54,6 +59,10 @@ export interface LodParams {
   channelAxisIdx: number;
   /** Channels stored per chunk along the channel axis (1 if none). */
   channelChunkSize: number;
+  /** Fixed time selection for this provider and its workers. */
+  timeAxisIdx?: number;
+  timeChunkSize?: number;
+  timepoint?: number;
   /** Positions of x, y, z within the last three dims; absent means the usual z, y, x. */
   spatialOrder?: SpatialOrder;
 }
@@ -109,6 +118,42 @@ export abstract class BaseZarrProvider implements DataProvider {
   /** Per-LOD chunk geometry from parseOmeMetadata(); subclasses assign it in initialize(). */
   protected lodParams: LodParams[] = [];
   private networkTracker = new NetworkTracker();
+  private selection: SourceSelection = {};
+  /** OMERO windows for every source channel, before selection. */
+  private sourceChannelWindows?: Array<OmeroWindow | undefined>;
+
+  /** Before initialize(): sets the initial selection. After: switches the live metadata in
+   *  place (slots, windows, timepoint) and forgets per-brick stats that belonged to the old one. */
+  setSourceSelection(selection: SourceSelection): void {
+    if (!this.metadata) {
+      this.selection = { ...selection, sourceChannels: selection.sourceChannels && [...selection.sourceChannels] };
+      return;
+    }
+    this.applySourceSelection(this.metadata, this.lodParams, selection);
+    this.brickStatsCache.clear();
+  }
+
+  /** Resolve `selection` against the source and write the slot-dependent metadata fields. */
+  private applySourceSelection(metadata: VolumeMetadata, lodParams: LodParams[], selection: SourceSelection): void {
+    const { sourceChannels, timepoint } =
+      resolveSourceSelection(selection, metadata.sourceChannelCount ?? 1, metadata.timepointCount ?? 1);
+    metadata.sourceChannels = sourceChannels;
+    metadata.timepoint = timepoint;
+    metadata.numChannels = sourceChannels.length;
+    metadata.channels = sourceChannels.map(i => metadata.sourceChannelMetadata![i]!);
+    metadata.channelWindows = this.sourceChannelWindows && sourceChannels.map(i => this.sourceChannelWindows![i]);
+    metadata.window = metadata.channelWindows?.[0];
+    // Float data: OMERO gives the absolute range; without it the base load derives one.
+    if (metadata.isFloat && metadata.window) metadata.dataRange = [metadata.window.min, metadata.window.max];
+    for (const p of lodParams) p.timepoint = timepoint;
+  }
+
+  protected sourceChannelFor(slot: number): number {
+    const meta = this.getMetadata();
+    const channel = meta.sourceChannels ? meta.sourceChannels[slot] : (slot < meta.numChannels ? slot : undefined);
+    if (!Number.isInteger(slot) || channel === undefined) throw new RangeError(`Invalid display channel slot: ${slot}`);
+    return channel;
+  }
 
   /** Must be called before initialize(); the policy shapes levels, brick grids and worker mappings. */
   setPyramidPolicy(policy: PyramidPolicy): void {
@@ -245,9 +290,20 @@ export abstract class BaseZarrProvider implements DataProvider {
     // Parse axes — supports both v0.4 string arrays and v0.5 typed objects
     const axisNames = normalizeAxes(ms.axes);
     const channelAxisIdx = axisNames.findIndex(a => a.type === 'channel');
-    const numChannels = channelAxisIdx >= 0
-      ? Math.max(1, arrays[0]!.shape[channelAxisIdx] ?? 1)
+    const sourceChannelCount = channelAxisIdx >= 0
+      ? arrays[0]!.shape[channelAxisIdx] ?? 1
       : 1;
+
+    const timeAxisIdx = axisNames.findIndex(a => a.type === 'time');
+    const timepointCount = timeAxisIdx >= 0 ? arrays[0]!.shape[timeAxisIdx]! : 1;
+    const { sourceChannels, timepoint } = resolveSourceSelection(this.selection, sourceChannelCount, timepointCount);
+    const numChannels = sourceChannels.length;
+    for (const arr of arrays) {
+      if ((channelAxisIdx >= 0 && arr.shape[channelAxisIdx] !== sourceChannelCount) ||
+          (timeAxisIdx >= 0 && arr.shape[timeAxisIdx] !== timepointCount)) {
+        throw new UnsupportedDatasetError(['Channel and time dimensions must match across pyramid levels']);
+      }
+    }
 
     // Safety-net validation (catches direct ?dataset= URL loads that bypassed dialog pre-check)
     const dtype = arrays[0]!.dtype;
@@ -322,6 +378,9 @@ export abstract class BaseZarrProvider implements DataProvider {
         shapePrefixLength,
         channelAxisIdx,
         channelChunkSize: channelAxisIdx >= 0 && channelAxisIdx < shapePrefixLength ? (chunkShape[channelAxisIdx] ?? 1) : 1,
+        timeAxisIdx,
+        timeChunkSize: timeAxisIdx >= 0 ? chunkShape[timeAxisIdx]! : 1,
+        timepoint,
         spatialOrder: order,
       });
 
@@ -340,9 +399,7 @@ export abstract class BaseZarrProvider implements DataProvider {
     });
 
     // OMERO windows: v0.5 under attrs.ome.omero, v0.4 at the top level
-    type WindowEntry = { start: number; end: number; min: number; max: number };
-    let windowMeta: WindowEntry | undefined;
-    let channelWindows: Array<WindowEntry | undefined> | undefined;
+    let channelWindows: Array<OmeroWindow | undefined> | undefined;
     let channels: VolumeMetadata['channels'];
     const omeroAttr = omeAttr?.omero ?? (attrs['omero'] as NonNullable<typeof omeAttr>['omero']);
     if (Array.isArray(omeroAttr?.channels) && omeroAttr.channels.length > 0) {
@@ -350,10 +407,9 @@ export abstract class BaseZarrProvider implements DataProvider {
       const dtypeMax = bitDepth === 8 ? 255 : 65535;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       channelWindows = omeroAttr.channels.map((ch: any) => {
-        const w = ch?.window as WindowEntry | undefined;
+        const w = ch?.window as OmeroWindow | undefined;
         return w && !isFloat ? { ...w, min: 0, max: dtypeMax } : w;
       });
-      windowMeta = channelWindows[0];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       channels = omeroAttr.channels.map((ch: any) => ({
         label: typeof ch?.label === 'string' ? ch.label : undefined,
@@ -362,13 +418,11 @@ export abstract class BaseZarrProvider implements DataProvider {
       }));
     }
 
-    // For float data, derive initial dataRange from OMERO window (absolute min/max).
-    // If no OMERO window is present, the caller must scan the coarsest LOD to fill this in.
-    let dataRange: [number, number] | undefined;
-    if (isFloat && windowMeta) {
-      dataRange = [windowMeta.min, windowMeta.max];
-    }
+    const sourceChannelMetadata = Array.from({ length: sourceChannelCount }, (_, i) =>
+      channels?.[i] ?? { active: true });
+    this.sourceChannelWindows = channelWindows;
 
+    // Slot-dependent fields (channels, windows, numChannels, dataRange) come from applySourceSelection.
     const metadata: VolumeMetadata = {
       name,
       dimensions: levels[0]!.dimensions,
@@ -381,14 +435,16 @@ export abstract class BaseZarrProvider implements DataProvider {
       pyramidIssues: pyramidBuild.issues,
       pyramidPolicy: this.pyramidPolicy,
       bitDepth,
-      window: windowMeta,
-      channelWindows,
-      channels,
       numChannels,
+      sourceChannelCount,
+      sourceChannelMetadata,
+      sourceChannels,
+      timepointCount,
+      timepoint,
       isFloat,
-      dataRange,
       dtype: dtypeStr,
     };
+    this.applySourceSelection(metadata, lodParams, this.selection);
 
     // Fanout diagnostic: worst-case chunks per brick footprint and channel, per LOD.
     // The re-chunking hint only helps when a chunk axis is thinner than a brick.

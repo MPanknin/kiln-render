@@ -19,6 +19,7 @@ export type { UpAxis } from './core/camera.js';
 
 // Data provider interface (implement this to support custom formats)
 export type {
+  SourceSelection,
   DataProvider,
   VolumeMetadata,
   LodLevel,

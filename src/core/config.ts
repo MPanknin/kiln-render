@@ -119,8 +119,8 @@ export class DatasetConfig {
   readonly datasetGrid: [number, number, number];
   /** Normalized extent [0–1] per axis, accounting for anisotropic voxel spacing */
   readonly normalizedSize: [number, number, number];
-  /** Bricks with max intensity below this value are considered empty */
-  readonly emptyBrickThreshold: number;
+  /** Bricks with max intensity below this value are considered empty; follows the channel windows. */
+  emptyBrickThreshold: number;
 
   /** Level model; absent = legacy uniform 2:1 (exponent [lod, lod, lod]). */
   private readonly levels: PyramidLevel[] | undefined;

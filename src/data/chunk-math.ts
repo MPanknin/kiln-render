@@ -105,14 +105,18 @@ export function pickXyz(v: readonly number[], order: SpatialOrder = ZYX): [numbe
   return [v[b + order[0]]!, v[b + order[1]]!, v[b + order[2]]!];
 }
 
-/** Zarr chunk coordinates for `channel`; non-spatial prefix axes other than channel are pinned to 0. */
+/** Zarr chunk coordinates for channel and time; other prefix axes are pinned to 0. */
 export function chunkCoords(
   prefixLength: number, channelAxisIdx: number, channelChunkSize: number,
   channel: number, cz: number, cy: number, cx: number, order: SpatialOrder = ZYX,
+  timeAxisIdx = -1, timeChunkSize = 1, timepoint = 0,
 ): number[] {
   const coords = new Array<number>(prefixLength + 3).fill(0);
   if (channelAxisIdx >= 0 && channelAxisIdx < prefixLength) {
     coords[channelAxisIdx] = Math.floor(channel / channelChunkSize);
+  }
+  if (timeAxisIdx >= 0 && timeAxisIdx < prefixLength) {
+    coords[timeAxisIdx] = Math.floor(timepoint / timeChunkSize);
   }
   coords[prefixLength + order[0]] = cx;
   coords[prefixLength + order[1]] = cy;
@@ -132,11 +136,13 @@ export interface ChunkLayout {
 export function chunkLayout(
   chunk: { shape: number[]; stride?: number[] },
   channelAxisIdx: number, channelChunkSize: number, channel: number, order: SpatialOrder = ZYX,
+  timeAxisIdx = -1, timeChunkSize = 1, timepoint = 0,
 ): ChunkLayout {
   const stride = chunk.stride ?? cOrderStrides(chunk.shape);
   const packedIdx = channelAxisIdx >= 0 && channelChunkSize > 1 ? channel % channelChunkSize : 0;
   const [strideX, strideY, strideZ] = pickXyz(stride, order);
-  return { base: packedIdx * (stride[channelAxisIdx] ?? 0), strideX, strideY, strideZ };
+  const timeOffset = timeAxisIdx >= 0 ? (timepoint % timeChunkSize) * (stride[timeAxisIdx] ?? 0) : 0;
+  return { base: packedIdx * (stride[channelAxisIdx] ?? 0) + timeOffset, strideX, strideY, strideZ };
 }
 
 function cOrderStrides(shape: number[]): number[] {

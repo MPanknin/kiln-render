@@ -44,10 +44,15 @@ export interface ZarrWorkerRequest {
     shapePrefixLength: number;
     channelAxisIdx: number;
     channelChunkSize: number;
+    timeAxisIdx?: number;
+    timeChunkSize?: number;
+    timepoint?: number;
     spatialOrder?: [number, number, number];
   }[];
   /** Channel index to load (for datasets with a channel axis) */
   channelIndex?: number;
+  /** Time index to load; defaults to the lodParams timepoint fixed at init. */
+  timepoint?: number;
   /**
    * Main-thread timestamp (Date.now — NOT performance.now, which has a
    * per-context time origin and can't be diffed across the worker boundary)
@@ -280,6 +285,7 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
   if (type === 'loadBrick') {
     const { lod, bx, by, bz, dispatchTime } = event.data;
     const channelIndex = event.data.channelIndex ?? 0;
+    const timepoint = event.data.timepoint;
     // dispatchTime is Date.now() from the main thread — Date.now() shares the
     // same epoch across contexts, unlike performance.now() (per-context origin).
     const queueMs = dispatchTime !== undefined ? Date.now() - dispatchTime : undefined;
@@ -295,7 +301,7 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
 
     (async () => {
       try {
-        const result = await assembleBrick(lod!, bx!, by!, bz!, channelIndex, controller.signal);
+        const result = await assembleBrick(lod!, bx!, by!, bz!, channelIndex, controller.signal, timepoint);
 
         activeControllers.delete(id);
         cancelledRequests.delete(id);
@@ -339,11 +345,12 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
  * Full brick assembly: fetch overlapping chunks, decompress, re-chunk into 66³ brick
  */
 async function assembleBrick(
-  lod: number, bx: number, by: number, bz: number, channelIndex: number, signal?: AbortSignal
+  lod: number, bx: number, by: number, bz: number, channelIndex: number, signal?: AbortSignal, requestedTimepoint?: number,
 ): Promise<{ buffer: ArrayBuffer; min: number; max: number; avg: number; rawMin?: number; rawMax?: number; fetchMs: number; assemblyMs: number; chunkHits: number; chunkTotal: number }> {
   const arr = arrays[lod]!;
   const params = lodParams![lod]!;
-  const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx, channelChunkSize, spatialOrder } = params;
+  const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx, channelChunkSize, spatialOrder, timeAxisIdx, timeChunkSize } = params;
+  const timepoint = requestedTimepoint ?? params.timepoint ?? 0;
   const physSize = PHYSICAL_SIZE;
   const channelChunk = Math.floor(channelIndex / channelChunkSize);
 
@@ -372,7 +379,7 @@ async function assembleBrick(
 
   const setChunkEntry = (fi: number, entry: DecodedChunk) => {
     chunkDataArr[fi] = entry.data;
-    const layout = chunkLayout(entry, channelAxisIdx, channelChunkSize, channelIndex, spatialOrder);
+    const layout = chunkLayout(entry, channelAxisIdx, channelChunkSize, channelIndex, spatialOrder, timeAxisIdx, timeChunkSize, timepoint);
     chunkBase[fi] = layout.base;
     chunkStX[fi] = layout.strideX;
     chunkStY[fi] = layout.strideY;
@@ -385,7 +392,7 @@ async function assembleBrick(
     for (let cy = minCy; cy <= maxCy; cy++) {
       for (let cx = minCx; cx <= maxCx; cx++) {
         const fi = (cz - minCz) * ncy * ncx + (cy - minCy) * ncx + (cx - minCx);
-        const key = cacheKey(lod, cz, cy, cx, channelChunk);
+        const key = `${timepoint}:${cacheKey(lod, cz, cy, cx, channelChunk)}`;
         const cached = chunkCache.get(key);
         if (cached) {
           // refresh recency: delete+re-set moves to end of map iteration order (LRU)
@@ -394,7 +401,7 @@ async function assembleBrick(
           setChunkEntry(fi, cached);
           chunkHits++;
         } else {
-          const coords = chunkCoords(shapePrefixLength, channelAxisIdx, channelChunkSize, channelIndex, cz, cy, cx, spatialOrder);
+          const coords = chunkCoords(shapePrefixLength, channelAxisIdx, channelChunkSize, channelIndex, cz, cy, cx, spatialOrder, timeAxisIdx, timeChunkSize, timepoint);
 
           if (refcountedAborts) {
             // ?p4=1 — see fetchChunkShared.

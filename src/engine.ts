@@ -15,7 +15,7 @@ import { StreamingManager } from './streaming/streaming-manager.js';
 import { DatasetConfig, computeAtlasGrid, emptyBrickThresholdFor, normalizeWindow } from './core/config.js';
 import { detectBest16BitFormat } from './core/volume.js';
 import type { ViewParams } from './core/view.js';
-import type { DataProvider, VolumeMetadata } from './data/data-provider.js';
+import type { DataProvider, SourceSelection, VolumeMetadata } from './data/data-provider.js';
 import { UnsupportedDatasetError } from './data/data-provider.js';
 import { MAX_LOD_LEVELS } from './shaders/uniform-layout.js';
 import { ShardedDataProvider, isShardedUrl } from './data/sharded-provider.js';
@@ -23,6 +23,10 @@ import { ZarrDataProvider } from './data/zarr-provider.js';
 import { initializeWithPyramidFallback } from './data/pyramid-fallback.js';
 
 export interface EngineOptions {
+  /** Zero-based OME-Zarr source channels, in display order (one to four). */
+  sourceChannels?: readonly number[];
+  /** Zero-based OME-Zarr timepoint. Both can be switched later with setSourceSelection(). */
+  timepoint?: number;
   /** Initial render mode */
   mode?: VolumeRenderMode;
   /** 16-bit window centre (0–1) */
@@ -79,7 +83,6 @@ export interface EngineOptions {
 /** How long after the last view change the camera still counts as interacting (ms). */
 const INTERACTION_HOLD_MS = 200;
 
-/** Push every metadata channel window to the renderer in shader space. */
 /** Bitmask of channels the renderer currently displays (alpha weight > 0); all bits for single-channel data. */
 function visibleChannelMask(renderer: Renderer): number {
   if (renderer.numChannels <= 1) return 0xf;
@@ -90,11 +93,39 @@ function visibleChannelMask(renderer: Renderer): number {
   return mask;
 }
 
+/** Push every metadata channel window to the renderer in shader space. */
 function applyChannelWindows(renderer: Renderer, metadata: VolumeMetadata): void {
   metadata.channelWindows?.forEach((cw, ch) => {
     const w = cw && normalizeWindow(cw, metadata.isFloat ?? false, metadata.dataRange);
     if (w) renderer.setChannelWindow(ch, (w.min + w.max) / 2, Math.max(0.01, w.max - w.min));
   });
+}
+
+/** Metadata display defaults for the slots in `mask`: 16-bit window, OMERO colour and visibility. */
+function applyChannelDefaults(renderer: Renderer, metadata: VolumeMetadata, mask: number, bitDepth: number): void {
+  if (bitDepth === 16 && (mask & 1)) {
+    const w = metadata.window && normalizeWindow(metadata.window, metadata.isFloat ?? false, metadata.dataRange);
+    renderer.windowCenter = w ? (w.min + w.max) / 2 : 0.5;
+    renderer.windowWidth = w ? Math.max(0.01, w.max - w.min) : 1.0;
+  }
+  if (metadata.numChannels <= 1) return;
+  metadata.channelWindows?.forEach((cw, ch) => {
+    const w = (mask >> ch) & 1 && cw && normalizeWindow(cw, metadata.isFloat ?? false, metadata.dataRange);
+    if (w) renderer.setChannelWindow(ch, (w.min + w.max) / 2, Math.max(0.01, w.max - w.min));
+  });
+  metadata.channels?.slice(0, 4).forEach((ch, i) => {
+    if (!((mask >> i) & 1)) return;
+    const base = i * 4;
+    const [r, g, b] = ch.color ?? [renderer.channelColors[base]!, renderer.channelColors[base + 1]!, renderer.channelColors[base + 2]!];
+    renderer.setChannelColor(i, r, g, b, ch.active ? 1 : 0);
+  });
+}
+
+/** Empty-brick threshold for the current selection's windows. */
+function emptyThresholdFor(metadata: VolumeMetadata): number {
+  return emptyBrickThresholdFor(
+    metadata.bitDepth, metadata.channelWindows ?? (metadata.window ? [metadata.window] : undefined), metadata.isFloat,
+  );
 }
 
 type SetupMilestones = Pick<LoadMilestones, 'datasetOpenStart' | 'deviceReady' | 'metadataReady' | 'gpuReady'>;
@@ -104,15 +135,29 @@ function levelModel(policy: PyramidPolicy, metadata: VolumeMetadata): PyramidLev
   return policy === 'native' ? metadata.pyramid : undefined;
 }
 
+/** What the atlas and renderer are built from, besides the channel count. */
+interface GpuSetup {
+  outputFormat: GPUTextureFormat;
+  textureFormat: GPUTextureFormat;
+  bitDepth: 8 | 16;
+  atlasBudgetBytes?: number;
+}
+
 export class KilnEngine {
   readonly device: GPUDevice;
-  readonly renderer: Renderer;
-  readonly resources: VolumeResources;
   readonly transferFunction: TransferFunction;
-  readonly streamingManager: StreamingManager;
   readonly dataProvider: DataProvider;
+  /** Shared with the provider and streaming manager; setSourceSelection() updates it in place. */
   readonly metadata: VolumeMetadata;
   readonly config: DatasetConfig;
+
+  // Replaced by setSourceSelection() when the channel count changes: read them per use, don't cache.
+  private _renderer: Renderer;
+  private _resources: VolumeResources;
+  private _streamingManager: StreamingManager;
+  get renderer(): Renderer { return this._renderer; }
+  get resources(): VolumeResources { return this._resources; }
+  get streamingManager(): StreamingManager { return this._streamingManager; }
 
   /** Callback invoked when float/channel ranges are derived during base LOD loading. */
   onChannelWindowsChanged?: () => void;
@@ -124,12 +169,15 @@ export class KilnEngine {
   private userRenderScale: number;
   private dirty = true;
   private disposed = false;
+  private width = 0;
+  private height = 0;
 
   private readonly vpScratch = new Float32Array(16);
   private readonly lastVP = new Float32Array(16);
   private hasLastVP = false;
   private lastMoveTime = 0;
 
+  private readonly gpu: GpuSetup;
   private readonly setupMilestones: SetupMilestones;
   private firstContentSubmit: number | null = null;
   private firstContentFrame: number | null = null;
@@ -139,24 +187,23 @@ export class KilnEngine {
     renderer: Renderer,
     resources: VolumeResources,
     transferFunction: TransferFunction,
-    streamingManager: StreamingManager,
     dataProvider: DataProvider,
     metadata: VolumeMetadata,
     config: DatasetConfig,
+    gpu: GpuSetup,
     setupMilestones: SetupMilestones,
   ) {
     this.setupMilestones = setupMilestones;
     this.device = device;
-    this.renderer = renderer;
-    this.resources = resources;
+    this._renderer = renderer;
+    this._resources = resources;
     this.transferFunction = transferFunction;
-    this.streamingManager = streamingManager;
     this.dataProvider = dataProvider;
     this.metadata = metadata;
     this.config = config;
+    this.gpu = gpu;
     this.userRenderScale = renderer.renderScale;
-
-    this.renderer.onDirty = () => { this.dirty = true; };
+    this._streamingManager = this.attachStreaming(renderer, resources);
   }
 
   /** Request a device with the limits Kiln needs (large buffers, large 3D textures). */
@@ -201,6 +248,13 @@ export class KilnEngine {
         : new ZarrDataProvider(url);
     }
 
+    if (options.sourceChannels !== undefined || options.timepoint !== undefined) {
+      if (!dataProvider.setSourceSelection) {
+        throw new Error('This data provider does not support channel/timepoint selection');
+      }
+      dataProvider.setSourceSelection({ sourceChannels: options.sourceChannels, timepoint: options.timepoint });
+    }
+
     // The level model must reach the provider before workers and brick loads exist.
     // Native unless requested otherwise, falling back to legacy if native rejects the levels.
     const { metadata, pyramid } = await initializeWithPyramidFallback(dataProvider, options.pyramid);
@@ -243,42 +297,14 @@ export class KilnEngine {
     }
 
     // Build DatasetConfig
-    const emptyThreshold = emptyBrickThresholdFor(
-      sourceBitDepth, metadata.channelWindows ?? (metadata.window ? [metadata.window] : undefined), metadata.isFloat,
-    );
-    const config = new DatasetConfig(metadata.dimensions, metadata.voxelSpacing, emptyThreshold, levelModel(pyramid, metadata));
+    const config = new DatasetConfig(metadata.dimensions, metadata.voxelSpacing, emptyThresholdFor(metadata), levelModel(pyramid, metadata));
 
-    // Shrink the atlas grid with channel count so total atlas VRAM fits the
-    // budget — a fixed 660³ × 4 channels (~2.3 GB) OOMs mobile GPUs at startup.
-    const bytesPerVoxel = textureFormat === 'r8unorm' ? 1 : 2;
-    const { gridSize, atlasSize } = computeAtlasGrid(metadata.numChannels, bytesPerVoxel, options.atlasBudgetBytes);
-    const atlasVramMB = Math.round((metadata.numChannels * atlasSize ** 3 * bytesPerVoxel) / 1e6);
-    console.log(`[Kiln] atlas grid ${gridSize}³ (${atlasSize}³ voxels) × ${metadata.numChannels} channel(s) ≈ ${atlasVramMB} MB VRAM`);
-
-    // Construct subsystems
-    const resources = new VolumeResources(device, effectiveBitDepth, textureFormat, config, metadata.numChannels, gridSize);
-    const renderer = new Renderer(device, format, resources, config);
+    const gpu: GpuSetup = { outputFormat: format, textureFormat, bitDepth: effectiveBitDepth, atlasBudgetBytes: options.atlasBudgetBytes };
+    const { resources, renderer } = KilnEngine.buildGpu(device, metadata, config, gpu);
     milestones.gpuReady = performance.now();
 
-    // Apply 16-bit window/level defaults from metadata
-    if (effectiveBitDepth === 16) {
-      const w = metadata.window && normalizeWindow(metadata.window, metadata.isFloat ?? false, metadata.dataRange);
-      renderer.windowCenter = w ? (w.min + w.max) / 2 : 0.5;
-      renderer.windowWidth = w ? Math.max(0.01, w.max - w.min) : 1.0;
-    }
-
-    if (metadata.channelWindows && metadata.numChannels > 1) {
-      applyChannelWindows(renderer, metadata);
-    }
-
-    // OMERO display hints: channel colour and default visibility (alpha 0 = hidden)
-    if (metadata.channels && metadata.numChannels > 1) {
-      metadata.channels.slice(0, 4).forEach((ch, i) => {
-        const base = i * 4;
-        const [r, g, b] = ch.color ?? [renderer.channelColors[base]!, renderer.channelColors[base + 1]!, renderer.channelColors[base + 2]!];
-        renderer.setChannelColor(i, r, g, b, ch.active ? 1 : 0);
-      });
-    }
+    // Metadata display defaults for every slot: 16-bit window, OMERO colours and visibility
+    applyChannelDefaults(renderer, metadata, 0xf, effectiveBitDepth);
 
     // Pass float32 data range to renderer for GPU normalization.
     if (metadata.isFloat && metadata.dataRange) {
@@ -338,7 +364,7 @@ export class KilnEngine {
     if (options.showWireframe !== undefined) renderer.showWireframe = options.showWireframe;
     if (options.showAxis !== undefined) renderer.showAxis = options.showAxis;
 
-    // Streaming manager
+    // Hidden channels must be known before streaming starts (the base load skips them)
     if (options.visibleChannels && metadata.numChannels > 1) {
       options.visibleChannels.forEach((visible, ch) => {
         if (ch >= metadata.numChannels) return;
@@ -347,24 +373,45 @@ export class KilnEngine {
       });
     }
 
-    const streamingManager = new StreamingManager(
-      resources,
-      dataProvider,
-      metadata,
-      device,
-      config,
-      () => renderer.resetAccumulation(),
-      visibleChannelMask(renderer),
+    const engine = new KilnEngine(
+      device, renderer, resources, transferFunction, dataProvider, metadata, config, gpu, milestones,
     );
 
     if (options.maxPixelError !== undefined) {
-      streamingManager.maxPixelError = options.maxPixelError;
+      engine.streamingManager.maxPixelError = options.maxPixelError;
     }
 
-    const engine = new KilnEngine(
-      device, renderer, resources, transferFunction, streamingManager, dataProvider, metadata, config, milestones,
-    );
+    device.lost.then(() => engine.dispose());
 
+    return engine;
+  }
+
+  /** Atlas sized to the budget for this channel count, plus the renderer that samples it. */
+  private static buildGpu(device: GPUDevice, metadata: VolumeMetadata, config: DatasetConfig, gpu: GpuSetup) {
+    // Shrink the atlas grid with channel count so total atlas VRAM fits the
+    // budget — a fixed 660³ × 4 channels (~2.3 GB) OOMs mobile GPUs at startup.
+    const bytesPerVoxel = gpu.textureFormat === 'r8unorm' ? 1 : 2;
+    const { gridSize, atlasSize } = computeAtlasGrid(metadata.numChannels, bytesPerVoxel, gpu.atlasBudgetBytes);
+    const atlasVramMB = Math.round((metadata.numChannels * atlasSize ** 3 * bytesPerVoxel) / 1e6);
+    console.log(`[Kiln] atlas grid ${gridSize}³ (${atlasSize}³ voxels) × ${metadata.numChannels} channel(s) ≈ ${atlasVramMB} MB VRAM`);
+
+    const resources = new VolumeResources(device, gpu.bitDepth, gpu.textureFormat, config, metadata.numChannels, gridSize);
+    const renderer = new Renderer(device, gpu.outputFormat, resources, config);
+    return { resources, renderer };
+  }
+
+  /** Start streaming into `resources`; derived ranges flow back into the renderer. */
+  private attachStreaming(renderer: Renderer, resources: VolumeResources): StreamingManager {
+    renderer.onDirty = () => { this.dirty = true; };
+    const streamingManager = new StreamingManager(
+      resources,
+      this.dataProvider,
+      this.metadata,
+      this.device,
+      this.config,
+      () => renderer.resetAccumulation(),
+      visibleChannelMask(renderer),
+    );
     // When base LOD derives float/channel ranges, update renderer + metadata.
     streamingManager.setRangesDerivedCallback((opts) => {
       if (opts.dataRange) {
@@ -372,15 +419,95 @@ export class KilnEngine {
         renderer.floatMax = opts.dataRange[1];
         renderer.resetAccumulation();
       }
-      if (opts.channelRanges && metadata.channelWindows) {
-        applyChannelWindows(renderer, metadata);
+      if (opts.channelRanges && this.metadata.channelWindows) {
+        applyChannelWindows(renderer, this.metadata);
       }
-      engine.onChannelWindowsChanged?.();
+      this.onChannelWindowsChanged?.();
     });
+    return streamingManager;
+  }
 
-    device.lost.then(() => engine.dispose());
+  /**
+   * Switch source channels and/or timepoint without reopening the dataset: metadata,
+   * workers, camera and display settings stay; bricks re-stream (unchanged channels and
+   * revisited timepoints come from the CPU brick cache). Slots whose channel changed take
+   * that channel's metadata defaults; a time-only change keeps every display setting.
+   * A different channel count rebuilds the atlas and renderer on the same device.
+   */
+  setSourceSelection(selection: SourceSelection): void {
+    if (this.disposed) return;
+    if (!this.dataProvider.setSourceSelection) {
+      throw new Error('This data provider does not support channel/timepoint selection');
+    }
+    const before = [...(this.metadata.sourceChannels ?? [])];
+    const beforeTimepoint = this.metadata.timepoint ?? 0;
+    this.dataProvider.setSourceSelection(selection); // validates first; throws without changing anything
 
-    return engine;
+    const { sourceChannels = [], timepoint = 0, numChannels } = this.metadata;
+    let changedChannels = 0;
+    sourceChannels.forEach((c, slot) => { if (c !== before[slot]) changedChannels |= 1 << slot; });
+    const stale = timepoint !== beforeTimepoint ? (1 << numChannels) - 1 : changedChannels;
+    if (!stale) return;
+
+    this.config.emptyBrickThreshold = emptyThresholdFor(this.metadata);
+    if (numChannels !== this._renderer.numChannels) {
+      this.rebuildGpu(changedChannels);
+    } else {
+      applyChannelDefaults(this._renderer, this.metadata, changedChannels, this.gpu.bitDepth);
+      if (this.metadata.isFloat && this.metadata.dataRange) {
+        this._renderer.floatMin = this.metadata.dataRange[0];
+        this._renderer.floatMax = this.metadata.dataRange[1];
+      }
+      this._streamingManager.setVisibleChannels(visibleChannelMask(this._renderer));
+      this._streamingManager.reload(stale);
+    }
+    this._renderer.resetAccumulation();
+    this.dirty = true;
+  }
+
+  /** New atlas + renderer for the current channel count; display state carries over, streaming restarts. */
+  private rebuildGpu(changedChannels: number): void {
+    const old = this._renderer;
+    const { maxPixelError } = this._streamingManager;
+    this._streamingManager.dispose();
+    old.dispose();
+    this._resources.dispose();
+
+    const { resources, renderer } = KilnEngine.buildGpu(this.device, this.metadata, this.config, this.gpu);
+    this._resources = resources;
+    this._renderer = renderer;
+
+    // Per-slot display state: kept where the channel stayed, metadata defaults where it changed.
+    renderer.channelColors.set(old.channelColors);
+    for (let ch = 0; ch < 4; ch++) renderer.setChannelWindow(ch, old.channelWindowCenter[ch]!, old.channelWindowWidth[ch]!);
+    renderer.windowCenter = old.windowCenter;
+    renderer.windowWidth = old.windowWidth;
+    applyChannelDefaults(renderer, this.metadata, changedChannels, this.gpu.bitDepth);
+
+    renderer.volumeRenderMode = old.volumeRenderMode;
+    renderer.useIndirection = old.useIndirection;
+    renderer.enableJitter = old.enableJitter;
+    renderer.enableTAA = old.enableTAA;
+    renderer.densityScale = old.densityScale;
+    renderer.isoValue = old.isoValue;
+    renderer.floatMin = this.metadata.dataRange?.[0] ?? old.floatMin;
+    renderer.floatMax = this.metadata.dataRange?.[1] ?? old.floatMax;
+    renderer.clipMin.set(old.clipMin);
+    renderer.clipMax.set(old.clipMax);
+    renderer.sliceX = old.sliceX;
+    renderer.sliceY = old.sliceY;
+    renderer.sliceZ = old.sliceZ;
+    renderer.showSliceX = old.showSliceX;
+    renderer.showSliceY = old.showSliceY;
+    renderer.showSliceZ = old.showSliceZ;
+    renderer.showWireframe = old.showWireframe;
+    renderer.showAxis = old.showAxis;
+    renderer.setTransferFunction(this.transferFunction);
+    renderer.renderScale = this.userRenderScale;
+    if (this.width > 0) this.setSize(this.width, this.height);
+
+    this._streamingManager = this.attachStreaming(renderer, resources);
+    this._streamingManager.maxPixelError = maxPixelError;
   }
 
   /** User-intended render scale (the interaction override is not reflected here). */
@@ -394,6 +521,8 @@ export class KilnEngine {
 
   /** Output size in device pixels. Call whenever the target colour view changes size. */
   setSize(width: number, height: number): void {
+    this.width = width;
+    this.height = height;
     this.renderer.resize(width, height);
     if (this.interactionRenderScale > 0) this.renderer.prepareScale(this.interactionRenderScale);
     this.renderer.prepareScale(this.userRenderScale);

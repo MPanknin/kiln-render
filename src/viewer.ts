@@ -9,7 +9,7 @@ import type { Renderer, VolumeRenderMode } from './core/renderer.js';
 import { Camera, UpAxis } from './core/camera.js';
 import type { TransferFunction, TFPreset } from './core/transfer-function.js';
 import type { StreamingManager } from './streaming/streaming-manager.js';
-import type { DataProvider, VolumeMetadata } from './data/data-provider.js';
+import type { DataProvider, SourceSelection, VolumeMetadata } from './data/data-provider.js';
 import type { LoadMilestones } from './core/milestones.js';
 
 export interface ViewerOptions extends EngineOptions {
@@ -21,6 +21,8 @@ export interface ViewerOptions extends EngineOptions {
 
 /** Serialisable snapshot of viewer state — used by the share-URL feature */
 export interface ViewerState {
+  sourceChannels?: number[];
+  timepoint?: number;
   mode: VolumeRenderMode;
   windowCenter: number;
   windowWidth: number;
@@ -157,10 +159,15 @@ export class KilnViewer {
   get renderScale(): number { return this.engine.renderScale; }
   set renderScale(value: number) { this.engine.renderScale = value; }
 
+  /** Switch source channels/timepoint in place (see KilnEngine.setSourceSelection); the camera stays. */
+  setSourceSelection(selection: SourceSelection): void { this.engine.setSourceSelection(selection); }
+
   // State serialisation
   getState(): ViewerState {
     const [rx, ry, dist, tx, ty, tz] = this.camera.getOrbitState();
     return {
+      sourceChannels: this.metadata.sourceChannels && [...this.metadata.sourceChannels],
+      timepoint: this.metadata.timepoint,
       mode: this.renderer.volumeRenderMode,
       windowCenter: this.renderer.windowCenter,
       windowWidth: this.renderer.windowWidth,

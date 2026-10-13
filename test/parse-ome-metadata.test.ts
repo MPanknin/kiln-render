@@ -364,13 +364,11 @@ describe('parseOmeMetadata — multi-channel', () => {
     expect(lodParams[0]!.channelAxisIdx).toBe(1);
   });
 
-  it('clamps numChannels to 1 when channel axis has size 0', () => {
+  it('rejects an empty channel axis', () => {
     const attrs = {
       ome: { multiscales: [{ datasets: [{ path: '0' }], axes: ['c', 'z', 'y', 'x'] }] },
     };
-    // shape[0] = 0 channels — should clamp to 1
-    const { metadata } = provider.parse(attrs, [arr([0, 64, 64, 64], [1, 64, 64, 64])]);
-    expect(metadata.numChannels).toBe(1);
+    expect(() => provider.parse(attrs, [arr([0, 64, 64, 64], [1, 64, 64, 64])])).toThrow(/source channels/);
   });
 
   it('propagates the same channelAxisIdx to all LOD levels', () => {

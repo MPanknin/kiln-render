@@ -14,6 +14,9 @@ fn rayMarchLOD(
         jitterFrac = rand(rayToSeed(rayDir) + uniforms.frameIndex);
     }
 
+    // precompute float normalisation (maps stored texels to [0, 1] for every atlas format)
+    let floatInvRange = 1.0 / max(uniforms.floatMax - uniforms.floatMin, 0.0001);
+
     var color = vec3f(0.0);
     var alpha = 0.0;
     var t = tStart;
@@ -46,7 +49,8 @@ fn rayMarchLOD(
 
             let pos = rayOrigin + rayDir * tSample;
             let voxel = normalizedToVoxel(pos, normalizedSize, datasetSize);
-            let density = sampleAtlasAffine(voxel, brick.atlasOffset, brick.atlasScale);
+            let rawDensity = sampleAtlasAffine(voxel, brick.atlasOffset, brick.atlasScale);
+            let density = clamp((rawDensity - uniforms.floatMin) * floatInvRange, 0.0, 1.0);
 
             // Use LOD color with TF opacity
             let tfColor = textureSampleLevel(tfTexture, tfSampler, vec2f(density, 0.5), 0.0);

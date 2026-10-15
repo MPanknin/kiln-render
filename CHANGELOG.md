@@ -16,6 +16,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Window, width, ISO and channel level sliders span the data's value range instead of the whole data type range, and label raw values. 12-bit microscopy stored as `uint16` used to live in the first two slider steps.
 - `StreamingManager.setBaseLodLoadedCallback` no longer passes brick data to the callback, and also fires when a channel shown later has filled in.
 
+### Fixed
+- `int16` and `float32` values are rounded to the nearest half float. They were truncated, and values below 2^-14 were flushed to zero.
+
 ## [0.5.0] - 2026-09-28
 
 ### Added

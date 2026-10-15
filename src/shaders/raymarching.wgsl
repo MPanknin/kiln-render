@@ -65,23 +65,6 @@ fn setupBrick(
     return info;
 }
 
-// Refine isosurface position using bisection
-fn refineIsoSurface(
-    rayOrigin: vec3f, rayDir: vec3f, tLow: f32, tHigh: f32, isoValue: f32,
-    normalizedSize: vec3f, datasetSize: vec3f
-) -> f32 {
-    var lo = tLow;
-    var hi = tHigh;
-    for (var i = 0u; i < 4u; i++) {
-        let mid = (lo + hi) * 0.5;
-        let pos = rayOrigin + rayDir * mid;
-        let voxel = normalizedToVoxel(pos, normalizedSize, datasetSize);
-        let density = sampleWithIndirection(voxel);
-        if (density >= isoValue) { hi = mid; } else { lo = mid; }
-    }
-    return (lo + hi) * 0.5;
-}
-
 // Refine isosurface position using bisection with windowing.
 // Uses sampleWithIndirection so bisection across brick boundaries is correct.
 fn refineIsoSurfaceWindowed(

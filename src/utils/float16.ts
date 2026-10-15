@@ -12,50 +12,38 @@
  */
 export const UINT16_FLOAT16_OFFSET = 2048;
 
-/** Convert a float32 value to float16 binary representation (as uint16). */
 // Module-level scratch buffers — shared across all calls to avoid per-call allocation
 const _f32Scratch = new Float32Array(1);
 const _u32Scratch = new Uint32Array(_f32Scratch.buffer);
 
+/**
+ * Convert a float32 value to float16 bits (as uint16), rounding to nearest even (the IEEE
+ * default). Values below 2^-14 become subnormals, values from 65520 up become infinity.
+ */
 export function float32ToFloat16Bits(f32: number): number {
   // Write float32 into the shared scratch buffer and read back as uint32 bits.
   // Avoids allocating a new ArrayBuffer + DataView on every call (287k calls per brick).
   _f32Scratch[0] = f32;
   const bits = _u32Scratch[0]!;
+  const sign = (bits >>> 16) & 0x8000;
+  const abs = bits & 0x7fffffff;
 
-  // Extract IEEE 754 float32 components
-  const sign = (bits >> 31) & 0x1;
-  let exp = (bits >> 23) & 0xff;
-  let frac = bits & 0x7fffff;
-
-  // Handle special cases
-  if (exp === 0xff) {
-    // Infinity or NaN
-    return (sign << 15) | 0x7c00 | (frac ? 1 : 0);
+  if (abs >= 0x47800000) {
+    // 2^16 and above, Infinity or NaN
+    return sign | (abs > 0x7f800000 ? 0x7e00 : 0x7c00);
   }
 
-  if (exp === 0) {
-    // Zero or denormal
-    return sign << 15;
+  if (abs < 0x38800000) {
+    // Below 2^-14: subnormal or zero. Adding 0.5 puts the 10 subnormal mantissa bits at the
+    // bottom of the float32 mantissa, and the float32 store rounds to nearest even.
+    _f32Scratch[0] = Math.abs(_f32Scratch[0]!) + 0.5;
+    return sign | (_u32Scratch[0]! - 0x3f000000);
   }
 
-  // Rebias exponent: float32 bias=127, float16 bias=15
-  exp = exp - 127 + 15;
-
-  if (exp >= 0x1f) {
-    // Overflow to infinity
-    return (sign << 15) | 0x7c00;
-  }
-
-  if (exp <= 0) {
-    // Underflow to zero
-    return sign << 15;
-  }
-
-  // Normal case: pack into float16 format
-  // Sign (1 bit) | Exponent (5 bits) | Mantissa (10 bits)
-  frac = frac >> 13; // Keep top 10 bits of mantissa
-  return (sign << 15) | (exp << 10) | frac;
+  // Normal: rebias the exponent (127 → 15) and round the dropped 13 bits to nearest even.
+  // A carry out of the mantissa bumps the exponent, up to infinity from 65520.
+  const mantOdd = (abs >>> 13) & 1;
+  return sign | ((abs - 0x38000000 + 0xfff + mantOdd) >>> 13);
 }
 
 /** Decode a uint16 float16 bit pattern to a JavaScript number. */

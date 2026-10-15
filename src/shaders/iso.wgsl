@@ -71,7 +71,9 @@ fn rayMarchISO(
                 let surfaceLodScale = getLodScale(surfaceIndirection);
                 let gradient = computeGradient(surfaceVoxel, surfaceIndirection, surfaceLodScale);
 
-                if (length(gradient) >= 0.001) {
+                // Gradient is in stored-texel units; normalise so the threshold means the
+                // same on every atlas format
+                if (length(gradient) * floatInvRange >= 0.001) {
                     let normal = -normalize(gradient);
                     let tfColor = textureSampleLevel(tfTexture, tfSampler, vec2f(isoValue, 0.5), 0.0);
                     return vec4f(phongLighting(normal, -rayDir, tfColor.rgb), 1.0);

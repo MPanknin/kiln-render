@@ -71,9 +71,30 @@ describe('float32ToFloat16Bits', () => {
     expect(bits).toBe(0x7c00); // +infinity
   });
 
-  it('flushes very small values to zero (underflow)', () => {
-    const bits = float32ToFloat16Bits(1e-10);
-    expect(bits).toBe(0x0000);
+  it('rounds values below half the smallest subnormal to zero', () => {
+    expect(float32ToFloat16Bits(1e-10)).toBe(0x0000);
+    expect(float32ToFloat16Bits(-0)).toBe(0x8000);
+  });
+
+  it('keeps subnormals', () => {
+    expect(float32ToFloat16Bits(2 ** -24)).toBe(0x0001);
+    expect(float32ToFloat16Bits(2 ** -15)).toBe(0x0200);
+  });
+
+  it('round-trips every finite float16 exactly', () => {
+    for (let h = 0; h < 0x7c00; h++) {
+      expect(float32ToFloat16Bits(float16BitsToFloat32(h))).toBe(h);
+      expect(float32ToFloat16Bits(-float16BitsToFloat32(h))).toBe(h | 0x8000);
+    }
+  });
+
+  it('rounds halfway values to the even neighbour', () => {
+    for (let h = 0; h < 0x7bff; h++) {
+      const mid = (float16BitsToFloat32(h) + float16BitsToFloat32(h + 1)) / 2;
+      expect(float32ToFloat16Bits(mid)).toBe(h % 2 === 0 ? h : h + 1);
+    }
+    expect(float32ToFloat16Bits(65519)).toBe(0x7bff); // largest finite, 65504
+    expect(float32ToFloat16Bits(65520)).toBe(0x7c00);
   });
 });
 

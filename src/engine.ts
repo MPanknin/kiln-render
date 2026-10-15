@@ -210,7 +210,8 @@ export class KilnEngine {
 
   /**
    * Request a device with the limits Kiln needs (large buffers, large 3D textures), and
-   * texture-formats-tier1 where available so uint16 data is stored lossless as r16unorm.
+   * texture-formats-tier1 where available. Atlas setup separately validates filtering
+   * before selecting lossless r16unorm storage.
    */
   static async createDevice(): Promise<GPUDevice> {
     const adapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
@@ -277,7 +278,7 @@ export class KilnEngine {
     let effectiveBitDepth = sourceBitDepth;
 
     if (sourceBitDepth === 16) {
-      textureFormat = detectBest16BitFormat(device, metadata.isFloat ?? false);
+      textureFormat = await detectBest16BitFormat(device, metadata.isFloat ?? false);
       if (textureFormat === 'r8unorm') {
         effectiveBitDepth = 8;
         console.warn(

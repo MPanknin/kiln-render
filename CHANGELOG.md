@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `StreamingManager.getChannelHistogram(channel, bins)`: the value distribution of a channel over the loaded base level.
 
 ### Changed
+- Atlas selection validates filterable 3D bindings inside a WebGPU error scope. Devices exposing unfilterable `r16unorm` under `texture-formats-tier1` fall back to the 12-bit-exact `r16float` path before loading bricks.
 - `uint16` volumes are stored bit-exact as `r16unorm` where the GPU supports `texture-formats-tier1`, which `KilnEngine.createDevice()` now requests. Without it they stay on `r16float`, now stored so that 12-bit data is exact; it used to lose about a quarter of its levels.
 - Window, width, ISO and channel level sliders span the data's value range instead of the whole data type range, and label raw values. 12-bit microscopy stored as `uint16` used to live in the first two slider steps.
 - `StreamingManager.setBaseLodLoadedCallback` no longer passes brick data to the callback, and also fires when a channel shown later has filled in.

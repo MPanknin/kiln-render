@@ -14,34 +14,59 @@ export interface VolumeCanvas {
 
 /**
  * Detect best supported texture format for 16-bit data.
- * uint16 uses r16unorm (lossless) when the device has texture-formats-tier1.
+ * uint16 uses r16unorm only if the device validates it as a filterable 3D texture.
+ * texture-formats-tier1 alone permits unfilterable r16unorm textures.
  * Otherwise, and for raw-value data (int16/float), r16float; r8unorm as a last resort.
  */
-export function detectBest16BitFormat(device: GPUDevice, isFloat = false): GPUTextureFormat {
-  if (!isFloat && device.features.has('texture-formats-tier1')) {
-    console.log('[Kiln] Using r16unorm for 16-bit atlas texture');
-    return 'r16unorm';
-  }
-  const formats: GPUTextureFormat[] = ['r16float'];
+export async function detectBest16BitFormat(device: GPUDevice, isFloat = false): Promise<GPUTextureFormat> {
+  const formats: GPUTextureFormat[] = !isFloat && device.features.has('texture-formats-tier1')
+    ? ['r16unorm', 'r16float', 'r8unorm']
+    : ['r16float', 'r8unorm'];
 
   for (const format of formats) {
+    let testTexture: GPUTexture | undefined;
+    let threw = false;
+    device.pushErrorScope('validation');
     try {
-      const testTexture = device.createTexture({
+      testTexture = device.createTexture({
+        label: `Kiln ${format} filtering probe`,
         size: [1, 1, 1],
         format,
         dimension: '3d',
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
       });
-      testTexture.destroy();
+      const layout = device.createBindGroupLayout({
+        entries: [{
+          binding: 0,
+          visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT,
+          texture: { sampleType: 'float', viewDimension: '3d' },
+        }],
+      });
+      device.createBindGroup({
+        layout,
+        entries: [{ binding: 0, resource: testTexture.createView() }],
+      });
+    } catch (_) {
+      threw = true;
+    }
+    // Validation errors are asynchronous; try/catch alone cannot detect an invalid
+    // texture or bind group. Pop before awaiting so concurrent initialisation cannot
+    // interleave scopes on this shared device.
+    const validation = device.popErrorScope();
+    let error: GPUError | null;
+    try {
+      error = await validation;
+    } finally {
+      testTexture?.destroy();
+    }
+    if (!threw && !error) {
       console.log(`[Kiln] Using ${format} for 16-bit atlas texture`);
       return format;
-    } catch (_) {
-      console.warn(`[Kiln] Format ${format} not supported, trying next...`);
     }
+    console.warn(`[Kiln] ${format} cannot be used as a filterable 3D atlas; trying next format.`);
   }
 
-  console.warn('[Kiln] No 16-bit formats supported, falling back to r8unorm (quality loss)');
-  return 'r8unorm';
+  throw new Error('[Kiln] No filterable atlas texture format is available');
 }
 
 /** Create empty volume canvas (atlas texture). Size defaults to the full ATLAS_SIZE. */

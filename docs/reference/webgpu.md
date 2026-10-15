@@ -8,12 +8,12 @@ Kiln is built on WebGPU rather than WebGL. This section documents the technical 
 
 ### 16-bit and float texture support
 
-`uint16` data is stored bit-exact in `r16unorm` when the device has the optional `texture-formats-tier1` feature. `KilnEngine.createDevice()` requests it whenever the adapter offers it; hosts that create their own device should request it too.
+`uint16` data is stored bit-exact in `r16unorm` only when the device accepts it as a **filterable 3D texture**. The optional `texture-formats-tier1` feature alone does not guarantee this: implementations may expose `r16unorm` with only the `unfilterable-float` sample type. `KilnEngine.createDevice()` requests the feature when offered, and engine setup validates a tiny texture against the same `float` binding used by the shaders inside a WebGPU validation error scope. If validation fails, Kiln selects `r16float` before creating the atlas or encoding bricks.
 
 Without it, `uint16` goes to `r16float`, which is a core format (no extension required) with hardware trilinear filtering. Half floats hold every integer in [−2048, 2048] exactly, so Kiln stores `value − 2048`: 12-bit data stays bit-exact, and higher values keep half-float precision. The shader maps texels back to `value / 65535`. `int16` and `float32` are always stored in `r16float` as raw half-precision values and normalised in the shader.
 
 **Fallback chain**: Kiln detects format support at runtime:
-- **r16unorm** (`uint16`, preferred) — bit-exact, filterable, needs `texture-formats-tier1`
+- **r16unorm** (`uint16`, preferred) — bit-exact; requires `texture-formats-tier1` and successful filterable-binding validation
 - **r16float** — half-precision, filterable, core WebGPU
 - **r8unorm** (last resort) — workers downsample 16→8 bit via high-byte extraction (`>> 8`)
 

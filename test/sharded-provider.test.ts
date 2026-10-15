@@ -20,7 +20,7 @@ describe('convertBrickBytes', () => {
     expect(Array.from(convertBrickBytes(u16(0x1234, 0xff00), 'uint16', 'r8unorm'))).toEqual([0x12, 0xff]);
   });
 
-  it('uint16 → r16float encodes value / 65535 as float16 bits', () => {
+  it('uint16 → r16float encodes value - offset as float16 bits', () => {
     const lut = getUint16ToFloat16Lut();
     const out = convertBrickBytes(u16(0, 1000, 65535), 'uint16', 'r16float');
     expect(out).toBeInstanceOf(Uint16Array);

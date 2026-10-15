@@ -66,8 +66,8 @@ fn sampleDirect(voxelPos: vec3f, datasetSize: vec3f) -> f32 {
 fn sampleWithIndirection(voxelPos: vec3f) -> f32 {
     let brickIndex = floor(voxelPos / LOGICAL_BRICK_SIZE);
     let indirection = lookupIndirection(brickIndex);
-    // w=0: not loaded, w=255: known empty brick - both return 0
-    if (indirection.w == 0u || indirection.w == 255u) { return 0.0; }
+    // w=0: not loaded, w=255: known empty brick - both return the texel that normalises to 0
+    if (indirection.w == 0u || indirection.w == 255u) { return uniforms.floatMin; }
     let lodScale = getLodScale(indirection);
     return sampleAtlas(voxelPos, indirection, lodScale);
 }

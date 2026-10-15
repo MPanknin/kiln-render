@@ -8,10 +8,13 @@ Kiln is built on WebGPU rather than WebGL. This section documents the technical 
 
 ### 16-bit and float texture support
 
-WebGPU's `r16float` format stores half-precision floats with hardware trilinear filtering, and is a core feature (no extension required). Kiln stores all `uint16`, `int16` and `float32` data in `r16float`: `uint16` values are normalised by 65535 and converted to half precision, while `int16` and `float32` values are stored as raw half-precision values and normalised in the shader.
+`uint16` data is stored bit-exact in `r16unorm` when the device has the optional `texture-formats-tier1` feature. `KilnEngine.createDevice()` requests it whenever the adapter offers it; hosts that create their own device should request it too.
+
+Without it, `uint16` goes to `r16float`, which is a core format (no extension required) with hardware trilinear filtering. Half floats hold every integer in [−2048, 2048] exactly, so Kiln stores `value − 2048`: 12-bit data stays bit-exact, and higher values keep half-float precision. The shader maps texels back to `value / 65535`. `int16` and `float32` are always stored in `r16float` as raw half-precision values and normalised in the shader.
 
 **Fallback chain**: Kiln detects format support at runtime:
-- **r16float** (preferred) — half-precision, filterable, core WebGPU
+- **r16unorm** (`uint16`, preferred) — bit-exact, filterable, needs `texture-formats-tier1`
+- **r16float** — half-precision, filterable, core WebGPU
 - **r8unorm** (last resort) — workers downsample 16→8 bit via high-byte extraction (`>> 8`)
 
 The r8unorm fallback triggers a console warning and shows `(⚠️ downsampled)` in the UI.
@@ -65,7 +68,7 @@ WebGL 2 supports integer textures but with more limited format options and requi
 
 | Capability | WebGL 2 | WebGPU |
 |------------|---------|--------|
-| 16-bit / float textures | Emulated | Native `r16float` |
+| 16-bit / float textures | Emulated | Native `r16unorm` / `r16float` |
 | 3D texture limit | Typically 2048³ | Up to 16384³ |
 | Compute shaders | No | Yes (pipeline flexibility, future headroom) |
 | Texture uploads | Synchronous | Asynchronous queue |

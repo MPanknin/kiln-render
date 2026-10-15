@@ -1,7 +1,8 @@
 /**
  * Source data types Kiln can render, and how each maps onto GPU storage.
  *
- * - unorm path (isFloat false): uint8 → r8unorm, uint16 → r16float of value/65535.
+ * - unorm path (isFloat false): uint8 → r8unorm, uint16 → r16unorm (or r16float of
+ *   value - UINT16_FLOAT16_OFFSET without texture-formats-tier1).
  *   The shader sees the value normalised by the dtype range.
  * - raw-value path (isFloat true): the atlas stores raw values as float16 and the shader
  *   normalises with the data range (derived from the coarsest level, or OMERO). float32/float64
@@ -11,7 +12,7 @@
 import type { BitDepth } from './data-provider.js';
 
 export interface ValueType {
-  /** Bit depth of the stored atlas texel (8 → r8unorm, 16 → r16float). */
+  /** Bit depth of the stored atlas texel (8 → r8unorm, 16 → r16unorm or r16float). */
   bitDepth: BitDepth;
   /** Raw-value path: float16 raw values normalised by the data range in the shader. */
   isFloat: boolean;

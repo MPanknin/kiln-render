@@ -78,6 +78,11 @@ export class Renderer {
   floatMin = 0;
   floatMax = 1;
 
+  // Stored texel = value × texelScale + texelBias, folded into floatMin/floatMax on upload.
+  // Identity except for uint16 on r16float, which is stored as value - UINT16_FLOAT16_OFFSET.
+  texelScale = 1;
+  texelBias = 0;
+
   // Axis-aligned clipping planes (0-1 normalized range)
   clipMin = new Float32Array([0, 0, 0]);
   clipMax = new Float32Array([1, 1, 1]);
@@ -616,8 +621,8 @@ export class Renderer {
     d.set(this.config.dimensions, o.datasetSize / 4);
     d[o.windowCenter / 4] = this.windowCenter;
     d[o.windowWidth / 4] = this.windowWidth;
-    d[o.floatMin / 4] = this.floatMin;
-    d[o.floatMax / 4] = this.floatMax;
+    d[o.floatMin / 4] = this.floatMin * this.texelScale + this.texelBias;
+    d[o.floatMax / 4] = this.floatMax * this.texelScale + this.texelBias;
     d[o.slicePositions / 4] = this.sliceX;
     d[o.slicePositions / 4 + 1] = this.sliceY;
     d[o.slicePositions / 4 + 2] = this.sliceZ;
@@ -697,8 +702,8 @@ export class Renderer {
     dv.setUint32(o.jitter, (this.enableJitter && this.enableTAA) ? 1 : 0, true);
     d[o.windowCenter / 4] = this.windowCenter;
     d[o.windowWidth / 4] = this.windowWidth;
-    d[o.floatMin / 4] = this.floatMin;
-    d[o.floatMax / 4] = this.floatMax;
+    d[o.floatMin / 4] = this.floatMin * this.texelScale + this.texelBias;
+    d[o.floatMax / 4] = this.floatMax * this.texelScale + this.texelBias;
     d.set(this.clipMin, o.clipMin / 4);
     d[o.densityScale / 4] = this.densityScale;
     d.set(this.clipMax, o.clipMax / 4);

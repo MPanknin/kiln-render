@@ -61,12 +61,12 @@ Kiln renders `uint8`, `uint16`, `int16` and `float32` volumes (`float64` is read
 
 | Feature | `uint8` | `uint16` | `int16` | `float32` |
 |---------|---------|----------|---------|-----------|
-| Texture format | `r8unorm` | `r16float` | `r16float` | `r16float` |
-| Stored value | value / 255 | value / 65535 | raw value | raw value |
+| Texture format | `r8unorm` | `r16unorm` or `r16float` | `r16float` | `r16float` |
+| Stored value | value / 255 | value / 65535 (`r16unorm`), value − 2048 (`r16float`) | raw value | raw value |
 | Normalised by | type range | type range | data range | data range |
 | Bytes per voxel (GPU) | 1 | 2 | 2 | 2 |
 | Atlas size | ~274 MiB | ~548 MiB | ~548 MiB | ~548 MiB |
-| WebGPU feature | (none) | (none) | (none) | (none) |
+| WebGPU feature | (none) | `texture-formats-tier1` for `r16unorm` (optional) | (none) | (none) |
 
 The **data range** for `int16` and `float32` is the OMERO window's min/max when present, otherwise the 0.1–99.9th percentile of the coarsest level. Half precision holds `int16` values exactly up to ±2048, which covers CT in Hounsfield units.
 

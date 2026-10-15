@@ -18,4 +18,4 @@ The script processes data in z-slabs to limit memory usage, but very large volum
 
 The script uses global min/max for normalization. If the volume has outliers, contrast may be compressed. Options:
 1. Pre-process the raw data to adjust the value range
-2. Use `--native` to keep the 16-bit data unconverted (stored internally as `r16float`, not bit-exact) and adjust contrast with windowing in the viewer
+2. Use `--native` to keep the 16-bit data unconverted (bit-exact where the GPU supports `r16unorm`) and adjust contrast with windowing in the viewer

@@ -3,7 +3,7 @@
  */
 
 import type { BitDepth } from '../data/data-provider.js';
-import { getFloat16ToFloat32Lut } from '../utils/float16.js';
+import { getFloat16ToFloat32Lut, UINT16_FLOAT16_OFFSET } from '../utils/float16.js';
 
 /** Counts indexed by the stored voxel value: uint8, uint16, or float16 bit pattern. */
 export interface RawHistogram {
@@ -31,7 +31,7 @@ function unitMapper(
   floatMax: number,
   targetFormat: GPUTextureFormat,
 ): (raw: number) => number | null {
-  // uint16 source stored as r16float: float16 bits encode [0,1], decode directly
+  // uint16 source stored as r16float: float16 bits encode value - UINT16_FLOAT16_OFFSET
   const isUint16AsFloat16 = !isFloat32 && bitDepth === 16 && targetFormat === 'r16float';
   if (!is8Bit && bitDepth === 16 && (isFloat32 || isUint16AsFloat16)) {
     const lut = getFloat16ToFloat32Lut();
@@ -39,7 +39,8 @@ function unitMapper(
     return (raw) => {
       const v = lut[raw]!;
       if (!isFinite(v)) return null;
-      const n = isFloat32 && floatRange > 0 ? (v - floatMin) / floatRange : v;
+      const n = !isFloat32 ? (v + UINT16_FLOAT16_OFFSET) / 65535
+        : floatRange > 0 ? (v - floatMin) / floatRange : v;
       return Math.max(0, Math.min(1, n));
     };
   }

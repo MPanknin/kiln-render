@@ -8,6 +8,7 @@ import type { DataType } from 'zarrita';
 import { FileSystemStore } from './filesystem-store.js';
 import { BaseZarrProvider, detectCompression } from './base-zarr-provider.js';
 import { float32ToFloat16Bits, getUint16ToFloat16Lut } from '../utils/float16.js';
+import type { TargetFormat } from './brick-convert.js';
 import type { VolumeMetadata, BrickData, BrickLoadResult, BrickStats, PipelineTimings } from './data-provider.js';
 import { UnsupportedDatasetError } from './data-provider.js';
 import { provisionalDataRange } from './value-types.js';
@@ -18,7 +19,7 @@ import { clampedLutEntry, computeBrickChunkFootprint, chunkCoords, chunkLayout }
 export class LocalZarrDataProvider extends BaseZarrProvider {
   private dirHandle: FileSystemDirectoryHandle;
   private arrays: ZarrArray<DataType, any>[] = [];
-  private targetFormat: 'r8unorm' | 'r16float' = 'r16float';
+  private targetFormat: TargetFormat = 'r16float';
 
   // Per-stage rolling averages (last 32 bricks)
   private fetchAvg = new RollingAvg();
@@ -29,8 +30,8 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     this.dirHandle = dirHandle;
   }
 
-  // r16float: convert uint16 → float16 bit pattern. r8unorm: downsample to 8-bit.
-  setTargetFormat(format: 'r8unorm' | 'r16float'): void {
+  // r16float: convert uint16 → float16 bit pattern. r8unorm: downsample to 8-bit. r16unorm: raw.
+  setTargetFormat(format: TargetFormat): void {
     this.targetFormat = format;
   }
 
@@ -225,8 +226,10 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
 
     // uint16 → r16float bricks write float16 bits directly via the encode LUT,
     // in the same pass as the scatter — avoids a second full-brick conversion pass.
-    const writeFloat16 = is16bit && !isFloat && !downsampleTo8;
+    const writeFloat16 = is16bit && !isFloat && this.targetFormat === 'r16float';
     const u16ToF16Lut = writeFloat16 ? getUint16ToFloat16Lut() : null;
+    // Voxels of missing chunks read as 0, whose stored form here is not all-zero bits.
+    if (u16ToF16Lut) brick.fill(u16ToF16Lut[0]!);
 
     let min = Infinity;
     let max = -Infinity;

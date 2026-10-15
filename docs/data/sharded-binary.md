@@ -27,7 +27,7 @@ By default, 16-bit volumes are normalized to 8-bit during processing. Use `--nat
 | Mode | Flag | Output | Use Case |
 |------|------|--------|----------|
 | Normalized | (default) | 8-bit | Smaller files, wider compatibility |
-| Native | `--native` | 16-bit | Higher dynamic range, requires `texture-formats-tier1`. Kiln's WebGPU path stores 16-bit data as `r16float`, which is not bit-exact across the full `uint16` range |
+| Native | `--native` | 16-bit | Higher dynamic range. Stored bit-exact as `r16unorm` where the GPU supports `texture-formats-tier1`, otherwise as `r16float` (exact up to 12 bits) |
 
 ### Filename conventions
 

@@ -493,6 +493,8 @@ async function assembleBrick(
   // in the same pass as the scatter — avoids a second full-brick conversion pass.
   const writeFloat16 = is16bit && targetFormat === 'r16float' && !isFloat32;
   const u16ToF16Lut = writeFloat16 ? getUint16ToFloat16Lut() : null;
+  // Voxels of missing chunks read as 0, whose stored form here is not all-zero bits.
+  if (u16ToF16Lut) brick.fill(u16ToF16Lut[0]!);
 
   let min = Infinity;
   let max = -Infinity;

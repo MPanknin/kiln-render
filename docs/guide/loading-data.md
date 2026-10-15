@@ -99,7 +99,7 @@ Compatible multiscale OME-Zarr datasets require no Kiln-specific conversion — 
 **Supported formats:**
 - OME-NGFF v0.4 and v0.5
 - Single-channel and multichannel datasets (up to 4 channels — see [Multichannel](/rendering/multichannel))
-- `uint8`, `uint16`, `int16` and `float32` input (`float64` is read as `float32`); everything except `uint8` is stored as `r16float` on the GPU
+- `uint8`, `uint16`, `int16` and `float32` input (`float64` is read as `float32`); `uint16` is stored as `r16unorm` where the GPU supports it, otherwise like `int16` and `float32` as `r16float`
 
 See the [Data Guide](/data/ome-zarr) for full format requirements.
 

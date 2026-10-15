@@ -15,7 +15,8 @@ import { BrickCache } from './brick-cache.js';
 import { LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE } from '../core/config.js';
 import type { DatasetConfig } from '../core/config.js';
 import { writeToCanvas } from '../core/volume.js';
-import { getFloat16ToFloat32Lut } from '../utils/float16.js';
+import type { VolumeCanvas } from '../core/volume.js';
+import { getFloat16ToFloat32Lut, getUint16ToFloat16Lut } from '../utils/float16.js';
 import { createRawHistogram, accumulateRaw, rebinHistogram } from '../core/histogram.js';
 import type { RawHistogram } from '../core/histogram.js';
 import type { PipelineTimings } from '../data/data-provider.js';
@@ -290,13 +291,15 @@ export class StreamingManager {
     this.onRangesDerived = callback;
   }
 
-  /** Lazily create (and cache) a zero-filled physical brick for a bit depth */
-  private getZeroBrick(bitDepth: number): Uint8Array | Uint16Array {
-    let brick = this.zeroBricks.get(bitDepth);
+  /** Lazily create (and cache) a physical brick of zeros as the canvas stores them */
+  private getZeroBrick(canvas: VolumeCanvas): Uint8Array | Uint16Array {
+    let brick = this.zeroBricks.get(canvas.bitDepth);
     if (!brick) {
       const voxels = PHYSICAL_BRICK_SIZE * PHYSICAL_BRICK_SIZE * PHYSICAL_BRICK_SIZE;
-      brick = bitDepth === 16 ? new Uint16Array(voxels) : new Uint8Array(voxels);
-      this.zeroBricks.set(bitDepth, brick);
+      brick = canvas.bitDepth === 16 ? new Uint16Array(voxels) : new Uint8Array(voxels);
+      // uint16 on r16float stores value - offset, so 0 is not all-zero bits
+      if (canvas.format === 'r16float' && !this.metadata.isFloat) brick.fill(getUint16ToFloat16Lut()[0]!);
+      this.zeroBricks.set(canvas.bitDepth, brick);
     }
     return brick;
   }
@@ -320,7 +323,7 @@ export class StreamingManager {
     writeToCanvas(
       this.device,
       this.resources.canvases[ch]!,
-      data ?? this.getZeroBrick(this.resources.canvases[ch]!.bitDepth),
+      data ?? this.getZeroBrick(this.resources.canvases[ch]!),
       [PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE],
       [slot.x * PHYSICAL_BRICK_SIZE, slot.y * PHYSICAL_BRICK_SIZE, slot.z * PHYSICAL_BRICK_SIZE]
     );

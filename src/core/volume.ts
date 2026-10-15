@@ -14,9 +14,14 @@ export interface VolumeCanvas {
 
 /**
  * Detect best supported texture format for 16-bit data.
- * Tries r16float first (filterable), falls back to r8unorm.
+ * uint16 uses r16unorm (lossless) when the device has texture-formats-tier1.
+ * Otherwise, and for raw-value data (int16/float), r16float; r8unorm as a last resort.
  */
-export function detectBest16BitFormat(device: GPUDevice): GPUTextureFormat {
+export function detectBest16BitFormat(device: GPUDevice, isFloat = false): GPUTextureFormat {
+  if (!isFloat && device.features.has('texture-formats-tier1')) {
+    console.log('[Kiln] Using r16unorm for 16-bit atlas texture');
+    return 'r16unorm';
+  }
   const formats: GPUTextureFormat[] = ['r16float'];
 
   for (const format of formats) {

@@ -23,7 +23,7 @@ Kiln implements a **virtual texturing** system that decouples the logical volume
 │                              GPU Resources                                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Atlas Texture (3D)         │  Indirection Texture     │  Compute Pipeline  │
-│  - ≤660³ r16float/r8unorm   │  - Grid³ rgba8uint       │  - Ray generation  │
+│  - ≤660³ r16unorm/float/r8  │  - Grid³ rgba8uint       │  - Ray generation  │
 │  - ≤10³ slots (budget-fit)  │  - Per-cell LOD + slot   │  - Brick traversal │
 │  - 66³ per slot (w/ border) │  - 255 = empty marker    │  - Compositing     │
 └─────────────────────────────────────────────────────────────────────────────┘

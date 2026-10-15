@@ -52,7 +52,7 @@ When a finer LOD brick loads, it **overwrites** only its specific cell, leaving 
 
 The **atlas** is a single 3D texture organized as a grid of 66³ slots. Its size adapts to fit a VRAM budget — up to `660³` (a 10×10×10 grid), shrinking for multichannel datasets (see below). The texture format depends on the source data:
 - **`uint8`**: `r8unorm` (1 byte per voxel)
-- **`uint16`**: `r16float` (2 bytes per voxel) — value / 65535, converted to half precision on ingest
+- **`uint16`**: `r16unorm` (2 bytes per voxel, bit-exact) when the device has `texture-formats-tier1`; otherwise `r16float` storing value − 2048, exact up to 4096 (12-bit data), mapped back to value / 65535 in the shader
 - **`int16` and `float32`**: `r16float` (2 bytes per voxel) — raw values in half precision; the shader normalises them by the data range
 - **Fallback**: if `r16float` is unsupported, the atlas drops to `r8unorm` (16→8-bit, quality loss)
 

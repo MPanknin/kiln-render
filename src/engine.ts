@@ -20,7 +20,9 @@ import { UnsupportedDatasetError } from './data/data-provider.js';
 import { MAX_LOD_LEVELS } from './shaders/uniform-layout.js';
 import { ShardedDataProvider, isShardedUrl } from './data/sharded-provider.js';
 import { ZarrDataProvider } from './data/zarr-provider.js';
+import type { TargetFormat } from './data/brick-convert.js';
 import { initializeWithPyramidFallback } from './data/pyramid-fallback.js';
+import { UINT16_FLOAT16_OFFSET } from './utils/float16.js';
 
 export interface EngineOptions {
   /** Zero-based OME-Zarr source channels, in display order (one to four). */
@@ -206,13 +208,17 @@ export class KilnEngine {
     this._streamingManager = this.attachStreaming(renderer, resources);
   }
 
-  /** Request a device with the limits Kiln needs (large buffers, large 3D textures). */
+  /**
+   * Request a device with the limits Kiln needs (large buffers, large 3D textures), and
+   * texture-formats-tier1 where available so uint16 data is stored lossless as r16unorm.
+   */
   static async createDevice(): Promise<GPUDevice> {
     const adapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
     if (!adapter) throw new Error('WebGPU not supported');
 
     const adapterLimits = adapter.limits;
     return adapter.requestDevice({
+      requiredFeatures: adapter.features.has('texture-formats-tier1') ? ['texture-formats-tier1'] : [],
       requiredLimits: {
         maxBufferSize: adapterLimits.maxBufferSize,
         maxStorageBufferBindingSize: adapterLimits.maxStorageBufferBindingSize,
@@ -271,7 +277,7 @@ export class KilnEngine {
     let effectiveBitDepth = sourceBitDepth;
 
     if (sourceBitDepth === 16) {
-      textureFormat = detectBest16BitFormat(device);
+      textureFormat = detectBest16BitFormat(device, metadata.isFloat ?? false);
       if (textureFormat === 'r8unorm') {
         effectiveBitDepth = 8;
         console.warn(
@@ -286,11 +292,9 @@ export class KilnEngine {
     // Configure worker target format (string-URL providers only)
     if (!isExternalProvider) {
       if (dataProvider instanceof ZarrDataProvider) {
-        await dataProvider.setTargetFormat(
-          textureFormat as 'r8unorm' | 'r16float',
-        );
-      } else if (textureFormat !== 'r16unorm' || sourceBitDepth !== 16) {
-        (dataProvider as ShardedDataProvider).setTargetFormat(textureFormat as 'r8unorm' | 'r16float');
+        await dataProvider.setTargetFormat(textureFormat as TargetFormat);
+      } else {
+        (dataProvider as ShardedDataProvider).setTargetFormat(textureFormat as TargetFormat);
       }
     } else if ('setTargetFormat' in dataProvider) {
       (dataProvider as { setTargetFormat: (f: string) => void }).setTargetFormat(textureFormat);
@@ -397,6 +401,11 @@ export class KilnEngine {
 
     const resources = new VolumeResources(device, gpu.bitDepth, gpu.textureFormat, config, metadata.numChannels, gridSize);
     const renderer = new Renderer(device, gpu.outputFormat, resources, config);
+    // uint16 on r16float is stored as value - offset; map texels back to value / 65535
+    if (gpu.textureFormat === 'r16float' && !metadata.isFloat) {
+      renderer.texelScale = 65535;
+      renderer.texelBias = -UINT16_FLOAT16_OFFSET;
+    }
     return { resources, renderer };
   }
 

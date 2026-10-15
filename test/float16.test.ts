@@ -4,6 +4,7 @@ import {
   uint16ToFloat16,
   getUint16ToFloat16Lut,
   getFloat16ToFloat32Lut,
+  UINT16_FLOAT16_OFFSET,
 } from '../src/utils/float16.js';
 
 // ---------------------------------------------------------------------------
@@ -88,21 +89,24 @@ describe('uint16ToFloat16', () => {
     expect(output.length).toBe(input.length);
   });
 
-  it('encodes 0 as float16 0.0', () => {
+  /** Decode a stored texel back to the uint16 value it encodes. */
+  const decode = (bits: number) => float16BitsToFloat32(bits) + UINT16_FLOAT16_OFFSET;
+
+  it('encodes 0 as -offset', () => {
     const out = uint16ToFloat16(new Uint16Array([0]));
-    expect(out[0]).toBe(0x0000);
+    expect(float16BitsToFloat32(out[0]!)).toBe(-UINT16_FLOAT16_OFFSET);
   });
 
-  it('encodes 65535 as float16 1.0', () => {
-    const out = uint16ToFloat16(new Uint16Array([65535]));
-    // 65535/65535 = 1.0 → float16 0x3c00
-    expect(out[0]).toBe(0x3c00);
+  it('round-trips every value up to 4096 exactly, so 12-bit data is lossless', () => {
+    const values = Uint16Array.from({ length: 4097 }, (_, i) => i);
+    const out = uint16ToFloat16(values);
+    for (let i = 0; i < values.length; i++) expect(decode(out[i]!)).toBe(i);
   });
 
-  it('encodes midpoint 32768 to approximately 0.5', () => {
-    const out = uint16ToFloat16(new Uint16Array([32768]));
-    const decoded = float16BitsToFloat32(out[0]!);
-    expect(decoded).toBeCloseTo(32768 / 65535, 2);
+  it('stays within one float16 step above 4096', () => {
+    const out = uint16ToFloat16(new Uint16Array([32768, 65535]));
+    expect(decode(out[0]!)).toBe(32768);
+    expect(Math.abs(decode(out[1]!) - 65535)).toBeLessThanOrEqual(32);
   });
 
   it('preserves monotonic ordering across the full range', () => {
@@ -132,10 +136,10 @@ describe('uint16ToFloat16', () => {
 // ---------------------------------------------------------------------------
 
 describe('getUint16ToFloat16Lut', () => {
-  it('matches float32ToFloat16Bits(i / 65535) for all 65536 values', () => {
+  it('matches float32ToFloat16Bits(i - offset) for all 65536 values', () => {
     const lut = getUint16ToFloat16Lut();
     for (let i = 0; i < 65536; i++) {
-      expect(lut[i]).toBe(float32ToFloat16Bits(i / 65535));
+      expect(lut[i]).toBe(float32ToFloat16Bits(i - UINT16_FLOAT16_OFFSET));
     }
   });
 });

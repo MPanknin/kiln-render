@@ -33,7 +33,7 @@ const features = [
   },
   {
     title: 'uint8, uint16, int16, float32 input',
-    body: 'Everything except uint8 is stored as r16float on the GPU, with window/level controls. Up to 4 channels (beta) with per-channel color and windowing.',
+    body: '16-bit data stays 16-bit on the GPU (r16unorm or r16float), with window/level controls. Up to 4 channels (beta) with per-channel color and windowing.',
   },
 ];
 

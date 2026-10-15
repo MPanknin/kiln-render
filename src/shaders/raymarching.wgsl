@@ -124,7 +124,8 @@ fn rayMarchSimple(
         let pos = rayOrigin + rayDir * t;
         // Convert normalized position [-0.5, 0.5] to UV [0, 1] for atlas sampling
         let atlasUV = (pos / normalizedSize) + 0.5;
-        let density = textureSampleLevel(volumeTexture, volumeSampler, atlasUV, 0.0).r;
+        let rawDensity = textureSampleLevel(volumeTexture, volumeSampler, atlasUV, 0.0).r;
+        let density = clamp((rawDensity - uniforms.floatMin) / max(uniforms.floatMax - uniforms.floatMin, 0.0001), 0.0, 1.0);
         composeSampleWindowed(density, extinctionScale, uniforms.windowCenter, uniforms.windowWidth, &color, &alpha);
         if (alpha > EARLY_EXIT_ALPHA) { break; }
     }

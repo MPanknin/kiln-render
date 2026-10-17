@@ -27,6 +27,8 @@ export interface ViewerState {
   windowCenter: number;
   windowWidth: number;
   densityScale: number;
+  shading: number;
+  gradientOpacity: number;
   isoValue: number;
   /** User-intended render scale (not the 0.25 interaction override) */
   renderScale: number;
@@ -172,6 +174,8 @@ export class KilnViewer {
       windowCenter: this.renderer.windowCenter,
       windowWidth: this.renderer.windowWidth,
       densityScale: this.renderer.densityScale,
+      shading: this.renderer.shading,
+      gradientOpacity: this.renderer.gradientOpacity,
       isoValue: this.renderer.isoValue,
       renderScale: this.engine.renderScale,
       tfPreset: this.transferFunction.preset,

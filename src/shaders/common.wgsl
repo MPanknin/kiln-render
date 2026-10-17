@@ -104,6 +104,14 @@ fn phongLighting(normal: vec3f, lightDir: vec3f, baseColor: vec3f) -> vec3f {
     return ambient + diffuse + specular;
 }
 
+// Headlight shading for DVR samples. A ray sees boundaries from both sides, so
+// the diffuse term uses |N·L| rather than leaving back faces black; with the
+// light at the eye the Blinn half vector is the light direction itself.
+fn shadeTwoSided(normal: vec3f, lightDir: vec3f, baseColor: vec3f) -> vec3f {
+    let ndl = abs(dot(normal, lightDir));
+    return (AMBIENT + DIFFUSE * ndl) * baseColor + SPECULAR * pow(ndl, SHININESS);
+}
+
 // Window/Level: remap a density sub-range to [0,1] for contrast adjustment.
 fn applyWindow(density: f32, windowCenter: f32, windowWidth: f32) -> f32 {
     let halfWidth = windowWidth * 0.5;

@@ -3,7 +3,7 @@ import { StreamingManager } from '../src/streaming/streaming-manager.js';
 import { AtlasAllocator } from '../src/streaming/atlas-allocator.js';
 import { DatasetConfig } from '../src/core/config.js';
 import { writeToCanvas } from '../src/core/volume.js';
-import { float16BitsToFloat32, float32ToFloat16Bits } from '../src/utils/float16.js';
+import { float16BitsToFloat32, float32ToFloat16Bits, getUint16ToFloat16Lut } from '../src/utils/float16.js';
 
 vi.mock('../src/core/volume.js', () => ({ writeToCanvas: vi.fn() }));
 
@@ -57,6 +57,40 @@ describe('raw float missing-channel padding', () => {
       expect(writes).toHaveLength(1);
       expectTransparent(writes[0]![2] as Uint16Array);
       expect(state.slotChannels.get(0)).toBe(1);
+    } finally { sm.dispose(); }
+  });
+
+  it('writes the baseline once per slot, not again when the slot is reused', () => {
+    const { sm, state } = setup();
+    vi.mocked(writeToCanvas).mockClear();
+    try {
+      state.zeroStaleChannels(0, { x: 0, y: 0, z: 0 }, 0); // fresh: channel 1 gets the baseline
+      state.zeroStaleChannels(0, { x: 0, y: 0, z: 0 }, 0); // reused, channel 1 still holds it
+      expect(vi.mocked(writeToCanvas)).toHaveBeenCalledOnce();
+    } finally { sm.dispose(); }
+  });
+
+  it('leaves fresh unorm slots alone: all-zero texels are already the baseline', () => {
+    const { sm, resources, state } = setup();
+    state.metadata.isFloat = false;
+    resources.canvases.forEach(c => { c.bitDepth = 8; c.format = 'r8unorm'; });
+    vi.mocked(writeToCanvas).mockClear();
+    try {
+      state.zeroStaleChannels(0, { x: 0, y: 0, z: 0 }, 0);
+      expect(vi.mocked(writeToCanvas)).not.toHaveBeenCalled();
+    } finally { sm.dispose(); }
+  });
+
+  it('pads fresh slots for uint16 stored on r16float, whose zero is not all-zero bits either', () => {
+    const { sm, resources, state } = setup();
+    state.metadata.isFloat = false;
+    vi.mocked(writeToCanvas).mockClear();
+    try {
+      state.zeroStaleChannels(0, { x: 0, y: 0, z: 0 }, 0);
+      const calls = vi.mocked(writeToCanvas).mock.calls;
+      expect(calls).toHaveLength(1);
+      expect(calls[0]![1]).toBe(resources.canvases[1]);
+      expect((calls[0]![2] as Uint16Array)[0]).toBe(getUint16ToFloat16Lut()[0]);
     } finally { sm.dispose(); }
   });
 });

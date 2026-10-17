@@ -179,8 +179,8 @@ export class StreamingManager {
   // without this a failed channel would show ghosts.
   private zeroBricks = new Map<number, Uint8Array | Uint16Array>();
 
-  // Per slot: channel bits ever written (fresh texture memory is zero, so an
-  // unwritten channel region needs no zero-fill). Survives clear() like the texture.
+  // Per slot: channel bits whose region holds something other than the baseline
+  // (getZeroBrick). Survives clear() like the texture; read it through dirtyBits().
   private dirtyChannels = new Map<number, number>();
   // Per slot: channel bits currently holding the resident brick's data.
   private slotChannels = new Map<number, number>();
@@ -332,17 +332,25 @@ export class StreamingManager {
       [slot.x * PHYSICAL_BRICK_SIZE, slot.y * PHYSICAL_BRICK_SIZE, slot.z * PHYSICAL_BRICK_SIZE]
     );
     const bit = 1 << ch;
-    this.dirtyChannels.set(slotIndex, (this.dirtyChannels.get(slotIndex) ?? 0) | bit);
+    const dirty = this.dirtyBits(slotIndex);
+    this.dirtyChannels.set(slotIndex, data ? dirty | bit : dirty & ~bit);
     const have = this.slotChannels.get(slotIndex) ?? 0;
     this.slotChannels.set(slotIndex, data ? have | bit : have & ~bit);
   }
 
+  /** Channel regions of a slot that don't hold the baseline. Fresh texels are all-zero bits,
+   *  which is the baseline only for unorm atlases, so on r16float every unwritten region counts. */
+  private dirtyBits(slotIndex: number): number {
+    const fresh = this.resources.canvases[0]?.format === 'r16float' ? (1 << this.resources.numChannels) - 1 : 0;
+    return this.dirtyChannels.get(slotIndex) ?? fresh;
+  }
+
   /** Zero every channel region of a freshly (re)allocated slot that still holds older data. */
   private zeroStaleChannels(slotIndex: number, slot: AtlasSlot, except: number): void {
-    const dirty = this.dirtyChannels.get(slotIndex) ?? 0;
+    const dirty = this.dirtyBits(slotIndex);
     this.slotChannels.set(slotIndex, 0);
     for (let c = 0; c < this.resources.numChannels; c++) {
-      if (c !== except && (this.metadata.isFloat || (dirty >> c) & 1)) this.writeSlotChannel(slotIndex, slot, c, null);
+      if (c !== except && (dirty >> c) & 1) this.writeSlotChannel(slotIndex, slot, c, null);
     }
   }
 
@@ -367,7 +375,7 @@ export class StreamingManager {
       for (let ch = 0; ch < this.resources.numChannels; ch++) {
         if (!((bits >> ch) & 1) || (have >> ch) & 1) continue;
         // Stale data from an earlier brick would show the moment alpha > 0: zero it now.
-        if ((this.dirtyChannels.get(entry.slotIndex) ?? 0) >> ch & 1) this.writeSlotChannel(entry.slotIndex, entry.slot, ch, null);
+        if ((this.dirtyBits(entry.slotIndex) >> ch) & 1) this.writeSlotChannel(entry.slotIndex, entry.slot, ch, null);
         work.push({ key, slotIndex: entry.slotIndex, slot: entry.slot, ch });
       }
     }
@@ -1303,12 +1311,12 @@ export class StreamingManager {
     // failed channels are zero-filled — the slot may be a reused
     // (evicted) slot still holding a previous brick's data for that channel.
     const tUpload = performance.now();
-    const dirty = this.dirtyChannels.get(result.slotIndex) ?? 0;
+    const dirty = this.dirtyBits(result.slotIndex);
     this.slotChannels.set(result.slotIndex, 0);
     for (let ch = 0; ch < numChannels; ch++) {
       const data = channelResults[ch]?.data ?? null;
       // Channels not loaded (hidden or failed) are zeroed only if the slot region is stale.
-      if (data || this.metadata.isFloat || (dirty >> ch) & 1) this.writeSlotChannel(result.slotIndex, result.slot, ch, data);
+      if (data || (dirty >> ch) & 1) this.writeSlotChannel(result.slotIndex, result.slot, ch, data);
     }
     this.uploadAvg.add(performance.now() - tUpload);
 
@@ -1367,7 +1375,7 @@ export class StreamingManager {
       this.releaseEvicted(result);
       slot = result;
       const tUpload = performance.now();
-      const dirty = this.dirtyChannels.get(result.slotIndex) ?? 0;
+      const dirty = this.dirtyBits(result.slotIndex);
       this.slotChannels.set(result.slotIndex, 0);
       for (let ch = 0; ch < numChannels; ch++) {
         const real = arrived.has(ch) ? results[ch]?.data ?? null : null;
@@ -1378,7 +1386,7 @@ export class StreamingManager {
           this.writeSlotChannel(result.slotIndex, result.slot, ch, ph);
           // a placeholder is not this brick's data: keep the channel marked missing
           this.slotChannels.set(result.slotIndex, (this.slotChannels.get(result.slotIndex) ?? 0) & ~(1 << ch));
-        } else if (this.metadata.isFloat || (dirty >> ch) & 1) {
+        } else if ((dirty >> ch) & 1) {
           this.writeSlotChannel(result.slotIndex, result.slot, ch, null);
         }
       }

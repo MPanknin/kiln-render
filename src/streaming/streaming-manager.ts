@@ -188,6 +188,8 @@ export class StreamingManager {
   // Only channels the renderer displays are streamed; hidden ones are
   // fetched for resident bricks when they become visible (setVisibleChannels).
   private visibleMask = 0xf;
+  // Provider stats may only cover channels fetched before a visibility expansion.
+  private providerStatsCoverVisibleChannels = true;
   private fillAbort: AbortController | null = null;
 
   // Channels shown while the base was still loading; backfilled once it completes.
@@ -361,6 +363,19 @@ export class StreamingManager {
     const added = mask & ~this.visibleMask;
     this.visibleMask = mask;
     if (!added) return;
+    if (this.resources.numChannels > 1) this.providerStatsCoverVisibleChannels = false;
+    if (this.emptyBricks.size > 0) {
+      // These regions were proven dark for an older visible-channel set only.
+      this.emptyBricks.clear();
+      this.resources.indirection.clearAll();
+      for (const entry of this.loadedBricks.values()) {
+        const brick = this.resources.allocator.getMetadata(entry.slotIndex);
+        if (brick) this.resources.indirection.setBrick(
+          brick.bx, brick.by, brick.bz, entry.slot.x, entry.slot.y, entry.slot.z, brick.lod,
+        );
+      }
+      this.notifyContentChanged();
+    }
     if (this.baseLodLoaded) this.fillMissingChannels(added);
     else this.pendingVisibleBits |= added;
   }
@@ -589,7 +604,10 @@ export class StreamingManager {
       try {
       if (st.empty === null) {
         const tIsEmpty = performance.now();
-        st.empty = await this.dataProvider.isBrickEmpty(maxLod, bx, by, bz, this.config.emptyBrickThreshold);
+        const checkedMask = this.visibleMask;
+        st.empty = this.providerStatsCoverVisibleChannels &&
+          await this.dataProvider.isBrickEmpty(maxLod, bx, by, bz, this.config.emptyBrickThreshold);
+        if (checkedMask !== this.visibleMask) st.empty = false;
         sumIsEmptyMs += performance.now() - tIsEmpty;
         if (stale()) return;
         if (st.empty) {
@@ -1221,10 +1239,12 @@ export class StreamingManager {
     if (signal.aborted) return;
 
     // Check if empty
-    const isEmpty = await this.dataProvider.isBrickEmpty(lod, bx, by, bz, this.config.emptyBrickThreshold);
+    const checkedMask = this.visibleMask;
+    const isEmpty = this.providerStatsCoverVisibleChannels &&
+      await this.dataProvider.isBrickEmpty(lod, bx, by, bz, this.config.emptyBrickThreshold);
     if (signal.aborted) return;
 
-    if (isEmpty) {
+    if (isEmpty && checkedMask === this.visibleMask) {
       this.emptyBricks.add(key);
       this.resources.indirection.setEmpty(bx, by, bz, lod);
       // May replace a coarse parent already on screen — the region must redraw
@@ -1271,6 +1291,7 @@ export class StreamingManager {
       const threshold = this.config.emptyBrickThreshold ?? 1;
       const maxAcrossChannels = Math.max(...channelResults.map(r => r?.max ?? 0));
       if (maxAcrossChannels < threshold) {
+        if (this.channelsToLoad().some(ch => !loadChannels.includes(ch))) return;
         this.emptyBricks.add(key);
         this.resources.indirection.setEmpty(bx, by, bz, lod);
         this.notifyContentChanged();
@@ -1447,6 +1468,7 @@ export class StreamingManager {
       return;
     }
     if (!loadChannels.some(hasSignal)) {
+      if (this.channelsToLoad().some(ch => !loadChannels.includes(ch))) return;
       // A failed channel is unknown, not proof that its part of the brick is dark.
       // Keep the ancestor visible and leave this brick eligible for a later retry.
       if (loadChannels.some(ch => !results[ch])) {

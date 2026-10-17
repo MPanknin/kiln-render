@@ -1435,6 +1435,12 @@ export class StreamingManager {
       return;
     }
     if (!loadChannels.some(hasSignal)) {
+      // A failed channel is unknown, not proof that its part of the brick is dark.
+      // Keep the ancestor visible and leave this brick eligible for a later retry.
+      if (loadChannels.some(ch => !results[ch])) {
+        this.bricksFailed++;
+        return;
+      }
       // every channel below threshold: empty, exactly as the all-at-once path decides
       this.emptyBricks.add(key);
       this.resources.indirection.setEmpty(bx, by, bz, lod);

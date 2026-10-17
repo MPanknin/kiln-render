@@ -12,7 +12,7 @@ import { COMPUTE_UNIFORMS, SLICE_UNIFORMS, MAX_LOD_LEVELS } from '../shaders/uni
 import type { DatasetConfig } from './config.js';
 import { RayVisibility } from '../streaming/ray-visibility.js';
 
-// Frames between ray-visibility readbacks (?rayguide=1); the bitset collects all of them
+// Batch ray visibility while rendering continues; always flush the final frame before going idle.
 const RAY_READBACK_INTERVAL = 4;
 
 // Volume render mode (shader-side)
@@ -118,7 +118,7 @@ export class Renderer {
   private readonly rayVisitedBuffer: GPUBuffer;
   private readonly rayReadback: GPUBuffer | null;
   private rayReadbackBusy = false;
-  private rayFrame = 0;
+  private rayFramesPending = 0;
   /** Called with each visibility readback (bit i ⇔ a ray entered finest-level cell i). */
   onRayVisibility?: (bits: Uint32Array) => void;
 
@@ -757,15 +757,6 @@ export class Renderer {
       computePass.dispatchWorkgroups(workgroupsX, workgroupsY, 1);
       computePass.end();
 
-      // Hand the cells rays entered over the last frames to streaming, then start collecting anew
-      readRayVisits = this.rayReadback !== null && !this.rayReadbackBusy && this.useIndirection
-        && ++this.rayFrame % RAY_READBACK_INTERVAL === 0;
-      if (readRayVisits) {
-        const bytes = this.rayReadback!.size;
-        encoder.copyBufferToBuffer(this.rayVisitedBuffer, 4, this.rayReadback!, 0, bytes);
-        encoder.clearBuffer(this.rayVisitedBuffer, 4, bytes);
-      }
-
       // Temporal accumulation pass
       if (this.enableTAA) {
         const weight = 1.0 / (this.active.accumFrameCount + 1);
@@ -786,6 +777,15 @@ export class Renderer {
         this.active.accumIndex = 1 - this.active.accumIndex as 0 | 1;
         if (this.active.accumFrameCount < 64) {
           this.active.accumFrameCount++;
+        }
+      }
+
+      // A TAA-off parameter change may render only once. Likewise the final TAA frame
+      // may leave a partial batch, so don't depend on another draw to deliver its visits.
+      if (this.rayReadback !== null && this.useIndirection) {
+        this.rayFramesPending++;
+        if (this.rayFramesPending >= RAY_READBACK_INTERVAL || this.isConverged) {
+          readRayVisits = this.copyRayVisits(encoder);
         }
       }
     }
@@ -858,6 +858,16 @@ export class Renderer {
     if (readRayVisits) this.readRayVisits();
   }
 
+  /** Copy collected visits only when the staging buffer is available. */
+  private copyRayVisits(encoder: GPUCommandEncoder): boolean {
+    if (!this.rayReadback || this.rayReadbackBusy || this.rayFramesPending === 0) return false;
+    const bytes = this.rayReadback.size;
+    encoder.copyBufferToBuffer(this.rayVisitedBuffer, 4, this.rayReadback, 0, bytes);
+    encoder.clearBuffer(this.rayVisitedBuffer, 4, bytes);
+    this.rayFramesPending = 0;
+    return true;
+  }
+
   /** Map the staging copy without stalling the frame; the next copy waits until it is unmapped. */
   private readRayVisits(): void {
     const buffer = this.rayReadback!;
@@ -866,7 +876,18 @@ export class Renderer {
       const bits = new Uint32Array(buffer.getMappedRange().slice(0));
       buffer.unmap();
       this.rayReadbackBusy = false;
-      if (!this.disposed) this.onRayVisibility?.(bits);
+      if (this.disposed) return;
+      this.onRayVisibility?.(bits);
+
+      // Rendering can finish while mapAsync is pending. Drain the last batch with
+      // a copy-only submission: no extra raymarch, TAA reset or redraw loop needed.
+      if (!this.disposed && this.marchesRays && this.isConverged && this.rayFramesPending > 0) {
+        const encoder = this.device.createCommandEncoder();
+        if (this.copyRayVisits(encoder)) {
+          this.device.queue.submit([encoder.finish()]);
+          this.readRayVisits();
+        }
+      }
     }, () => { this.rayReadbackBusy = false; }); // destroyed while mapping (dispose)
   }
 

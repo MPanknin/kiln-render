@@ -69,8 +69,8 @@ fn setupBrick(
 
 // Ray-guided streaming: record that a ray entered this finest-level brick cell.
 // Called per brick a ray steps into, so cells behind early ray termination,
-// outside the clip box or never reached stay unmarked. The read first keeps
-// atomics off the common case where many rays share a cell.
+// outside the clip box or never reached stay unmarked. The atomic read avoids
+// redundant atomic writes when many rays share a cell; it still has a GPU cost.
 fn markRayVisited(brickIndex: vec3f) {
     let words = arrayLength(&rayVisited);
     if (words <= 1u) { return; }

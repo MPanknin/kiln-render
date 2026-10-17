@@ -23,6 +23,7 @@ import type { PipelineTimings } from '../data/data-provider.js';
 import { RollingAvg } from '../data/network-tracker.js';
 import { createBrickMilestones, stampBaseCoverage } from '../core/milestones.js';
 import type { BrickMilestones } from '../core/milestones.js';
+import { RayVisibility } from './ray-visibility.js';
 
 // Content commits coalesce for a quiet period, but a redraw is never delayed past the max wait
 const RESET_QUIET_MS = 100;
@@ -70,6 +71,8 @@ export interface StreamingStats {
   bricksFailed: number; // channel 0 load failed; left unloaded (never marked empty) and retried
   // End-to-end latency: dispatch → committed (rolling avg ms)
   avgBrickLatencyMs: number;
+  // Bricks left out of the last desired set because no ray reached them (?rayguide=1)
+  rayCulledCount: number;
 }
 
 /** Brick coordinates from a `lod{L}:{z}/{y}/{x}` key. */
@@ -225,7 +228,12 @@ export class StreamingManager {
     bricksDiscarded: 0,
     bricksFailed: 0,
     avgBrickLatencyMs: 0,
+    rayCulledCount: 0,
   };
+
+  // Ray-guided brick selection (?rayguide=1): null when off
+  private rayVisibility: RayVisibility | null = null;
+  private rayGuidanceActive = true;
 
   // Throttle updates (don't recompute every frame)
   private lastUpdateFrame = -1;
@@ -854,6 +862,33 @@ export class StreamingManager {
     return dist > this.cameraMovementThreshold;
   }
 
+  /** Ray-guided brick selection (?rayguide=1): only bricks that rays actually reach get refined. */
+  enableRayGuidance(): void {
+    this.rayVisibility = new RayVisibility(this.config.datasetGrid);
+  }
+
+  /** One visibility readback from the renderer: bit i set ⇔ a ray entered finest-level cell i. */
+  reportRayVisibility(bits: Uint32Array): void {
+    if (this.rayGuidanceActive) this.rayVisibility?.report(bits);
+  }
+
+  /** Rays are only marched in the volume modes; slice planes may sample any brick. */
+  setRayGuidanceActive(active: boolean): void {
+    if (active === this.rayGuidanceActive) return;
+    this.rayGuidanceActive = active;
+    this.rayVisibility?.reset();
+  }
+
+  /** Whether ray guidance leaves out this brick: below the pinned base level and not reached by a ray lately. */
+  private rayCulls(bx: number, by: number, bz: number, lod: number): boolean {
+    const visibility = this.rayVisibility;
+    if (!visibility || !this.rayGuidanceActive || lod >= this.maxLod) return false;
+    // Until the first readback arrives, wait rather than load bricks blind
+    if (!visibility.ready) return true;
+    const span = this.config.levelSpanCells(lod);
+    return !visibility.anySeen([bx * span[0], by * span[1], bz * span[2]], span);
+  }
+
   /**
    * Force immediate recomputation of desired set
    */
@@ -1085,11 +1120,17 @@ export class StreamingManager {
     };
 
     // Helper to add a brick to desired set
+    let rayCulled = 0;
     this.addDesiredBrick = (bricks: BrickRequest[], bx: number, by: number, bz: number, lod: number, dist: number) => {
       const key = `lod${lod}:${bz}/${by}/${bx}`;
 
       // Check if known empty
       if (this.emptyBricks.has(key)) {
+        return;
+      }
+
+      if (this.rayCulls(bx, by, bz, lod)) {
+        rayCulled++;
         return;
       }
 
@@ -1190,6 +1231,7 @@ export class StreamingManager {
       bricksDiscarded: 0,
       bricksFailed: 0,
       avgBrickLatencyMs: 0,
+      rayCulledCount: rayCulled,
     };
   }
 

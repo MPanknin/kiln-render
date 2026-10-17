@@ -37,6 +37,8 @@ fn setupBrick(
     let tBrick = intersectBoxInv(rayOrigin, invDir, brickMinWorld, brickMaxWorld);
     info.tEnd = min(tBrick.y, tEnd);
 
+    markRayVisited(brickIndex);
+
     info.indirection = lookupIndirection(brickIndex);
     // w=0 means not loaded, w=255 means known empty - both are invalid
     info.valid = info.indirection.w > 0u && info.indirection.w < 255u;
@@ -63,6 +65,23 @@ fn setupBrick(
     }
 
     return info;
+}
+
+// Ray-guided streaming: record that a ray entered this finest-level brick cell.
+// Called per brick a ray steps into, so cells behind early ray termination,
+// outside the clip box or never reached stay unmarked. The atomic read avoids
+// redundant atomic writes when many rays share a cell; it still has a GPU cost.
+fn markRayVisited(brickIndex: vec3f) {
+    let words = arrayLength(&rayVisited);
+    if (words <= 1u) { return; }
+    let grid = textureDimensions(indirectionTexture);
+    let c = vec3u(brickIndex);
+    let cell = (c.z * grid.y + c.y) * grid.x + c.x;
+    let word = 1u + (cell >> 5u);
+    let bit = 1u << (cell & 31u);
+    if (word < words && (atomicLoad(&rayVisited[word]) & bit) == 0u) {
+        atomicOr(&rayVisited[word], bit);
+    }
 }
 
 // Refine isosurface position using bisection with windowing.

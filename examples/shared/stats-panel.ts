@@ -192,7 +192,7 @@ export class StatsPanel {
       const c = stats.bricksCommitted;
       const x = stats.bricksCancelled;
       const w = stats.bricksDiscarded;
-      this.rows.brickLifecycle!.textContent = `D:${d} C:${c} X:${x} W:${w}`;
+      this.rows.brickLifecycle!.textContent = `D:${d} C:${c} X:${x} W:${w}${stats.rayCulledCount > 0 ? ` R:${stats.rayCulledCount}` : ''}`;
       const wastedDenom = c + w;
       this.rows.wastedRate!.textContent = wastedDenom > 0 ? `${((w / wastedDenom) * 100).toFixed(1)}%` : '—';
       const hitRatio = pt.chunkCacheHitRatio;

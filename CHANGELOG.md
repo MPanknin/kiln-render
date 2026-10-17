@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - OME-Zarr with x, y, z axis order and Zarr URLs without `.zarr`, so public [webKnossos](https://webknossos.org) datasets open directly.
 - Auto contrast per channel in the multichannel viewer (an **Auto** button on each channel, `A` fits all visible channels).
 - `StreamingManager.getChannelHistogram(channel, bins)`: the value distribution of a channel over the loaded base level.
+- Experimental ray-guided brick selection behind the `?rayguide=1` URL flag: rays mark the brick cells they enter, and bricks no ray reached (behind opaque material, outside the clip box) are not streamed. The stats panel and `?bench=1` report how many bricks it left out.
 
 ### Changed
 - Atlas selection validates filterable 3D bindings inside a WebGPU error scope. Devices exposing unfilterable `r16unorm` under `texture-formats-tier1` fall back to the 12-bit-exact `r16float` path before loading bricks.
@@ -18,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `StreamingManager.setBaseLodLoadedCallback` no longer passes brick data to the callback, and also fires when a channel shown later has filled in.
 
 ### Fixed
+- Ray-guided streaming flushes visibility when rendering goes idle, including with TAA disabled and when a previous GPU readback is still pending, so newly exposed bricks can refine without another camera movement.
 - `int16` and `float32` values are rounded to the nearest half float. They were truncated, and values below 2^-14 were flushed to zero.
 
 ## [0.5.0] - 2026-09-28

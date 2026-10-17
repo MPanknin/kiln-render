@@ -397,6 +397,19 @@ export class KilnEngine {
     // budget — a fixed 660³ × 4 channels (~2.3 GB) OOMs mobile GPUs at startup.
     const bytesPerVoxel = gpu.textureFormat === 'r8unorm' ? 1 : 2;
     const { gridSize, atlasSize } = computeAtlasGrid(metadata.numChannels, bytesPerVoxel, gpu.atlasBudgetBytes);
+    const base = metadata.levels.find(level => level.lod === metadata.maxLod);
+    const baseBricks = base ? base.brickGrid[0] * base.brickGrid[1] * base.brickGrid[2] : 0;
+    const slots = gridSize ** 3;
+    // Every base brick is pinned. Leave a working slot when finer levels exist;
+    // otherwise streaming would report completion with permanent holes or no refinement.
+    const workingSlots = metadata.maxLod > 0 ? 1 : 0;
+    if (baseBricks + workingSlots > slots) {
+      throw new UnsupportedDatasetError([
+        `The coarsest level needs ${baseBricks} pinned bricks, but the atlas has ${slots} slots` +
+        (workingSlots ? ' and needs a free slot for refinement' : '') +
+        '. Add a coarser pyramid level or increase atlas capacity.',
+      ]);
+    }
     const atlasVramMB = Math.round((metadata.numChannels * atlasSize ** 3 * bytesPerVoxel) / 1e6);
     console.log(`[Kiln] atlas grid ${gridSize}³ (${atlasSize}³ voxels) × ${metadata.numChannels} channel(s) ≈ ${atlasVramMB} MB VRAM`);
 

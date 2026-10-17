@@ -457,7 +457,7 @@ export class KilnEngine {
     let changedChannels = 0;
     sourceChannels.forEach((c, slot) => { if (c !== before[slot]) changedChannels |= 1 << slot; });
     const stale = timepoint !== beforeTimepoint ? (1 << numChannels) - 1 : changedChannels;
-    if (!stale) return;
+    if (!stale && numChannels === this._renderer.numChannels) return;
 
     this.config.emptyBrickThreshold = emptyThresholdFor(this.metadata);
     if (numChannels !== this._renderer.numChannels) {

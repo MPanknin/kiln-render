@@ -27,7 +27,7 @@ describe('engine channel-count changes', () => {
     expect(engine.renderer.numChannels).toBe(remaining.length);
     expect(engine.metadata.sourceChannels).toEqual(remaining);
     expect(engine.renderer.resetAccumulation).toHaveBeenCalledOnce();
-    });
+  });
 
   it('keeps an identical selection as a no-op', () => {
     const engine = Object.create(KilnEngine.prototype) as any;

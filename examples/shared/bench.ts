@@ -36,6 +36,7 @@ interface BenchStats {
   bricksDiscarded: number;
   evictedCount: number;
   avgBrickLatencyMs: number;
+  rayCulledCount: number;
   pipelineTimings: {
     avgQueueMs: number;
     avgFetchMs: number;
@@ -76,6 +77,8 @@ export interface BenchReport {
   evicted: number;
   loadedCount: number;
   desiredCount: number;
+  /** Bricks ray guidance (?rayguide=1) left out of the final desired set. */
+  rayCulled: number;
   avgBrickLatencyMs: number;
   chunkCacheHitRatio: number;
   timings: { queueMs: number; fetchMs: number; assemblyMs: number; uploadMs: number };
@@ -131,7 +134,7 @@ function formatReport(r: BenchReport): string {
     `${pad('avg brick latency')}${Math.round(r.avgBrickLatencyMs)} ms`,
     `${pad('chunk cache hit')}${(r.chunkCacheHitRatio * 100).toFixed(0)}%`,
     `${pad('pipeline avg ms')}queue ${r.timings.queueMs.toFixed(0)} · fetch ${r.timings.fetchMs.toFixed(0)} · assembly ${r.timings.assemblyMs.toFixed(0)} · upload ${r.timings.uploadMs.toFixed(0)}`,
-    `${pad('resident/desired')}${r.loadedCount} / ${r.desiredCount}`,
+    `${pad('resident/desired')}${r.loadedCount} / ${r.desiredCount}${r.rayCulled > 0 ? ` · ray-culled ${r.rayCulled}` : ''}`,
     '==================',
   ].join('\n');
 }
@@ -175,6 +178,7 @@ export async function maybeRunBench(viewer: BenchViewer): Promise<void> {
     evicted: s.evictedCount,
     loadedCount: s.loadedCount,
     desiredCount: s.desiredCount,
+    rayCulled: s.rayCulledCount,
     avgBrickLatencyMs: s.avgBrickLatencyMs,
     chunkCacheHitRatio: s.pipelineTimings.chunkCacheHitRatio ?? 0,
     timings: {

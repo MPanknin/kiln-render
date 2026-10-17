@@ -23,6 +23,7 @@ import { ZarrDataProvider } from './data/zarr-provider.js';
 import type { TargetFormat } from './data/brick-convert.js';
 import { initializeWithPyramidFallback } from './data/pyramid-fallback.js';
 import { UINT16_FLOAT16_OFFSET } from './utils/float16.js';
+import { isFlagEnabled } from './core/feature-flags.js';
 
 export interface EngineOptions {
   /** Zero-based OME-Zarr source channels, in display order (one to four). */
@@ -143,6 +144,8 @@ interface GpuSetup {
   textureFormat: GPUTextureFormat;
   bitDepth: 8 | 16;
   atlasBudgetBytes?: number;
+  /** Ray-guided brick selection, behind the `?rayguide=1` feature flag */
+  rayGuided: boolean;
 }
 
 export class KilnEngine {
@@ -304,7 +307,10 @@ export class KilnEngine {
     // Build DatasetConfig
     const config = new DatasetConfig(metadata.dimensions, metadata.voxelSpacing, emptyThresholdFor(metadata), levelModel(pyramid, metadata));
 
-    const gpu: GpuSetup = { outputFormat: format, textureFormat, bitDepth: effectiveBitDepth, atlasBudgetBytes: options.atlasBudgetBytes };
+    const gpu: GpuSetup = {
+      outputFormat: format, textureFormat, bitDepth: effectiveBitDepth, atlasBudgetBytes: options.atlasBudgetBytes,
+      rayGuided: isFlagEnabled('rayguide'),
+    };
     const { resources, renderer } = KilnEngine.buildGpu(device, metadata, config, gpu);
     milestones.gpuReady = performance.now();
 
@@ -420,7 +426,7 @@ export class KilnEngine {
     console.log(`[Kiln] atlas grid ${gridSize}³ (${atlasSize}³ voxels) × ${metadata.numChannels} channel(s) ≈ ${atlasVramMB} MB VRAM`);
 
     const resources = new VolumeResources(device, gpu.bitDepth, gpu.textureFormat, config, metadata.numChannels, gridSize);
-    const renderer = new Renderer(device, gpu.outputFormat, resources, config);
+    const renderer = new Renderer(device, gpu.outputFormat, resources, config, gpu.rayGuided);
     // uint16 on r16float is stored as value - offset; map texels back to value / 65535
     if (gpu.textureFormat === 'r16float' && !metadata.isFloat) {
       renderer.texelScale = 65535;
@@ -441,6 +447,10 @@ export class KilnEngine {
       () => renderer.resetAccumulation(),
       visibleChannelMask(renderer),
     );
+    if (renderer.rayGuided) {
+      streamingManager.enableRayGuidance();
+      renderer.onRayVisibility = (bits) => streamingManager.reportRayVisibility(bits);
+    }
     // When base LOD derives float/channel ranges, update renderer + metadata.
     streamingManager.setRangesDerivedCallback((opts) => {
       if (opts.dataRange) {
@@ -607,6 +617,7 @@ export class KilnEngine {
 
     // Always run streaming (may trigger onDirty via resetAccumulation)
     if (this.renderer.numChannels > 1) this.streamingManager.setVisibleChannels(visibleChannelMask(this.renderer));
+    this.streamingManager.setRayGuidanceActive(this.renderer.marchesRays);
     this.streamingManager.update(resolved);
 
     const needsRender = this.dirty || interacting || !this.renderer.isConverged;

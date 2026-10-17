@@ -10,6 +10,10 @@ import { VolumeResources } from './volume-resources.js';
 import { wireframeShader, axisShader, buildComputeShader, blitShader, accumulateShader, buildSlicePlanesShader } from '../shaders/index.js';
 import { COMPUTE_UNIFORMS, SLICE_UNIFORMS, MAX_LOD_LEVELS } from '../shaders/uniform-layout.js';
 import type { DatasetConfig } from './config.js';
+import { RayVisibility } from '../streaming/ray-visibility.js';
+
+// Frames between ray-visibility readbacks (?rayguide=1); the bitset collects all of them
+const RAY_READBACK_INTERVAL = 4;
 
 // Volume render mode (shader-side)
 export type VolumeRenderMode = 'dvr' | 'mip' | 'iso' | 'lod' | 'slice' | 'slice-lod';
@@ -110,6 +114,14 @@ export class Renderer {
   private blitPipeline: GPURenderPipeline;
   private computeUniformBuffer: GPUBuffer;
 
+  // Ray-guided streaming: bitset of brick cells rays entered, and its staging copy (null when off)
+  private readonly rayVisitedBuffer: GPUBuffer;
+  private readonly rayReadback: GPUBuffer | null;
+  private rayReadbackBusy = false;
+  private rayFrame = 0;
+  /** Called with each visibility readback (bit i ⇔ a ray entered finest-level cell i). */
+  onRayVisibility?: (bits: Uint32Array) => void;
+
   // Temporal accumulation
   private accumPipeline: GPUComputePipeline;
   private accumUniformBuffer: GPUBuffer;
@@ -177,10 +189,27 @@ export class Renderer {
   private readonly sliceUniformScratch = new Float32Array(SLICE_UNIFORMS.size / 4);
   private readonly sliceUniformView = new DataView(this.sliceUniformScratch.buffer);
 
-  constructor(device: GPUDevice, format: GPUTextureFormat, resources: VolumeResources, config: DatasetConfig) {
+  constructor(
+    device: GPUDevice,
+    format: GPUTextureFormat,
+    resources: VolumeResources,
+    config: DatasetConfig,
+    /** Mark the brick cells rays enter and read them back for ray-guided streaming */
+    readonly rayGuided = false,
+  ) {
     this.device = device;
     this.config = config;
     this.resources = resources;
+
+    // One word (unused) switches marking off in the shader; enabled, word 0 stays unused too
+    const rayWords = rayGuided ? 1 + RayVisibility.wordCount(config.datasetGrid) : 1;
+    this.rayVisitedBuffer = device.createBuffer({
+      size: rayWords * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+    });
+    this.rayReadback = rayGuided
+      ? device.createBuffer({ size: (rayWords - 1) * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST })
+      : null;
 
     // Per-level voxel scale table is static for the dataset; both uniform structs carry it
     const lodScales = config.lodScaleTable(MAX_LOD_LEVELS);
@@ -541,6 +570,7 @@ export class Renderer {
     const buffers = [
       this.sliceUniformBuffer, this.computeUniformBuffer, this.accumUniformBuffer, this.vertexBuffer,
       this.wireframeIndexBuffer, this.wireframeUniformBuffer, this.axisVertexBuffer, this.axisUniformBuffer,
+      this.rayVisitedBuffer, ...(this.rayReadback ? [this.rayReadback] : []),
     ];
     for (const buffer of buffers) buffer.destroy();
   }
@@ -561,6 +591,7 @@ export class Renderer {
         { binding: 8, resource: this.resources.atlasView(1) },
         { binding: 9, resource: this.resources.atlasView(2) },
         { binding: 10, resource: this.resources.atlasView(3) },
+        { binding: 11, resource: { buffer: this.rayVisitedBuffer } },
       ],
     });
 
@@ -714,6 +745,7 @@ export class Renderer {
     this.device.queue.writeBuffer(this.computeUniformBuffer, 0, d as Float32Array<ArrayBuffer>);
 
     const encoder = this.device.createCommandEncoder();
+    let readRayVisits = false;
     const workgroupsX = Math.ceil(this.active.width / 8);
     const workgroupsY = Math.ceil(this.active.height / 8);
 
@@ -724,6 +756,15 @@ export class Renderer {
       computePass.setBindGroup(0, this.active.computeBindGroup);
       computePass.dispatchWorkgroups(workgroupsX, workgroupsY, 1);
       computePass.end();
+
+      // Hand the cells rays entered over the last frames to streaming, then start collecting anew
+      readRayVisits = this.rayReadback !== null && !this.rayReadbackBusy && this.useIndirection
+        && ++this.rayFrame % RAY_READBACK_INTERVAL === 0;
+      if (readRayVisits) {
+        const bytes = this.rayReadback!.size;
+        encoder.copyBufferToBuffer(this.rayVisitedBuffer, 4, this.rayReadback!, 0, bytes);
+        encoder.clearBuffer(this.rayVisitedBuffer, 4, bytes);
+      }
 
       // Temporal accumulation pass
       if (this.enableTAA) {
@@ -814,5 +855,23 @@ export class Renderer {
     overlayPass.end();
 
     this.device.queue.submit([encoder.finish()]);
+    if (readRayVisits) this.readRayVisits();
+  }
+
+  /** Map the staging copy without stalling the frame; the next copy waits until it is unmapped. */
+  private readRayVisits(): void {
+    const buffer = this.rayReadback!;
+    this.rayReadbackBusy = true;
+    buffer.mapAsync(GPUMapMode.READ).then(() => {
+      const bits = new Uint32Array(buffer.getMappedRange().slice(0));
+      buffer.unmap();
+      this.rayReadbackBusy = false;
+      if (!this.disposed) this.onRayVisibility?.(bits);
+    }, () => { this.rayReadbackBusy = false; }); // destroyed while mapping (dispose)
+  }
+
+  /** Whether rays are marched (and cells marked) in the current mode; slice planes sample the atlas directly. */
+  get marchesRays(): boolean {
+    return !this.isSliceMode && this.useIndirection;
   }
 }

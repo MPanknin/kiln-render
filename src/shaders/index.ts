@@ -95,6 +95,9 @@ ${buildSharedCode(atlasSize)}
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 ${sharedBindings}
 @group(0) @binding(7) var outputTexture: texture_storage_2d<rgba16float, write>;
+// Ray-guided streaming: word 0 is unused, cell i is bit i & 31 of word 1 + (i >> 5).
+// A one-word buffer means the feature is off (see markRayVisited).
+@group(0) @binding(11) var<storage, read_write> rayVisited: array<atomic<u32>>;
 
 ${modeDispatch}
 

@@ -1,5 +1,12 @@
 // Direct Volume Rendering (DVR) - Front-to-back compositing with windowing
 
+// Edge strength = 1 - 2^(-EDGE_GAIN * slope), slope in windowed density per
+// level voxel: ~0.2 for noise-level slopes, ~0.65 at 0.25, ~1 at sharp boundaries.
+const EDGE_GAIN: f32 = 6.0;
+// Below this contribution to the pixel a sample keeps its unshaded colour,
+// which saves the six gradient reads in near-transparent regions.
+const MIN_SHADED_CONTRIBUTION: f32 = 0.002;
+
 fn rayMarchDVR(
     rayOrigin: vec3f, rayDir: vec3f, tStart: f32, tEnd: f32,
     normalizedSize: vec3f, datasetSize: vec3f
@@ -37,6 +44,16 @@ fn rayMarchDVR(
     // precompute float normalisation — shared by single- and multi-channel
     // paths (identity for uint data where floatMin=0, floatMax=1)
     let floatInvRange = 1.0 / max(uniforms.floatMax - uniforms.floatMin, 0.0001);
+
+    // Gradient shading and boundary emphasis (single channel only for now)
+    let shading = uniforms.shading;
+    let gradientOpacity = uniforms.gradientOpacity;
+    let useGradient = shading > 0.0 || gradientOpacity > 0.0;
+    // raw texel slope → windowed-density slope, scaled for the edge curve
+    let edgeGain = EDGE_GAIN * floatInvRange / max(windowWidth, 0.001);
+    // voxel axes → world axes, so normals stay right on anisotropic voxels
+    let voxelsPerUnit = datasetSize / normalizedSize;
+    let lightDir = -rayDir;
 
     // compute jitter fraction once for the whole ray
     // select() is not short-circuiting in WGSL — rand() would run even with jitter off.
@@ -102,7 +119,27 @@ fn rayMarchDVR(
                 // Single channel: TF-based DVR with windowing and float normalisation
                 let rawDensity = sampleAtlasAffine(voxel, brick.atlasOffset, brick.atlasScale);
                 let density = clamp((rawDensity - uniforms.floatMin) * floatInvRange, 0.0, 1.0);
-                composeSampleWindowed(density, extinctionScale, windowCenter, windowWidth, &color, &alpha);
+                let windowed = applyWindow(density, windowCenter, windowWidth);
+                if (windowed > 0.01) {
+                    let tf = textureSampleLevel(tfTexture, tfSampler, vec2f(windowed, 0.5), 0.0);
+                    var rgb = tf.rgb;
+                    var opacity = tf.a;
+                    // Boundary emphasis can only lower opacity, so with it on every sample
+                    // needs a gradient; shading alone skips samples that barely contribute.
+                    if (useGradient && (gradientOpacity > 0.0
+                        || (1.0 - exp2(-opacity * extinctionScale)) * (1.0 - alpha) > MIN_SHADED_CONTRIBUTION)) {
+                        let g = brickGradient(voxel, brick);
+                        let edge = 1.0 - exp2(-length(g) * edgeGain);
+                        opacity *= mix(1.0, edge, gradientOpacity);
+                        if (shading > 0.0 && edge > 0.001) {
+                            let n = normalize(g / brick.lodScale * voxelsPerUnit);
+                            rgb = mix(rgb, shadeTwoSided(n, lightDir, rgb), shading * edge);
+                        }
+                    }
+                    let sampleAlpha = 1.0 - exp2(-opacity * extinctionScale);
+                    color += rgb * sampleAlpha * (1.0 - alpha);
+                    alpha += sampleAlpha * (1.0 - alpha);
+                }
             }
 
             if (alpha > EARLY_EXIT_ALPHA) { break; }

@@ -51,6 +51,12 @@ export class Renderer {
   // Density scale for DVR compositing (1.0 = default)
   densityScale = 1.0;
 
+  // DVR gradient shading strength (0 = flat, 1 = full headlight shading at sharp boundaries)
+  shading = 1.0;
+
+  // DVR boundary emphasis: how far opacity follows gradient magnitude (0 = off, 1 = boundaries only)
+  gradientOpacity = 0.0;
+
   // Show axis helper
   showAxis = false;
 
@@ -711,6 +717,8 @@ export class Renderer {
     d.set(this.channelColors, o.channelColors / 4);
     d.set(this.channelWindowCenter, o.channelWindowCenter / 4);
     d.set(this.channelWindowWidth, o.channelWindowWidth / 4);
+    d[o.shading / 4] = this.shading;
+    d[o.gradientOpacity / 4] = this.gradientOpacity;
     this.device.queue.writeBuffer(this.computeUniformBuffer, 0, d as Float32Array<ArrayBuffer>);
 
     const encoder = this.device.createCommandEncoder();

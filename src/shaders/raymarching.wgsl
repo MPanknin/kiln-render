@@ -12,6 +12,10 @@ struct BrickInfo {
     // precomputed per brick to replace fmod + divides in the hot loop
     atlasOffset: vec3f,
     atlasScale: vec3f,
+    // voxel range this brick's atlas slot can be sampled in: the logical brick
+    // plus half of its ghost border (beyond that, filtering reads the next slot)
+    sampleMin: vec3f,
+    sampleMax: vec3f,
 }
 
 // Set up brick traversal parameters
@@ -60,9 +64,34 @@ fn setupBrick(
         info.atlasOffset = vec3f(info.indirection.xyz) * PHYSICAL_BRICK_SIZE / ATLAS_SIZE
                          + BORDER / ATLAS_SIZE
                          - coarseBrickOrigin * info.atlasScale;
+        info.sampleMin = coarseBrickOrigin - 0.5 * BORDER * info.lodScale;
+        info.sampleMax = coarseBrickOrigin + (LOGICAL_BRICK_SIZE + 0.5 * BORDER) * info.lodScale;
     }
 
     return info;
+}
+
+// Central-difference gradient from the current brick's atlas slot alone, so the
+// DVR hot loop needs no indirection lookups. Offsets are clamped to the slot's
+// sampleable range; near a brick face the difference then spans less than two
+// level voxels, and dividing by the actual span keeps the slope right.
+// Returns raw texel units per level voxel, along the voxel axes.
+fn brickGradient(voxel: vec3f, brick: BrickInfo) -> vec3f {
+    let h = brick.lodScale;
+    return vec3f(
+        brickSlope(voxel, vec3f(h.x, 0.0, 0.0), h.x, brick),
+        brickSlope(voxel, vec3f(0.0, h.y, 0.0), h.y, brick),
+        brickSlope(voxel, vec3f(0.0, 0.0, h.z), h.z, brick),
+    );
+}
+
+// One axis of brickGradient: offset is one level voxel (h finest voxels) along that axis
+fn brickSlope(voxel: vec3f, offset: vec3f, h: f32, brick: BrickInfo) -> f32 {
+    let hi = clamp(voxel + offset, brick.sampleMin, brick.sampleMax);
+    let lo = clamp(voxel - offset, brick.sampleMin, brick.sampleMax);
+    let span = max(dot(hi - lo, offset) / (h * h), 0.001); // in level voxels
+    return (sampleAtlasAffine(hi, brick.atlasOffset, brick.atlasScale)
+          - sampleAtlasAffine(lo, brick.atlasOffset, brick.atlasScale)) / span;
 }
 
 // Refine isosurface position using bisection with windowing.

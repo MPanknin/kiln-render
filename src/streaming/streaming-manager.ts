@@ -16,7 +16,7 @@ import { LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE } from '../core/config.js';
 import type { DatasetConfig } from '../core/config.js';
 import { writeToCanvas } from '../core/volume.js';
 import type { VolumeCanvas } from '../core/volume.js';
-import { getFloat16ToFloat32Lut, getUint16ToFloat16Lut } from '../utils/float16.js';
+import { float32ToFloat16Bits, getFloat16ToFloat32Lut, getUint16ToFloat16Lut } from '../utils/float16.js';
 import { createRawHistogram, accumulateRaw, rebinHistogram } from '../core/histogram.js';
 import type { RawHistogram } from '../core/histogram.js';
 import type { PipelineTimings } from '../data/data-provider.js';
@@ -299,6 +299,10 @@ export class StreamingManager {
       brick = canvas.bitDepth === 16 ? new Uint16Array(voxels) : new Uint8Array(voxels);
       // uint16 on r16float stores value - offset, so 0 is not all-zero bits
       if (canvas.format === 'r16float' && !this.metadata.isFloat) brick.fill(getUint16ToFloat16Lut()[0]!);
+      // Raw-value data can have a negative range: raw zero may be visible signal.
+      // The lowest finite half-float normalises to zero throughout the supported
+      // stored-value range, including after the base load derives a new range.
+      if (canvas.format === 'r16float' && this.metadata.isFloat) brick.fill(float32ToFloat16Bits(-65504));
       this.zeroBricks.set(canvas.bitDepth, brick);
     }
     return brick;
@@ -338,7 +342,7 @@ export class StreamingManager {
     const dirty = this.dirtyChannels.get(slotIndex) ?? 0;
     this.slotChannels.set(slotIndex, 0);
     for (let c = 0; c < this.resources.numChannels; c++) {
-      if (c !== except && (dirty >> c) & 1) this.writeSlotChannel(slotIndex, slot, c, null);
+      if (c !== except && (this.metadata.isFloat || (dirty >> c) & 1)) this.writeSlotChannel(slotIndex, slot, c, null);
     }
   }
 
@@ -1304,7 +1308,7 @@ export class StreamingManager {
     for (let ch = 0; ch < numChannels; ch++) {
       const data = channelResults[ch]?.data ?? null;
       // Channels not loaded (hidden or failed) are zeroed only if the slot region is stale.
-      if (data || (dirty >> ch) & 1) this.writeSlotChannel(result.slotIndex, result.slot, ch, data);
+      if (data || this.metadata.isFloat || (dirty >> ch) & 1) this.writeSlotChannel(result.slotIndex, result.slot, ch, data);
     }
     this.uploadAvg.add(performance.now() - tUpload);
 
@@ -1374,7 +1378,7 @@ export class StreamingManager {
           this.writeSlotChannel(result.slotIndex, result.slot, ch, ph);
           // a placeholder is not this brick's data: keep the channel marked missing
           this.slotChannels.set(result.slotIndex, (this.slotChannels.get(result.slotIndex) ?? 0) & ~(1 << ch));
-        } else if ((dirty >> ch) & 1) {
+        } else if (this.metadata.isFloat || (dirty >> ch) & 1) {
           this.writeSlotChannel(result.slotIndex, result.slot, ch, null);
         }
       }

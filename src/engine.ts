@@ -472,7 +472,8 @@ export class KilnEngine {
     const beforeTimepoint = this.metadata.timepoint ?? 0;
     // A different channel count resizes the atlas: reject it before anything changes.
     const nextCount = selection.sourceChannels?.length ?? Math.min(4, this.metadata.sourceChannelCount ?? this.metadata.numChannels);
-    if (nextCount !== this._renderer.numChannels && nextCount >= 1 && nextCount <= 4) {
+    // Fewer channels never shrink the atlas, so only a growing selection can stop fitting.
+    if (nextCount > this._renderer.numChannels && nextCount <= 4) {
       KilnEngine.assertBaseFits(this.metadata, nextCount, this.gpu);
     }
     this.dataProvider.setSourceSelection(selection); // validates first; throws without changing anything

@@ -72,6 +72,14 @@ export interface StreamingStats {
   avgBrickLatencyMs: number;
 }
 
+/** Brick coordinates from a `lod{L}:{z}/{y}/{x}` key. */
+function parseBrickKey(key: string): { lod: number; bx: number; by: number; bz: number } | null {
+  const m = /^lod(\d+):(\d+)\/(\d+)\/(\d+)$/.exec(key);
+  return m ? { lod: Number(m[1]), bz: Number(m[2]), by: Number(m[3]), bx: Number(m[4]) } : null;
+}
+
+const channelMask = (channels: number[]) => channels.reduce((mask, ch) => mask | (1 << ch), 0);
+
 export class StreamingManager {
   private resources: VolumeResources;
   private onResetAccumulation: () => void;
@@ -86,8 +94,9 @@ export class StreamingManager {
   // Track pinned bricks (never evicted, always loaded first)
   private pinnedBricks = new Set<string>();
 
-  // Track empty bricks (so we don't re-check them)
-  private emptyBricks = new Set<string>();
+  // Empty bricks (so we don't re-check them), with the channel mask their darkness was
+  // proven for: a newly visible channel outside that mask may still have signal there.
+  private emptyBricks = new Map<string, number>();
 
   // CPU-side cache of decompressed brick data (avoids re-download after GPU eviction)
   private brickCache: BrickCache;
@@ -364,15 +373,22 @@ export class StreamingManager {
     this.visibleMask = mask;
     if (!added) return;
     if (this.resources.numChannels > 1) this.providerStatsCoverVisibleChannels = false;
-    if (this.emptyBricks.size > 0) {
-      // These regions were proven dark for an older visible-channel set only.
-      this.emptyBricks.clear();
+    let invalidated = false;
+    for (const [key, proven] of this.emptyBricks) {
+      if (added & ~proven) { this.emptyBricks.delete(key); invalidated = true; }
+    }
+    if (invalidated) {
+      // Rebuild the table: resident bricks finest-first wins, then the markers still proven dark.
       this.resources.indirection.clearAll();
       for (const entry of this.loadedBricks.values()) {
         const brick = this.resources.allocator.getMetadata(entry.slotIndex);
         if (brick) this.resources.indirection.setBrick(
           brick.bx, brick.by, brick.bz, entry.slot.x, entry.slot.y, entry.slot.z, brick.lod,
         );
+      }
+      for (const key of this.emptyBricks.keys()) {
+        const b = parseBrickKey(key);
+        if (b) this.resources.indirection.setEmpty(b.bx, b.by, b.bz, b.lod);
       }
       this.notifyContentChanged();
     }
@@ -399,9 +415,9 @@ export class StreamingManager {
     this.fillPending += work.length;
 
     const runOne = async ({ key, slotIndex, slot, ch }: typeof work[0]) => {
-      const m = /^lod(\d+):(\d+)\/(\d+)\/(\d+)$/.exec(key);
-      if (!m) return;
-      const [lod, bz, by, bx] = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])];
+      const b = parseBrickKey(key);
+      if (!b) return;
+      const { lod, bx, by, bz } = b;
       const cached = this.brickCache.get(this.cacheKey(ch, key));
       const r = cached ? { data: cached } : await this.dataProvider.loadBrick(lod, bx, by, bz, ch, signal);
       if (gen !== this.generation || !r) return;
@@ -613,7 +629,7 @@ export class StreamingManager {
         if (st.empty) {
           if (st.slot) this.releaseResident(key, st.slot.slot); // held the old selection's data
           st.slot = null;
-          this.emptyBricks.add(key);
+          this.emptyBricks.set(key, checkedMask);
           this.resources.indirection.setEmpty(bx, by, bz, maxLod);
         }
       }
@@ -1245,7 +1261,7 @@ export class StreamingManager {
     if (signal.aborted) return;
 
     if (isEmpty && checkedMask === this.visibleMask) {
-      this.emptyBricks.add(key);
+      this.emptyBricks.set(key, checkedMask);
       this.resources.indirection.setEmpty(bx, by, bz, lod);
       // May replace a coarse parent already on screen — the region must redraw
       this.notifyContentChanged();
@@ -1292,7 +1308,7 @@ export class StreamingManager {
       const maxAcrossChannels = Math.max(...channelResults.map(r => r?.max ?? 0));
       if (maxAcrossChannels < threshold) {
         if (this.channelsToLoad().some(ch => !loadChannels.includes(ch))) return;
-        this.emptyBricks.add(key);
+        this.emptyBricks.set(key, channelMask(loadChannels));
         this.resources.indirection.setEmpty(bx, by, bz, lod);
         this.notifyContentChanged();
         return;
@@ -1476,7 +1492,7 @@ export class StreamingManager {
         return;
       }
       // every channel below threshold: empty, exactly as the all-at-once path decides
-      this.emptyBricks.add(key);
+      this.emptyBricks.set(key, channelMask(loadChannels));
       this.resources.indirection.setEmpty(bx, by, bz, lod);
       this.notifyContentChanged();
       return;

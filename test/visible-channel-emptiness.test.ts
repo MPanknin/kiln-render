@@ -28,7 +28,7 @@ describe('visibility changes invalidate emptiness', () => {
     const { sm, resources, provider, state } = setup(async (_l, _x, _y, _z, ch) => ({ ...dark(), max: ch === 1 ? 128 : 0 }));
     try {
       await state.loadBrick(request, new AbortController().signal);
-      expect(state.emptyBricks.has(request.key)).toBe(true);
+      expect(state.emptyBricks.get(request.key)).toBe(1); // proven for channel 0 only
       provider.isBrickEmpty.mockResolvedValue(true); // only channel 0 has been scanned
 
       sm.setVisibleChannels(3);
@@ -49,7 +49,7 @@ describe('visibility changes invalidate emptiness', () => {
     resources.allocator.setMetadata(allocation.slotIndex, brick);
     state.loadedBricks.set(brick.key, allocation);
     state.slotChannels.set(allocation.slotIndex, 3);
-    state.emptyBricks.add(request.key);
+    state.emptyBricks.set(request.key, 1); // proven dark while only channel 0 was visible
     try {
       sm.setVisibleChannels(3);
       expect(resources.indirection.setBrick).toHaveBeenCalledWith(0, 0, 0,
@@ -76,11 +76,34 @@ describe('visibility changes invalidate emptiness', () => {
   it('hiding a channel preserves existing residency and empty markers', () => {
     const { sm, resources, state } = setup(async () => dark());
     state.visibleMask = 3;
-    state.emptyBricks.add(request.key);
+    state.emptyBricks.set(request.key, 3);
     try {
       sm.setVisibleChannels(1);
       expect(state.emptyBricks.has(request.key)).toBe(true);
       expect(resources.indirection.clearAll).not.toHaveBeenCalled();
+    } finally { sm.dispose(); }
+  });
+
+  it('keeps markers proven with a channel when that channel is shown again', () => {
+    const { sm, resources, state } = setup(async () => dark());
+    state.visibleMask = 3;
+    state.emptyBricks.set(request.key, 3);
+    try {
+      sm.setVisibleChannels(1);
+      sm.setVisibleChannels(3);
+      expect(state.emptyBricks.get(request.key)).toBe(3);
+      expect(resources.indirection.clearAll).not.toHaveBeenCalled();
+    } finally { sm.dispose(); }
+  });
+
+  it('re-marks the markers that stay valid after rebuilding the table', () => {
+    const { sm, resources, state } = setup(async () => dark());
+    state.emptyBricks.set(request.key, 1);
+    state.emptyBricks.set('lod1:0/0/0', 3);
+    try {
+      sm.setVisibleChannels(3);
+      expect([...state.emptyBricks.keys()]).toEqual(['lod1:0/0/0']);
+      expect(resources.indirection.setEmpty).toHaveBeenCalledWith(0, 0, 0, 1);
     } finally { sm.dispose(); }
   });
 });

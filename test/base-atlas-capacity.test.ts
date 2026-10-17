@@ -38,3 +38,32 @@ describe('base atlas capacity', () => {
     expect(() => build(216, 0, 1)).not.toThrow();
   });
 });
+
+describe('base atlas capacity on a channel-count change', () => {
+  // 600 base bricks fit 2 channels (10³ slots) but not 4 (8³ slots at r16float)
+  function engineWithBase(brickGrid: number[]) {
+    const engine = Object.create(KilnEngine.prototype) as any;
+    engine.metadata = { sourceChannels: [0, 1], numChannels: 2, sourceChannelCount: 4, timepoint: 0, maxLod: 1,
+      levels: [{ lod: 1, brickGrid, brickCount: 0 }] };
+    engine.gpu = { textureFormat: 'r16float', outputFormat: 'bgra8unorm', bitDepth: 16 };
+    engine._renderer = { numChannels: 2, dispose: vi.fn() };
+    engine.dataProvider = { setSourceSelection: vi.fn() };
+    engine.rebuildGpu = vi.fn();
+    return engine;
+  }
+
+  it('rejects the selection before the provider or the GPU resources change', () => {
+    const engine = engineWithBase([10, 10, 6]);
+    expect(() => engine.setSourceSelection({ sourceChannels: [0, 1, 2, 3] })).toThrow(/600 pinned bricks.*512 slots at 4 channels/);
+    expect(() => engine.setSourceSelection({})).toThrow(UnsupportedDatasetError); // default: first four
+    expect(engine.dataProvider.setSourceSelection).not.toHaveBeenCalled();
+    expect(engine.rebuildGpu).not.toHaveBeenCalled();
+    expect(engine._renderer.dispose).not.toHaveBeenCalled();
+  });
+
+  it('lets a base that fits the new atlas through', () => {
+    const engine = engineWithBase([8, 8, 6]);
+    expect(() => engine.setSourceSelection({ sourceChannels: [0, 1, 2, 3] })).not.toThrow();
+    expect(engine.dataProvider.setSourceSelection).toHaveBeenCalledOnce();
+  });
+});

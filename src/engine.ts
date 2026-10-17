@@ -391,25 +391,31 @@ export class KilnEngine {
     return engine;
   }
 
-  /** Atlas sized to the budget for this channel count, plus the renderer that samples it. */
-  private static buildGpu(device: GPUDevice, metadata: VolumeMetadata, config: DatasetConfig, gpu: GpuSetup) {
-    // Shrink the atlas grid with channel count so total atlas VRAM fits the
-    // budget — a fixed 660³ × 4 channels (~2.3 GB) OOMs mobile GPUs at startup.
+  /** Every base brick is pinned, so the coarsest level must fit the atlas for `numChannels`,
+   *  plus one working slot when finer levels exist; otherwise loading leaves permanent holes. */
+  private static assertBaseFits(metadata: VolumeMetadata, numChannels: number, gpu: GpuSetup): void {
     const bytesPerVoxel = gpu.textureFormat === 'r8unorm' ? 1 : 2;
-    const { gridSize, atlasSize } = computeAtlasGrid(metadata.numChannels, bytesPerVoxel, gpu.atlasBudgetBytes);
+    const slots = computeAtlasGrid(numChannels, bytesPerVoxel, gpu.atlasBudgetBytes).gridSize ** 3;
     const base = metadata.levels.find(level => level.lod === metadata.maxLod);
     const baseBricks = base ? base.brickGrid[0] * base.brickGrid[1] * base.brickGrid[2] : 0;
-    const slots = gridSize ** 3;
-    // Every base brick is pinned. Leave a working slot when finer levels exist;
-    // otherwise streaming would report completion with permanent holes or no refinement.
     const workingSlots = metadata.maxLod > 0 ? 1 : 0;
     if (baseBricks + workingSlots > slots) {
       throw new UnsupportedDatasetError([
         `The coarsest level needs ${baseBricks} pinned bricks, but the atlas has ${slots} slots` +
+        (numChannels > 1 ? ` at ${numChannels} channels` : '') +
         (workingSlots ? ' and needs a free slot for refinement' : '') +
         '. Add a coarser pyramid level or increase atlas capacity.',
       ]);
     }
+  }
+
+  /** Atlas sized to the budget for this channel count, plus the renderer that samples it. */
+  private static buildGpu(device: GPUDevice, metadata: VolumeMetadata, config: DatasetConfig, gpu: GpuSetup) {
+    // Shrink the atlas grid with channel count so total atlas VRAM fits the
+    // budget — a fixed 660³ × 4 channels (~2.3 GB) OOMs mobile GPUs at startup.
+    KilnEngine.assertBaseFits(metadata, metadata.numChannels, gpu);
+    const bytesPerVoxel = gpu.textureFormat === 'r8unorm' ? 1 : 2;
+    const { gridSize, atlasSize } = computeAtlasGrid(metadata.numChannels, bytesPerVoxel, gpu.atlasBudgetBytes);
     const atlasVramMB = Math.round((metadata.numChannels * atlasSize ** 3 * bytesPerVoxel) / 1e6);
     console.log(`[Kiln] atlas grid ${gridSize}³ (${atlasSize}³ voxels) × ${metadata.numChannels} channel(s) ≈ ${atlasVramMB} MB VRAM`);
 
@@ -464,6 +470,11 @@ export class KilnEngine {
     }
     const before = [...(this.metadata.sourceChannels ?? [])];
     const beforeTimepoint = this.metadata.timepoint ?? 0;
+    // A different channel count resizes the atlas: reject it before anything changes.
+    const nextCount = selection.sourceChannels?.length ?? Math.min(4, this.metadata.sourceChannelCount ?? this.metadata.numChannels);
+    if (nextCount !== this._renderer.numChannels && nextCount >= 1 && nextCount <= 4) {
+      KilnEngine.assertBaseFits(this.metadata, nextCount, this.gpu);
+    }
     this.dataProvider.setSourceSelection(selection); // validates first; throws without changing anything
 
     const { sourceChannels = [], timepoint = 0, numChannels } = this.metadata;
@@ -490,6 +501,7 @@ export class KilnEngine {
 
   /** New atlas + renderer for the current channel count; display state carries over, streaming restarts. */
   private rebuildGpu(changedChannels: number): void {
+    KilnEngine.assertBaseFits(this.metadata, this.metadata.numChannels, this.gpu); // before tearing anything down
     const old = this._renderer;
     const { maxPixelError } = this._streamingManager;
     this._streamingManager.dispose();

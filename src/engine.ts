@@ -38,6 +38,10 @@ export interface EngineOptions {
   windowWidth?: number;
   /** DVR density / opacity scale (0.1–10, default 1) */
   densityScale?: number;
+  /** DVR gradient shading strength (0–1, default 1; 0 = flat) */
+  shading?: number;
+  /** DVR boundary emphasis: opacity follows gradient magnitude (0–1, default 0 = off) */
+  gradientOpacity?: number;
   /** Isosurface threshold (0–1) */
   isoValue?: number;
   /** Render resolution scale (0.25–1) */
@@ -343,6 +347,14 @@ export class KilnEngine {
       renderer.densityScale = options.densityScale;
       renderer.resetAccumulation();
     }
+    if (options.shading !== undefined) {
+      renderer.shading = options.shading;
+      renderer.resetAccumulation();
+    }
+    if (options.gradientOpacity !== undefined) {
+      renderer.gradientOpacity = options.gradientOpacity;
+      renderer.resetAccumulation();
+    }
     if (options.isoValue !== undefined) {
       renderer.isoValue = options.isoValue;
       renderer.resetAccumulation();
@@ -535,6 +547,8 @@ export class KilnEngine {
     renderer.enableJitter = old.enableJitter;
     renderer.enableTAA = old.enableTAA;
     renderer.densityScale = old.densityScale;
+    renderer.shading = old.shading;
+    renderer.gradientOpacity = old.gradientOpacity;
     renderer.isoValue = old.isoValue;
     renderer.floatMin = this.metadata.dataRange?.[0] ?? old.floatMin;
     renderer.floatMax = this.metadata.dataRange?.[1] ?? old.floatMax;

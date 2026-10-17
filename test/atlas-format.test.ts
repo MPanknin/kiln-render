@@ -95,7 +95,7 @@ describe('uint16 on r16float', () => {
     expect(Array.from(stored)).toEqual(Array.from(raw));
   });
 
-  it('fills zero bricks with the stored form of 0', () => {
+  it('fills missing channels with the transparent baseline for their storage format', () => {
     const zeroBrick = (format: GPUTextureFormat, isFloat: boolean) =>
       (StreamingManager.prototype as any).getZeroBrick.call(
         { zeroBricks: new Map(), metadata: { isFloat } },
@@ -104,6 +104,7 @@ describe('uint16 on r16float', () => {
 
     expect(new Set(zeroBrick('r16float', false))).toEqual(new Set([getUint16ToFloat16Lut()[0]]));
     expect(new Set(zeroBrick('r16unorm', false))).toEqual(new Set([0]));
-    expect(new Set(zeroBrick('r16float', true))).toEqual(new Set([0]));
+    // Signed raw values need a baseline below the data range, not raw zero.
+    expect(new Set(zeroBrick('r16float', true))).toEqual(new Set([0xfbff])); // -65504
   });
 });

@@ -1,12 +1,10 @@
 # Network & formats
 
-## Network streaming
+## Sharded binary
 
-Data providers (`src/data/`) handle fetching brick data. The **ShardedDataProvider** uses **HTTP Range requests** to fetch individual bricks without downloading entire LOD files:
+`ShardedDataProvider` looks each brick up in the level's index and fetches exactly its bytes with one HTTP Range request.
 
 ![An index lookup turns into one HTTP Range request for one brick](../diagrams/range-request.svg)
-
-The **index file** (`lod0_index.json`) provides byte offsets, compressed sizes, and pre-computed statistics:
 
 ```json
 {
@@ -18,58 +16,36 @@ The **index file** (`lod0_index.json`) provides byte offsets, compressed sizes, 
 }
 ```
 
-**Empty brick detection**: Before fetching, the loader checks the index's `max` against a threshold that depends on the data type and window. Bricks with no significant data are marked empty in the indirection table (`w` = 255) without any network request. OME-Zarr has no such index, so there a brick is found empty once it has been assembled, and is not requested again.
-
-Network statistics are tracked in real-time:
-- **Throughput**: bytes per second over the last 10 seconds
-- **Total downloaded**: Cumulative bytes since session start
-- **Request count**: Total HTTP requests issued
-
-### Brick compression
-
-Bricks are stored with gzip compression to reduce network transfer size. A **DecompressionPool** of Web Workers handles parallel decompression without blocking the main thread:
+A brick whose `max` is below the empty threshold (set by data type and window) is marked empty (`w` = 255) without a request. Bricks are gzip-compressed, typically to 30–60 % of their size for dense CT/MRI and 10–30 % for sparse volumes, and decompressed off the main thread:
 
 ![Fetch, decompress in workers, upload to an atlas slot](../diagrams/decompression.svg)
 
-Typical compression ratios:
-- Dense volumes (CT/MRI): 30-60% of original size
-- Sparse volumes (with empty regions): 10-30% of original size
+## OME-Zarr
 
-The compression is transparent to the rest of the system—bricks are decompressed before being written to the atlas texture.
+`ZarrDataProvider` reads OME-Zarr with zarrita.js. Chunk boundaries don't match the brick grid, so a worker pool fetches the chunks a brick overlaps, decompresses them and cuts out the 66³ brick. There is no index of brick statistics: a brick is found empty after its first load, and isn't requested again.
 
-### OME-Zarr streaming
+## Network statistics
 
-The **ZarrDataProvider** (`src/data/zarr-provider.ts`) loads OME-Zarr volumes directly over HTTP using zarrita.js. A pool of Web Workers handles chunk fetching, decompression, and re-chunking into 66³ bricks with ghost borders. Since Zarr chunk boundaries don't align with Kiln's brick grid, workers fetch the overlapping chunks and assemble each brick from the relevant regions.
+The stats panel shows throughput (last 10 s), total bytes and request count. With `?bench=1`, the report also gives `chunkBytes` (downloaded chunk payloads) and `borderOnlyBytes` (payloads only a brick's ghost border needed so far). Shared shard indexes are left out of both, so the percentage refers to chunk payloads, not all traffic; payloads of cancelled bricks may be missing.
 
-## Supported data types
+## Data types
 
-Kiln renders `uint8`, `uint16`, `int16` and `float32` volumes (`float64` is read as `float32`):
-
-| Feature | `uint8` | `uint16` | `int16` | `float32` |
-|---------|---------|----------|---------|-----------|
-| Texture format | `r8unorm` | `r16unorm` or `r16float` | `r16float` | `r16float` |
-| Stored value | value / 255 | value / 65535 (`r16unorm`), value − 2048 (`r16float`) | raw value | raw value |
+| | `uint8` | `uint16` | `int16` | `float32` |
+|---|---|---|---|---|
+| Atlas format | `r8unorm` | `r16unorm`, or `r16float` without [support](/reference/webgpu) | `r16float` | `r16float` |
+| Stored value | value / 255 | value / 65535, or value − 2048 in `r16float` | raw | raw |
 | Normalised by | type range | type range | data range | data range |
-| Bytes per voxel (GPU) | 1 | 2 | 2 | 2 |
-| Atlas size | ~274 MiB | ~548 MiB | ~548 MiB | ~548 MiB |
-| WebGPU feature | (none) | `texture-formats-tier1` for `r16unorm` (optional) | (none) | (none) |
+| Full atlas | 274 MiB | 548 MiB | 548 MiB | 548 MiB |
 
-The **data range** for `int16` and `float32` is the OMERO window's min/max when present, otherwise the 0.1–99.9th percentile of the coarsest level. Half precision holds `int16` values exactly up to ±2048, which covers CT in Hounsfield units.
+`float64` is read as `float32`. The data range is the OMERO window when present, else the 0.1–99.9th percentile of the coarsest level. Half precision holds integers up to ±2048 exactly, enough for CT in Hounsfield units.
 
-### Windowing/leveling
+## Windowing
 
-Data often uses only part of its range: a 12-bit sensor stored as `uint16`, or soft tissue within a CT. **Windowing** remaps a sub-range to the visible 0-1 output:
+A window maps the sub-range of values that matters (a 12-bit sensor stored as `uint16`, soft tissue in CT) to 0–1:
 
 ```wgsl
 fn applyWindow(density: f32, windowCenter: f32, windowWidth: f32) -> f32 {
-    let halfWidth = windowWidth * 0.5;
-    let minVal = windowCenter - halfWidth;
+    let minVal = windowCenter - windowWidth * 0.5;
     return clamp((density - minVal) / windowWidth, 0.0, 1.0);
 }
 ```
-
-For example, a CT soft tissue window might use center=0.5, width=0.1 to expand a narrow intensity band to full contrast.
-
-### Border-download benchmark
-
-With `?bench=1`, `chunkBytes` counts downloaded chunk payload bytes and `borderOnlyBytes` counts payloads of chunks that no completed brick core has needed so far. Shared Zarr shard indexes are excluded from both values: the first requesting chunk does not own this metadata. They remain included in total network bytes. The percentage therefore describes chunk payloads, not all network traffic. Cancelled brick requests may leave downloaded payloads out of this attribution.

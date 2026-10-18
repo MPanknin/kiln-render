@@ -1,53 +1,29 @@
-# Local OME-Zarr (File System Access API)
+# Local files
 
-Local `.zarr` or `.ome.zarr` directories can be loaded directly from disk without a server, using the browser's File System Access API.
-
-> **Browser requirement:** Only supported in Chrome and Edge. Not available in Firefox or Safari.
+Local `.zarr` or `.ome.zarr` directories open without a server through the File System Access API, in Chrome and Edge only.
 
 ```typescript
-import {
-  KilnViewer,
-  LocalZarrDataProvider,
-  promptForZarrDirectory,
-  preValidateLocalZarr,
-  getStoredHandle,
-  requestPermission,
-} from 'kiln-render';
+import { KilnViewer, LocalZarrDataProvider, promptForZarrDirectory, preValidateLocalZarr } from 'kiln-render';
 
-// Show native directory picker and store the handle for later
-const handle = await promptForZarrDirectory();
-
-// Optional: check format support before loading
-const issues = await preValidateLocalZarr(handle);
-if (issues.length > 0) {
-  console.error('Unsupported dataset:', issues);
-  return;
-}
-
+const handle = await promptForZarrDirectory(); // also stores the handle in IndexedDB
+const issues = await preValidateLocalZarr(handle); // optional
 const viewer = await KilnViewer.create(canvas, new LocalZarrDataProvider(handle));
 ```
 
-## Restoring a handle across page loads
-
-Handles are persisted in IndexedDB automatically when `promptForZarrDirectory()` is called. On subsequent visits:
+On a later visit, reuse the stored handle:
 
 ```typescript
+import { getStoredHandle, requestPermission, clearHandle } from 'kiln-render';
+
 const handle = await getStoredHandle();
 if (handle && await requestPermission(handle)) {
   const viewer = await KilnViewer.create(canvas, new LocalZarrDataProvider(handle));
 }
+await clearHandle(); // forget it
 ```
 
-To clear the stored handle:
+## Differences from HTTP
 
-```typescript
-import { clearHandle } from 'kiln-render';
-await clearHandle();
-```
-
-## Limitations vs. HTTP streaming
-
-- Chunk reads and brick assembly run on the main thread, not in the worker pool used for HTTP
-- Each chunk file is read whole; there are no partial reads
-- Sharded Zarr v3 stores (the `sharding_indexed` codec) can't be read locally yet, because reading one chunk out of a shard needs partial reads. Serve them over HTTP instead
-- Otherwise identical feature support: LOD streaming, multichannel, 16-bit, clipping, etc.
+- Chunk reads and brick assembly run on the main thread, not in the worker pool.
+- Each chunk file is read whole.
+- Sharded Zarr v3 stores can't be read yet: reading a chunk out of a shard needs partial reads. Serve them over HTTP instead.

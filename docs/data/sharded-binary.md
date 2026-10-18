@@ -1,110 +1,49 @@
-# Kiln sharded binary
+# Sharded binary
 
-For raw volume files, use the preprocessing script to convert into Kiln's sharded binary format.
+Kiln's own format for raw volumes: gzip-compressed 66³ bricks, one file per LOD, read brick by brick with HTTP Range requests. Single-channel only; for anything else, use [OME-Zarr](/data/ome-zarr).
 
-## Quick start
-
-```bash
-bun scripts/decompose-volume.ts <input.raw> <W> <H> <D> [options]
-```
-
-Example:
-```bash
-bun scripts/decompose-volume.ts data/chameleon_1024x1024x1080.raw public/datasets/chameleon --bits 16
-```
-
-## Input format
-
-The script accepts raw binary volume files:
-
-- **8-bit unsigned** (`uint8`) - 1 byte per voxel
-- **16-bit unsigned** (`uint16`) - 2 bytes per voxel, little-endian
-
-### 16-bit processing modes
-
-By default, 16-bit volumes are normalized to 8-bit during processing. Use `--native` to keep the data as 16-bit instead (skips normalization):
-
-| Mode | Flag | Output | Use Case |
-|------|------|--------|----------|
-| Normalized | (default) | 8-bit | Smaller files, wider compatibility |
-| Native | `--native` | 16-bit | Higher dynamic range. Stored bit-exact as `r16unorm` where the GPU supports `texture-formats-tier1`, otherwise as `r16float` (exact up to 12 bits) |
-
-### Filename conventions
-
-The script can parse metadata from filenames:
-
-| Pattern | Example | Parsed As |
-|---------|---------|-----------|
-| `WxHxD` | `brain_256x256x128.raw` | Dimensions 256×256×128 |
-| `_16_` or `uint16` | `scan_16_512x512x174.raw` | 16-bit data |
-| `X,YxZ,W` (commas) | `ct_0,83x0,82x3,2.raw` | Voxel spacing 0.83×0.82×3.2 |
-
-## Script usage
+## Converting a raw volume
 
 ```bash
 bun scripts/decompose-volume.ts <input.raw> <output-dir> [options]
-# OR with dimensions as positional args:
-bun scripts/decompose-volume.ts <input.raw> <W> <H> <D> [options]
+bun scripts/decompose-volume.ts <input.raw> <W> <H> <D> [options]   # output: public/datasets/<name>/
+
+bun scripts/decompose-volume.ts data/chameleon_1024x1024x1080.raw public/datasets/chameleon --bits 16
 ```
 
-When dimensions are provided as positional args, the output directory defaults to `public/datasets/<input-name>/`.
+Input is raw `uint8` or little-endian `uint16`. The filename can carry metadata:
 
-### Options
+| Pattern | Example | Parsed as |
+|---------|---------|-----------|
+| `WxHxD` | `brain_256x256x128.raw` | Dimensions |
+| `_16_`, `uint16`, `16bit` | `scan_16_512x512x174.raw` | 16-bit |
+| `X,YxZ,W` (decimal commas) | `ct_0,83x0,82x3,2.raw` | Voxel spacing 0.83 × 0.82 × 3.2 |
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--dimensions WxHxD` | From filename | Volume dimensions |
+| `--dimensions WxHxD` | from filename | Volume dimensions |
 | `--spacing X,Y,Z` | `1,1,1` | Voxel spacing |
 | `--header N` | `0` | Header bytes to skip |
-| `--brick-size N` | `64` | Logical brick size. Keep the default: the viewer's bricks are always 64³ |
-| `--max-lod N` | Auto | Maximum LOD levels |
-| `--bits N` | `8` | Input bit depth (8 or 16) |
-| `--native` | Off | Preserve 16-bit precision (don't normalize to 8-bit) |
-| `--output DIR` | Auto | Output directory |
+| `--bits 8\|16` | from filename, else 8 | Input bit depth |
+| `--native` | off | Keep 16-bit data. Without it, 16-bit input is scaled to 8-bit by its global min/max |
+| `--max-lod N` | log2(smallest dimension / 64), at most 10 | Coarsest LOD |
+| `--brick-size N` | `64` | Keep 64: the viewer's bricks are always 64³ |
+| `--output DIR` | | Output directory |
 
-### Examples
+The coarsest LOD is loaded at startup and pinned in the atlas, so keep its brick grid small (4×4×4 or less) with `--max-lod`. An 8×8×8 grid would take half of the 1,000 slots.
 
-```bash
-# Parse dimensions from filename
-bun scripts/decompose-volume.ts data/chameleon_1024x1024x1080.raw public/datasets/chameleon
-
-# Specify dimensions explicitly
-bun scripts/decompose-volume.ts data/scan.raw 512 512 256
-
-# 16-bit normalized to 8-bit (smaller output)
-bun scripts/decompose-volume.ts data/mri.raw 256 256 128 \
-  --bits 16 --spacing 0.5,0.5,1.0
-
-# 16-bit native (full precision, use windowing in viewer)
-bun scripts/decompose-volume.ts data/ct_scan.raw 512 512 400 \
-  --bits 16 --native --output public/datasets/ct_16bit
-
-# Skip 2048-byte header (common in some medical formats)
-bun scripts/decompose-volume.ts data/dicom.raw 512 512 400 --header 2048
-```
-
-## Important: coarsest LOD size
-
-Kiln currently loads the entire coarsest (highest) LOD at startup and keeps it pinned in the atlas. If your dataset's coarsest LOD has a large brick grid (e.g., 8×8×8 = 512 bricks), it will consume over half the default 1,000-slot atlas, limiting space for high-resolution bricks. Keep the coarsest LOD small (ideally ≤4×4×4 grid) by setting appropriate `--max-lod` during preprocessing.
-
-## Output format
-
-The script produces a binary sharded format optimized for HTTP Range request streaming:
+## Output
 
 ```
 public/datasets/myvolume/
-├── volume.json          # Metadata
-├── lod0.bin             # All LOD 0 bricks concatenated
-├── lod0_index.json      # Byte offsets and statistics
+├── volume.json          # metadata
+├── lod0.bin             # LOD 0 bricks, gzip-compressed, back to back
+├── lod0_index.json      # offset, size and statistics per brick
 ├── lod1.bin
-├── lod1_index.json
-├── lod2.bin
-└── lod2_index.json
+└── lod1_index.json
 ```
 
-### volume.json
-
-Main metadata file:
+`volume.json`:
 
 ```json
 {
@@ -115,14 +54,8 @@ Main metadata file:
   "physicalSize": 66,
   "maxLod": 4,
   "levels": [
-    {
-      "lod": 0,
-      "dimensions": [1024, 1024, 1080],
-      "bricks": [16, 16, 17],
-      "brickCount": 4352,
-      "binFile": "lod0.bin",
-      "indexFile": "lod0_index.json"
-    }
+    { "lod": 0, "dimensions": [1024, 1024, 1080], "bricks": [16, 16, 17], "brickCount": 4352,
+      "binFile": "lod0.bin", "indexFile": "lod0_index.json" }
   ],
   "format": "uint8",
   "packed": true,
@@ -130,21 +63,12 @@ Main metadata file:
 }
 ```
 
-The `format` field indicates the voxel format: `"uint8"` (8-bit) or `"uint16"` (16-bit native).
-The `compressed` field indicates bricks are gzip compressed.
-
-### Index files
-
-Each `lodN_index.json` contains byte offsets, gzip-compressed sizes and per-brick statistics of the 64³ core. Keys are `x/y/z` brick coordinates, and bricks are written with x varying fastest:
+`lod0_index.json`: keys are `x/y/z` brick coordinates, bricks are written with x varying fastest, `size` is the compressed size and the statistics cover the 64³ core. A brick whose `max` is below the empty threshold is skipped without a request. `totalBytes` is the size of the `.bin` file.
 
 ```json
 {
-  "lod": 0,
-  "brickSize": 64,
-  "physicalSize": 66,
-  "bricks": [16, 16, 17],
-  "totalBricks": 4352,
-  "totalBytes": 1251041280,
+  "lod": 0, "brickSize": 64, "physicalSize": 66, "bricks": [16, 16, 17],
+  "totalBricks": 4352, "totalBytes": 1251041280,
   "entries": {
     "0/0/0": { "offset": 0, "size": 61204, "min": 0, "max": 142, "avg": 12 },
     "1/0/0": { "offset": 61204, "size": 143880, "min": 0, "max": 198, "avg": 45 }
@@ -152,31 +76,6 @@ Each `lodN_index.json` contains byte offsets, gzip-compressed sizes and per-bric
 }
 ```
 
-The per-brick `max` enables **empty brick skipping**: bricks whose `max` is below the empty threshold are marked empty without being downloaded. `totalBytes` is the size of the `.bin` file.
+## Brick layout
 
-## Brick format details
-
-### Physical vs logical size
-
-- **Logical size**: 64³ voxels (default)
-- **Physical size**: 66³ voxels (logical + 1-voxel border on each side)
-
-The 1-voxel border enables seamless trilinear interpolation at brick boundaries.
-
-### Memory layout
-
-Bricks are stored in row-major order (X varies fastest):
-
-```
-index = x + y * physicalSize + z * physicalSize * physicalSize
-```
-
-### LOD generation
-
-Higher LOD levels are created by 2×2×2 box-filter downsampling:
-- LOD 0: Full resolution
-- LOD 1: Half resolution
-- LOD 2: Quarter resolution
-- etc.
-
-The number of LOD levels is automatically calculated based on volume size, capped at 11 levels (LOD 0-10).
+Each brick is 66³ voxels: the 64³ core plus a one-voxel border copied from its neighbours, so filtering is seamless across bricks. Voxels are stored x fastest, `index = x + y * 66 + z * 66 * 66`. Each LOD halves the previous one with a 2×2×2 average.

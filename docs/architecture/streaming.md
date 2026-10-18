@@ -1,119 +1,91 @@
 # Streaming manager
 
-The **StreamingManager** (`src/streaming/streaming-manager.ts`) implements a **resident set manager** that decides which bricks should occupy the atlas based on camera position, viewing frustum, and screen-space error (SSE) based LOD selection.
+`StreamingManager` (`src/streaming/streaming-manager.ts`) decides which bricks belong in the atlas, loads them in priority order and evicts the rest.
 
-## Desired set computation
+## Desired set
 
-Every 10 frames, and immediately when the camera stops, the manager performs:
+Recomputed every 10 frames and as soon as the camera stops. Starting at the coarsest level, each brick is
 
-1. **Hierarchy traversal**: Starting from the coarsest LOD, recursively descend based on screen-space error
-2. **Frustum culling**: Reject bricks whose AABBs lie entirely outside the view frustum
-3. **SSE-based LOD selection**: At each node, compute screen-space error to decide whether to split
-4. **Skipping**: Bricks known to be empty are never requested, and with [ray guidance](#ray-guided-selection) neither are bricks no ray reached
-
-The desired set keeps being recomputed while the camera moves, so stale requests are cancelled promptly, but new requests are only dispatched once the interaction ends.
+1. dropped if it is outside the view frustum, known to be empty, or (with [ray guidance](#ray-guided-selection)) not reached by any ray,
+2. split into its children if its screen-space error is above the threshold,
+3. otherwise added to the desired set.
 
 ```typescript
 const traverse = (bx, by, bz, lod) => {
   const aabb = getBrickAABB(bx, by, bz, lod);
-
-  // Frustum cull
   if (!isAABBInFrustum(aabb, frustumPlanes)) return;
 
-  // Screen-space error LOD decision
   const dist = distance(cameraPos, aabbCenter(aabb));
-  const voxelWorldSize = getVoxelWorldSize(lod); // this level's voxel size, from the pyramid
-  const projectedError = (voxelWorldSize / dist) * projectionFactor;
-  const shouldSplit = lod > 0 && projectedError > maxPixelError;
-
-  if (shouldSplit && finerLodExists(lod - 1)) {
-    // Recurse into the children at the finer LOD: 1 or 2 per axis, depending on
-    // how that level was downsampled (8 for a uniform 2:1 pyramid)
-    for (child of getChildren(bx, by, bz, lod)) {
-      traverse(child.x, child.y, child.z, lod - 1);
-    }
+  const projectedError = (getVoxelWorldSize(lod) / dist) * projectionFactor; // pixels per voxel of this level
+  if (lod > 0 && projectedError > maxPixelError && finerLodExists(lod - 1)) {
+    for (child of getChildren(bx, by, bz, lod)) traverse(child.x, child.y, child.z, lod - 1); // 1 or 2 per axis
   } else {
-    // This brick is desired
     desiredSet.add({ lod, bx, by, bz, distance: dist });
   }
 };
 ```
 
-**Screen-Space Error (SSE)** measures how many pixels a voxel projects to on screen. When the projected error exceeds `maxPixelError` (default 8 pixels, URL parameter `sse`), the brick splits to a finer LOD. Between 0.7× and 1× the threshold, a brick stays split only if its children are already resident; this hysteresis prevents LOD oscillation during gestures. This approach adapts automatically to:
-- Screen resolution (higher res = more splits for same view)
-- Field of view (narrower FOV = more detail at same distance)
-- Anisotropic voxel spacing (non-uniform datasets)
+`maxPixelError` defaults to 8 pixels (URL parameter `sse`). Between 0.7× and 1× the threshold a brick stays split only if its children are already resident, which stops LOD flicker during gestures. Because the error is measured in pixels, it adapts to screen resolution, field of view and anisotropic voxel spacing.
+
+While the camera moves, the set is still recomputed so stale requests are cancelled, but new requests wait until the interaction ends.
 
 ## Base load
 
-Before any refinement, the coarsest level is loaded in full and pinned in the atlas. How that load is ordered decides how soon the user sees anything, so it is deliberately not "everything at once":
+The coarsest level is loaded completely and pinned before any refinement. Its order is tuned for time to first image:
 
-1. **Cheapest bricks first.** Each provider can estimate a brick's cost (`estimateBrickCost`, the number of source chunks it touches). Bricks are sorted by cost, then centre-out, so the first image needs the fewest bytes.
-2. **Ramp-up window.** The load starts with two tasks in flight and doubles the window every time a task finishes, up to `maxConcurrentRequests × channels`. On a bandwidth-bound link this lets the first brick own the connection instead of sharing it with eleven others that would all land together at the end.
-3. **Channel-major order.** For multichannel data every brick's first visible channel is fetched before any brick's second channel. A brick is committed to the atlas the moment its first channel arrives (a recycled slot has its stale channels zeroed first), so a complete one-channel image appears in roughly 1/N of the full base time and the other channels fill in afterwards. The `baseChannel0Complete` milestone marks that point.
-4. **Visible channels only.** Channels the renderer hides (alpha weight 0, from OMERO `active` or `visibleChannels`) are not streamed. When a channel is shown later, resident bricks are backfilled with it; hiding a channel costs nothing.
-5. **First frame now.** The first committed brick bypasses the accumulation-reset debounce so it is presented immediately.
+1. **Cheapest bricks first:** sorted by the number of source chunks they need (`estimateBrickCost`), then centre-out.
+2. **Ramp-up:** two requests at first, doubling with each completion up to the concurrency limit, so the first brick doesn't share the link with all the others.
+3. **Channel-major:** every brick's first visible channel before any second channel. A brick is committed as soon as its first channel arrives, so a one-channel image appears after about 1/N of the base time (milestone `baseChannel0Complete`).
+4. **Visible channels only:** hidden channels aren't streamed; showing one backfills the resident bricks.
+5. **First frame now:** the first committed brick skips the accumulation-reset debounce.
 
-Measured on a throttled 10 MB/s, 40 ms link this took first content for a 4-channel light-sheet embryo (whole-plane chunks) from 3.3 s to 0.6 s, and for a 4-channel 128³-chunked fly brain from 13.6 s to 0.5 s; time to a fully loaded base is unchanged because it is bandwidth-bound.
+On a 10 MB/s, 40 ms link this brought first content from 3.3 s to 0.6 s for a 4-channel embryo with whole-plane chunks, and from 13.6 s to 0.5 s for a 4-channel fly brain with 128³ chunks. The full base takes as long as before; it is bandwidth-bound.
 
-## Refinement while interacting
+## Refinement
 
-Refined bricks follow the same "show data as soon as it exists" rule as the base load:
+- **Progressive multichannel commit:** a refined brick is committed when its first visible channel arrives. Until the other channels land, they show the ancestor's data resampled into the new slot, so nothing changes visually. If the ancestor isn't in the CPU cache, the brick waits for all channels.
+- **Worker chunk cache:** each worker keeps up to 8 of the largest chunks it has seen (64–256 MB), enough to cover the planes a Z range of whole-plane chunks needs.
 
-- **Progressive multichannel commit.** A refined brick fetches its first visible channel before the others and is committed to the atlas as soon as that channel arrives with signal. Channels still in flight are filled with the currently displayed ancestor's data, nearest-neighbour resampled into the new slot, so they look exactly as before at coarse resolution; each real channel overwrites its stand-in on arrival. If the ancestor's data is not in the CPU cache the brick waits for all channels, and bricks that are dark in every channel are still marked empty.
-- **Worker chunk cache sized to the data.** Each decode worker keeps up to 8 of the largest chunks it has seen (64–256 MB). With whole-plane chunks every brick of a Z range needs the same planes; a cache smaller than that re-downloaded them.
-
-Measured on a 10 MB/s, 40 ms link: first new detail after a zoom on a 4-channel embryo 11.5 s → 3.2 s, on 4-channel yeast 4.4 s → 1.0 s, with identical converged images; a pan across the embryo re-converges in 2.1 s instead of 5.4 s with 97% fewer bytes.
+On the same link: first new detail after a zoom went from 11.5 s to 3.2 s (4-channel embryo) and from 4.4 s to 1.0 s (4-channel yeast); a pan across the embryo re-converges in 2.1 s instead of 5.4 s with 97 % fewer bytes.
 
 ## Ray-guided selection
 
-> **Experimental**, behind the `?rayguide=1` URL flag.
+> **Experimental**, behind `?rayguide=1`.
 
-Frustum culling and SSE keep bricks that are in view, but many of them are hidden behind opaque material or outside the clip box. With ray guidance, the renderer tells the streaming manager which bricks the rays actually reached:
+Frustum culling keeps bricks hidden behind opaque material or outside the clip box. Ray guidance skips them:
 
-1. While marching, the compute shader sets one bit per LOD 0 brick cell a ray enters before it terminates. In ISO mode, the cells next to the surface that the gradient taps read are marked too.
-2. The renderer copies the bitset back every 4 frames, and once more when accumulation converges, so the last view is always reported.
-3. A brick finer than the base level is desired only if a ray entered one of its cells within the last 16 rendered frames. Frames rather than wall time: a still, converged image stops rendering, and what was visible stays visible.
+1. The shader sets one bit per LOD 0 brick cell a ray enters before it terminates. In ISO mode it also marks the neighbouring cells its gradient taps read.
+2. The renderer reads the bits back every 4 frames, and once more when accumulation converges.
+3. Bricks finer than the base level are desired only if a ray entered one of their cells within the last 16 rendered frames. Counting frames rather than time means a converged, idle image keeps what it showed.
 
-The base level is never culled, so everything stays displayable at coarse resolution. Slice mode marches no rays and turns guidance off. The stats panel and `?bench=1` report how many bricks guidance left out. Gains are largest in views that refine deep into the finest levels.
+The base level is never skipped. Slice mode marches no rays and turns guidance off. The stats panel and `?bench=1` report how many bricks were skipped; the savings are largest in views that refine deep into the finest levels.
 
-## Priority queue and request management
+## Request scheduling
 
-After computing the desired set, the manager:
+After each desired-set update, the manager
 
-1. **Cancels stale requests**: In-flight fetches for bricks no longer in desired set are aborted via `AbortController`
-2. **Touches loaded bricks**: Updates LRU timestamps for bricks that remain desired
-3. **Queues missing bricks**: Sorts by distance, closest first (prioritizes visible regions)
-4. **Rate limits requests**: Caps concurrent requests (8 single-channel, 12 multichannel) to avoid network saturation. Stale requests wait a 200 ms grace period before cancellation so brief LOD oscillation doesn't thrash fetches
+- aborts in-flight requests for bricks that are no longer desired, after a 200 ms grace period so brief LOD changes don't thrash,
+- refreshes the LRU timestamp of loaded bricks that are still desired,
+- queues missing bricks nearest first, with at most 8 requests in flight (12 for multichannel).
 
 ![How the desired set is reconciled with loaded and in-flight bricks](../diagrams/desired-set.svg)
 
 ## LRU eviction
 
-When the atlas is full, the **AtlasAllocator** (`src/streaming/atlas-allocator.ts`) evicts the **least recently used** brick:
+When the atlas is full, `AtlasAllocator` (`src/streaming/atlas-allocator.ts`) reuses the least recently used slot:
 
 ```typescript
-allocate(frame: number): AllocationResult {
-  // Try free list first
-  if (freeList.length > 0) {
-    return { slot: freeList.pop(), evicted: null };
-  }
+allocate(frame: number): AllocationResult | null {
+  if (freeList.length > 0) return { slot: freeList.pop(), evicted: null };
 
-  // Find LRU victim, skipping pinned and recently touched slots
   let victim = -1, oldestFrame = Infinity;
   for (slot of usedSlots) {
     if (pinned.has(slot) || frame - lastUsedFrame[slot] < MIN_EVICTION_AGE) continue;
-    if (lastUsedFrame[slot] < oldestFrame) {
-      oldestFrame = lastUsedFrame[slot];
-      victim = slot;
-    }
+    if (lastUsedFrame[slot] < oldestFrame) { oldestFrame = lastUsedFrame[slot]; victim = slot; }
   }
   if (victim === -1) return null; // nothing evictable: the brick stays desired and retries
-
-  // Reuse the slot; the caller repoints the evicted brick's cells at its displayed ancestor
-  const evicted = slotMetadata[victim];
-  return { slot: victim, evicted };
+  return { slot: victim, evicted: slotMetadata[victim] };
 }
 ```
 
-**Pinned bricks** (the coarsest LOD) are never evicted, ensuring a complete fallback representation always exists. Slots touched within the last 30 frames are also protected, so a freshly loaded brick can't be evicted by the next allocation in the same burst (thrash guard). When the streaming manager receives an evicted brick, it points that brick's indirection cells back at the coarser ancestor still on screen, or marks them empty when that ancestor is known empty.
+The pinned base level is never evicted, and slots used within the last 30 frames are protected so a burst of new bricks can't evict each other. The streaming manager then points the evicted brick's indirection cells back at its ancestor on screen, or marks them empty if that ancestor is empty.

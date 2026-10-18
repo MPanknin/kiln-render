@@ -2,45 +2,25 @@
 
 ## Resolution scaling
 
-The compute shader can render at a reduced resolution to decrease the number of rays cast per frame. A configurable `renderScale` factor (0.25-1.0, default 0.5) multiplies the canvas dimensions to produce a smaller compute output texture. The blit pass then upscales this to the full canvas using bilinear filtering.
+The ray marcher renders at `renderScale` × the canvas size (0.25–1, default 0.5): at 0.5 a 1920 × 1080 canvas casts 960 × 540 rays, a quarter of the pixels. A blit pass upscales bilinearly. While the camera moves the scale drops to 0.25 and returns when the view settles (`KilnEngine.interactionRenderScale`; 0 disables the drop).
 
-```
-Canvas: 1920 × 1080
-renderScale: 0.5
-Compute texture: 960 × 540  (75% fewer pixels)
-Blit: bilinear upscale back to 1920 × 1080
-```
+Overlays (wireframe, axis) and their depth buffer stay at full resolution.
 
-While the camera moves, the engine drops to a render scale of 0.25 and returns to `renderScale` when the view settles (`KilnEngine.interactionRenderScale`; 0 disables the drop).
+## Jitter and accumulation
 
-The depth texture remains at full resolution for geometry overlays (wireframe, axis). The scaled dimensions are passed into the shader as `screenSize` so that ray generation and thread dispatch use the correct coordinate space.
+Fixed sample positions produce banding where surfaces align with sample planes. Kiln turns the banding into noise and then averages it away:
 
-## Temporal jitter and accumulation
+- **Jitter:** each ray's first sample is offset by a random fraction of a step, seeded with the frame index. The offset is applied at the first loaded brick, and after skipped bricks the samples advance by whole steps, so the pattern stays consistent along the ray.
 
-Raymarching with fixed step offsets produces banding artifacts where iso-surfaces align with sample planes. Kiln addresses this in two stages:
+  ```wgsl
+  let jitterFrac = rand(rayToSeed(rayDir) + uniforms.frameIndex);
+  tSample = t + jitterFrac * brick.stepSize; // at the first valid brick
+  ```
 
-**Stochastic jitter**: Each ray's starting offset is randomized per frame using the frame index as part of the seed. The jitter is drawn once per ray and starts the sampling comb at the first loaded brick; after skipped bricks the comb advances by whole steps, so its phase is kept along the ray:
+- **Accumulation:** a compute pass averages each new frame into a history texture (ping-pong pair) with `weight = 1 / (frameCount + 1)`. After 64 frames the image counts as converged and rendering stops until something changes.
 
-```wgsl
-let jitterFrac = rand(rayToSeed(rayDir) + uniforms.frameIndex);
-// first valid brick
-tSample = t + jitterFrac * brick.stepSize;
-```
+Accumulation restarts when:
 
-This converts structured banding into high-frequency noise that varies every frame.
-
-**Temporal accumulation**: A compute pass blends the current frame with a history buffer as a running average. Two ping-pong textures alternate as read and write targets to avoid read-write hazards:
-
-```wgsl
-let weight = 1.0 / (frameCount + 1);  // Progressive average
-let blended = mix(history, current, weight);
-```
-
-On frame 0, `weight = 1.0` shows the raw noisy frame. By frame 10, each pixel averages 11 samples, substantially reducing noise. After 64 frames the image counts as converged and rendering stops until something changes.
-
-The accumulation resets automatically when:
-- The camera moves (detected by comparing the view-projection matrix between frames)
-- Rendering parameters change (render mode, transfer function, window/level, ISO threshold)
-- Newly streamed bricks are committed to the atlas. These resets are debounced (100 ms after the last commit, at most 250 ms after the first), so a burst of arriving bricks restarts accumulation once, not per brick
-
-This gives immediate visual feedback during interaction, with progressive refinement when the view is still.
+- the camera moves
+- a render setting changes (mode, transfer function, window, threshold, …)
+- streamed bricks are committed, debounced to 100 ms after the last commit and at most 250 ms after the first, so a burst of bricks restarts it once

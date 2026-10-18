@@ -66,7 +66,7 @@ function defineUniformStruct<T extends string>(
 export const MAX_LOD_LEVELS = 12;
 
 // ---------------------------------------------------------------------------
-// Compute shader uniforms (464 bytes)
+// Compute shader uniforms (480 bytes)
 // ---------------------------------------------------------------------------
 export const COMPUTE_UNIFORMS = defineUniformStruct([
   { name: 'inverseViewProj', type: 'mat4x4f' },
@@ -91,6 +91,8 @@ export const COMPUTE_UNIFORMS = defineUniformStruct([
   { name: 'channelWindowCenter', type: 'vec4f' },
   { name: 'channelWindowWidth',  type: 'vec4f' },
   { name: 'lodScales',       type: `array<vec4f, ${MAX_LOD_LEVELS}>` },
+  { name: 'shading',         type: 'f32' },
+  { name: 'gradientOpacity', type: 'f32' },
 ]);
 
 // ---------------------------------------------------------------------------

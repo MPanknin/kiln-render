@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Auto contrast per channel in the multichannel viewer (an **Auto** button on each channel, `A` fits all visible channels).
 - `StreamingManager.getChannelHistogram(channel, bins)`: the value distribution of a channel over the loaded base level.
 - Experimental ray-guided brick selection behind the `?rayguide=1` URL flag: rays mark the brick cells they enter, and bricks no ray reached (behind opaque material, outside the clip box) are not streamed. The stats panel and `?bench=1` report how many bricks it left out.
+- Opt-in, LOD-consistent gradient shading in single-channel DVR, and optional boundary emphasis, where opacity follows the gradient magnitude. Set them with the `shading` and `gradientOpacity` options, the **Shading** and **Boundaries** sliders, or the `shade` and `boundary` URL parameters.
 
 ### Changed
 - Atlas selection validates filterable 3D bindings inside a WebGPU error scope. Devices exposing unfilterable `r16unorm` under `texture-formats-tier1` fall back to the 12-bit-exact `r16float` path before loading bricks.

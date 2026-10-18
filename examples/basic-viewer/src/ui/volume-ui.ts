@@ -58,6 +58,8 @@ export class VolumeUI {
     windowCenter: 0.5,
     windowWidth: 1.0,
     densityScale: 1.0,
+    shading: 0.0,
+    gradientOpacity: 0.0,
     renderScale: 0.5,
     enableJitter: true,
     enableTAA: true,
@@ -80,6 +82,8 @@ export class VolumeUI {
   private windowCenterSlider!: ReturnType<typeof createSlider>;
   private windowWidthSlider!: ReturnType<typeof createSlider>;
   private densitySlider!: ReturnType<typeof createSlider>;
+  private shadingSlider!: ReturnType<typeof createSlider>;
+  private boundarySlider!: ReturnType<typeof createSlider>;
   private autoContrastRow!: ReturnType<typeof createButtonRow>;
   private contrastHistogram: Uint32Array | null = null;
   private sliceRows!: [ReturnType<typeof createSliderToggleRow>, ReturnType<typeof createSliderToggleRow>, ReturnType<typeof createSliderToggleRow>];
@@ -424,6 +428,18 @@ export class VolumeUI {
       onChange: (v) => { this.renderer.densityScale = v; this.renderer.resetAccumulation(); },
     });
 
+    this.shadingSlider = createSlider({
+      label: 'Shading', min: 0, max: 1, step: 0.05, value: this.params.shading,
+      format: (v) => v.toFixed(2),
+      onChange: (v) => { this.renderer.shading = v; this.renderer.resetAccumulation(); },
+    });
+
+    this.boundarySlider = createSlider({
+      label: 'Boundaries', min: 0, max: 1, step: 0.05, value: this.params.gradientOpacity,
+      format: (v) => v.toFixed(2),
+      onChange: (v) => { this.renderer.gradientOpacity = v; this.renderer.resetAccumulation(); },
+    });
+
     const sliceDims = this.viewer.metadata.dimensions;
     const sliceX = createSliderToggleRow({
       label: 'X', min: 0, max: sliceDims[0], step: 1, value: this.params.sliceX, checked: this.params.showSliceX,
@@ -638,6 +654,8 @@ export class VolumeUI {
     this.params.windowCenter = this.renderer.windowCenter;
     this.params.windowWidth = this.renderer.windowWidth;
     this.params.densityScale = this.renderer.densityScale;
+    this.params.shading = this.renderer.shading;
+    this.params.gradientOpacity = this.renderer.gradientOpacity;
     this.params.renderScale = this.viewer.renderScale;
     this.params.upAxis = this.camera.getUpAxis();
     this.params.tfPreset = this.transferFunction.preset;
@@ -660,6 +678,8 @@ export class VolumeUI {
     this.windowCenterSlider.setValue(this.params.windowCenter);
     this.windowWidthSlider.setValue(this.params.windowWidth);
     this.densitySlider.setValue(this.params.densityScale);
+    this.shadingSlider.setValue(this.params.shading);
+    this.boundarySlider.setValue(this.params.gradientOpacity);
     this.renderScaleSlider.setValue(this.params.renderScale);
     this.upAxisSelect.setValue(this.params.upAxis);
     this.tfPresetSelect.setValue(this.params.tfPreset);
@@ -690,9 +710,9 @@ export class VolumeUI {
 
     // Mode-options region: TF (preset+canvas) shown for dvr/mip/slice (hidden
     // for iso, matching the shader's per-mode TF sampling); Window/Level
-    // shown everywhere except the standalone LOD debug view; Density is
-    // DVR-only (the only shader that reads densityScale); ISO gets its
-    // threshold slider instead of TF. Slice mode samples the same TF and
+    // shown everywhere except the standalone LOD debug view; Density,
+    // Shading and Boundaries are DVR-only (the only shader that reads them);
+    // ISO gets its threshold slider instead of TF. Slice mode samples the same TF and
     // window, so its plane rows go below them (as in the multichannel viewer).
     const children: HTMLElement[] = [];
     if (mode !== 'iso') {
@@ -705,7 +725,7 @@ export class VolumeUI {
       children.push(this.windowCenterSlider.el, this.windowWidthSlider.el, this.autoContrastRow.el);
     }
     if (mode === 'dvr') {
-      children.push(this.densitySlider.el);
+      children.push(this.densitySlider.el, this.shadingSlider.el, this.boundarySlider.el);
     }
     if (isSlice) {
       children.push(this.sliceRows[0].el, this.sliceRows[1].el, this.sliceRows[2].el);

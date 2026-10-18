@@ -42,6 +42,8 @@ function parseURLParams(): {
   wc?: number;
   ww?: number;
   density?: number;
+  shade?: number;
+  boundary?: number;
   iso?: number;
   tf?: string;
   up?: string;
@@ -120,6 +122,8 @@ function parseURLParams(): {
     wc: params.has('wc') ? Number(params.get('wc')) : undefined,
     ww: params.has('ww') ? Number(params.get('ww')) : undefined,
     density: params.has('density') ? Number(params.get('density')) : undefined,
+    shade: params.has('shade') ? Number(params.get('shade')) : undefined,
+    boundary: params.has('boundary') ? Number(params.get('boundary')) : undefined,
     iso: params.has('iso') ? Number(params.get('iso')) : undefined,
     tf: params.get('tf') ?? undefined,
     up: params.get('up') ?? undefined,
@@ -174,6 +178,8 @@ async function main() {
     windowCenter: urlParams.wc,
     windowWidth: urlParams.ww,
     densityScale: urlParams.density,
+    shading: urlParams.shade,
+    gradientOpacity: urlParams.boundary,
     isoValue: urlParams.iso,
     tfPreset: urlParams.tf as TFPreset | undefined,
     tfPoints: urlParams.tfPoints,
@@ -241,6 +247,8 @@ async function main() {
       p.set('wc', state.windowCenter.toFixed(2));
       p.set('ww', state.windowWidth.toFixed(2));
       p.set('density', state.densityScale.toFixed(2));
+      p.set('shade', state.shading.toFixed(2));
+      p.set('boundary', state.gradientOpacity.toFixed(2));
       p.set('iso', state.isoValue.toFixed(2));
       p.set('tf', state.tfPreset);
       p.set('tfpts', state.tfPoints.map(pt => `${pt.x.toFixed(2)},${pt.y.toFixed(2)}`).join(','));

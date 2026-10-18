@@ -46,7 +46,7 @@ export default defineConfig({
     // params, bounce to /app/ preserving the query + hash. Runs synchronously in
     // <head> before the landing renders (no flash) and before analytics counts a
     // hit. A bare root URL (no viewer params) falls through to the landing page.
-    ['script', {}, `(function(){var b=${JSON.stringify(base)};var p=location.pathname;if(p!==b&&p!==b+'index.html')return;var k=['dataset','mode','cam','up','scale','wc','ww','iso','tf','tfpts','tfPreset','density','channels','slice','clipMin','clipMax','wireframe','renderScale'];var q=new URLSearchParams(location.search);for(var i=0;i<k.length;i++){if(q.has(k[i])){location.replace(b+'app/'+location.search+location.hash);return;}}})();`],
+    ['script', {}, `(function(){var b=${JSON.stringify(base)};var p=location.pathname;if(p!==b&&p!==b+'index.html')return;var k=['dataset','mode','cam','up','scale','wc','ww','iso','tf','tfpts','tfPreset','density','shade','boundary','channels','slice','clipMin','clipMax','wireframe','renderScale'];var q=new URLSearchParams(location.search);for(var i=0;i<k.length;i++){if(q.has(k[i])){location.replace(b+'app/'+location.search+location.hash);return;}}})();`],
     ['link', { rel: 'icon', type: 'image/png', sizes: '32x32', href: `${base}favicon-32x32.png` }],
     ['link', { rel: 'apple-touch-icon', href: `${base}apple-touch-icon.png` }],
     // Open Graph / Twitter card — static site-level defaults. Per-page title

@@ -40,6 +40,16 @@ export class TolerantFetchStore implements AsyncReadable<RequestInit> {
    */
   bytesFetched = 0;
   requestCount = 0;
+  /**
+   * Bench only (null otherwise): chunk payload bytes per request tag. A caller tags a request
+   * by passing `kilnTag` in its options, which zarrita forwards unchanged.
+   */
+  bytesByTag: Map<string, number> | null = null;
+
+  private tagBytes(options: RequestInit | undefined, bytes: number): void {
+    const tag = (options as { kilnTag?: string } | undefined)?.kilnTag;
+    if (tag && this.bytesByTag) this.bytesByTag.set(tag, (this.bytesByTag.get(tag) ?? 0) + bytes);
+  }
 
   constructor(url: string | URL, options?: { overrides?: RequestInit }) {
     this.inner = new FetchStore(url, options);
@@ -75,6 +85,7 @@ export class TolerantFetchStore implements AsyncReadable<RequestInit> {
         if (ct.includes('text/html')) return undefined;
         const bytes = new Uint8Array(await response.arrayBuffer());
         this.bytesFetched += bytes.byteLength;
+        this.tagBytes(options, bytes.byteLength);
         return bytes;
       }
 
@@ -94,7 +105,13 @@ export class TolerantFetchStore implements AsyncReadable<RequestInit> {
       this.requestCount++;
       try {
         const result = await this.inner.getRange!(key, range, options);
-        if (result) this.bytesFetched += result.byteLength;
+        if (result) {
+          this.bytesFetched += result.byteLength;
+          // Zarrita reads a shared shard index with a suffix range using the
+          // first chunk's options. It is metadata needed by other chunks too,
+          // so keep it in network totals but never charge it to that chunk.
+          if (!('suffixLength' in range)) this.tagBytes(options, result.byteLength);
+        }
         return result;
       } catch (e) {
         // AbortError — don't retry, rethrow immediately

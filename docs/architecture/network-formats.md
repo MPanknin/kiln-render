@@ -83,3 +83,7 @@ fn applyWindow(density: f32, windowCenter: f32, windowWidth: f32) -> f32 {
 ```
 
 For example, a CT soft tissue window might use center=0.5, width=0.1 to expand a narrow intensity band to full contrast.
+
+### Border-download benchmark
+
+With `?bench=1`, `chunkBytes` counts downloaded chunk payload bytes and `borderOnlyBytes` counts payloads of chunks that no completed brick core has needed so far. Shared Zarr shard indexes are excluded from both values: the first requesting chunk does not own this metadata. They remain included in total network bytes. The percentage therefore describes chunk payloads, not all network traffic. Cancelled brick requests may leave downloaded payloads out of this attribution.

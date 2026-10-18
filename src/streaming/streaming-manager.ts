@@ -1008,6 +1008,8 @@ export class StreamingManager {
         avgUploadMs: this.uploadAvg.value,
         sampleCount: Math.max(providerTimings.sampleCount, this.uploadAvg.count),
         chunkCacheHitRatio: providerTimings.chunkCacheHitRatio,
+        chunkBytes: providerTimings.chunkBytes,
+        borderOnlyBytes: providerTimings.borderOnlyBytes,
       },
       bricksDispatched: this.bricksDispatched,
       bricksCommitted: this.bricksCommitted,

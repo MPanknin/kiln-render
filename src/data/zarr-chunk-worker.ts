@@ -11,7 +11,7 @@ import zstd from 'numcodecs/zstd';
 import { TolerantFetchStore } from './tolerant-fetch-store.js';
 import { float32ToFloat16Bits, getUint16ToFloat16Lut } from '../utils/float16.js';
 import { SharedFetchRegistry } from './shared-fetch.js';
-import { computeBrickChunkFootprint, clampedLutEntry, chunkCoords, chunkLayout } from './chunk-math.js';
+import { computeBrickChunkFootprint, computeBrickCoreChunkRange, clampedLutEntry, chunkCoords, chunkLayout } from './chunk-math.js';
 
 // Static codec imports — zarrita's dynamic imports fail in Vite dev workers.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -74,6 +74,12 @@ export interface ZarrWorkerRequest {
    * docs/audits/kiln-render - fetch_patterns.md and src/core/feature-flags.ts.
    */
   refcountedAborts?: boolean;
+  /**
+   * For 'init' (?bench=1, read on the main thread): attribute downloaded bytes
+   * to chunks and report which chunks each brick's core needs, so the bench
+   * can show what the one-voxel ghost border costs.
+   */
+  trackChunkBytes?: boolean;
   /** Float normalisation range — voxel values are mapped from [floatMin, floatMax] → [0, 65535] */
   floatMin?: number;
   floatMax?: number;
@@ -113,6 +119,10 @@ export interface ZarrWorkerResponse {
    */
   chunkStoreBytes?: number;
   chunkStoreRequests?: number;
+  /** ?bench=1 only: cache keys of the chunks this brick's core touches */
+  coreChunkKeys?: string[];
+  /** ?bench=1 only: bytes downloaded per chunk, for fetches this brick waited on */
+  fetchedChunkBytes?: [string, number][];
 }
 
 // Worker state
@@ -161,7 +171,7 @@ function fetchChunkShared(
 ): Promise<DecodedChunk> {
   return sharedFetches.run(
     key,
-    (fetchSignal) => arr.getChunk(coords, { signal: fetchSignal } as RequestInit).then(chunk => {
+    (fetchSignal) => arr.getChunk(coords, { signal: fetchSignal, kilnTag: key } as RequestInit).then(chunk => {
       const entry = toDecodedChunk(chunk);
       cacheSet(key, entry);
       return entry;
@@ -257,6 +267,7 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
         }
 
         workerStore = new TolerantFetchStore(url!);
+        if (event.data.trackChunkBytes) workerStore.bytesByTag = new Map();
         const { arrayMetadata } = event.data;
         if (arrayMetadata && arrayMetadata.length === paths!.length) {
           arrays = paths!.map((path, i) => new ZarrArray(workerStore!, `/${path}` as AbsolutePath, arrayMetadata[i]!));
@@ -323,6 +334,8 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
           chunkTotal: result.chunkTotal,
           chunkStoreBytes: workerStore?.bytesFetched,
           chunkStoreRequests: workerStore?.requestCount,
+          coreChunkKeys: result.coreChunkKeys,
+          fetchedChunkBytes: result.fetchedChunkBytes,
         };
         (self as unknown as Worker).postMessage(resp, [result.buffer]);
       } catch (e) {
@@ -346,7 +359,7 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
  */
 async function assembleBrick(
   lod: number, bx: number, by: number, bz: number, channelIndex: number, signal?: AbortSignal, requestedTimepoint?: number,
-): Promise<{ buffer: ArrayBuffer; min: number; max: number; avg: number; rawMin?: number; rawMax?: number; fetchMs: number; assemblyMs: number; chunkHits: number; chunkTotal: number }> {
+): Promise<{ buffer: ArrayBuffer; min: number; max: number; avg: number; rawMin?: number; rawMax?: number; fetchMs: number; assemblyMs: number; chunkHits: number; chunkTotal: number; coreChunkKeys?: string[]; fetchedChunkBytes?: [string, number][] }> {
   const arr = arrays[lod]!;
   const params = lodParams![lod]!;
   const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx, channelChunkSize, spatialOrder, timeAxisIdx, timeChunkSize } = params;
@@ -387,6 +400,7 @@ async function assembleBrick(
   };
 
   let chunkHits = 0;
+  const missKeys: string[] = [];
   const fetchPromises: Promise<void>[] = [];
   for (let cz = minCz; cz <= maxCz; cz++) {
     for (let cy = minCy; cy <= maxCy; cy++) {
@@ -401,6 +415,7 @@ async function assembleBrick(
           setChunkEntry(fi, cached);
           chunkHits++;
         } else {
+          missKeys.push(key);
           const coords = chunkCoords(shapePrefixLength, channelAxisIdx, channelChunkSize, channelIndex, cz, cy, cx, spatialOrder, timeAxisIdx, timeChunkSize, timepoint);
 
           if (refcountedAborts) {
@@ -414,7 +429,7 @@ async function assembleBrick(
             // promise instead of issuing a duplicate HTTP request.
             let chunkPromise = inflightFetches.get(key);
             if (!chunkPromise) {
-              chunkPromise = arr.getChunk(coords, { signal } as RequestInit).then(chunk => {
+              chunkPromise = arr.getChunk(coords, { signal, kilnTag: key } as RequestInit).then(chunk => {
                 const entry = toDecodedChunk(chunk);
                 cacheSet(key, entry);
                 return entry;
@@ -434,7 +449,7 @@ async function assembleBrick(
                   setChunkEntry(fi, cached);
                   return;
                 }
-                return arr.getChunk(coords, { signal } as RequestInit).then(chunk => {
+                return arr.getChunk(coords, { signal, kilnTag: key } as RequestInit).then(chunk => {
                   const entry = toDecodedChunk(chunk);
                   cacheSet(key, entry);
                   setChunkEntry(fi, entry);
@@ -451,6 +466,33 @@ async function assembleBrick(
     await Promise.all(fetchPromises);
   }
   const fetchMs = performance.now() - t0;
+
+  // ?bench=1: report this brick's core chunks and the bytes of the fetches it waited on
+  let coreChunkKeys: string[] | undefined;
+  let fetchedChunkBytes: [string, number][] | undefined;
+  const tagged = workerStore?.bytesByTag;
+  if (tagged) {
+    fetchedChunkBytes = [];
+    for (const key of missKeys) {
+      const bytes = tagged.get(key);
+      if (bytes !== undefined) {
+        fetchedChunkBytes.push([key, bytes]);
+        tagged.delete(key);
+      }
+    }
+    const core = computeBrickCoreChunkRange(
+      { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz },
+      bx, by, bz, LOGICAL_SIZE,
+    );
+    coreChunkKeys = [];
+    for (let cz = core.minCz; cz <= core.maxCz; cz++) {
+      for (let cy = core.minCy; cy <= core.maxCy; cy++) {
+        for (let cx = core.minCx; cx <= core.maxCx; cx++) {
+          coreChunkKeys.push(`${timepoint}:${cacheKey(lod, cz, cy, cx, channelChunk)}`);
+        }
+      }
+    }
+  }
 
   // Abort check between fetch and assembly — the CPU-bound assembly loop
   // can't yield, so this is the last interruptible point.
@@ -607,5 +649,7 @@ async function assembleBrick(
     assemblyMs,
     chunkHits,
     chunkTotal: chunkCount,
+    coreChunkKeys,
+    fetchedChunkBytes,
   };
 }

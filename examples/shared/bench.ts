@@ -43,6 +43,8 @@ interface BenchStats {
     avgAssemblyMs: number;
     avgUploadMs: number;
     chunkCacheHitRatio?: number;
+    chunkBytes?: number;
+    borderOnlyBytes?: number;
   };
 }
 
@@ -81,6 +83,9 @@ export interface BenchReport {
   rayCulled: number;
   avgBrickLatencyMs: number;
   chunkCacheHitRatio: number;
+  /** Chunk bytes downloaded, and the part only the one-voxel brick border needed (Zarr only, else null). */
+  chunkBytes: number | null;
+  borderOnlyBytes: number | null;
   timings: { queueMs: number; fetchMs: number; assemblyMs: number; uploadMs: number };
   userAgent: string;
 }
@@ -133,6 +138,9 @@ function formatReport(r: BenchReport): string {
     `${pad('evicted')}${r.evicted}`,
     `${pad('avg brick latency')}${Math.round(r.avgBrickLatencyMs)} ms`,
     `${pad('chunk cache hit')}${(r.chunkCacheHitRatio * 100).toFixed(0)}%`,
+    ...(r.chunkBytes && r.borderOnlyBytes !== null
+      ? [`${pad('border-only')}${mb(r.borderOnlyBytes)} of ${mb(r.chunkBytes)} MB chunk data (${(100 * r.borderOnlyBytes / r.chunkBytes).toFixed(0)}%)`]
+      : []),
     `${pad('pipeline avg ms')}queue ${r.timings.queueMs.toFixed(0)} · fetch ${r.timings.fetchMs.toFixed(0)} · assembly ${r.timings.assemblyMs.toFixed(0)} · upload ${r.timings.uploadMs.toFixed(0)}`,
     `${pad('resident/desired')}${r.loadedCount} / ${r.desiredCount}${r.rayCulled > 0 ? ` · ray-culled ${r.rayCulled}` : ''}`,
     '==================',
@@ -181,6 +189,8 @@ export async function maybeRunBench(viewer: BenchViewer): Promise<void> {
     rayCulled: s.rayCulledCount,
     avgBrickLatencyMs: s.avgBrickLatencyMs,
     chunkCacheHitRatio: s.pipelineTimings.chunkCacheHitRatio ?? 0,
+    chunkBytes: s.pipelineTimings.chunkBytes ?? null,
+    borderOnlyBytes: s.pipelineTimings.borderOnlyBytes ?? null,
     timings: {
       queueMs: s.pipelineTimings.avgQueueMs,
       fetchMs: s.pipelineTimings.avgFetchMs,

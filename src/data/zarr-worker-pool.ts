@@ -6,6 +6,7 @@ import type { ZarrWorkerRequest, ZarrWorkerResponse } from './zarr-chunk-worker.
 import type { ArrayMetadata, DataType } from 'zarrita';
 import type { PipelineTimings } from './data-provider.js';
 import { RollingAvg } from './network-tracker.js';
+import { summarizeBorderBytes } from './chunk-math.js';
 import { isFlagEnabled } from '../core/feature-flags.js';
 import ZarrChunkWorkerInline from './zarr-chunk-worker.ts?worker&inline';
 
@@ -49,6 +50,9 @@ export class ZarrWorkerPool {
   private fetchAvg = new RollingAvg();
   private assemblyAvg = new RollingAvg();
   private chunkHitTotal = 0;
+  // ?bench=1 only: downloaded bytes per chunk, and every chunk some brick's core needed
+  private bytesByChunk = new Map<string, number>();
+  private coreChunks = new Set<string>();
   private chunkReqTotal = 0;
 
   /** Per-worker last-seen cumulative store bytes/requests, for delta computation. */
@@ -97,7 +101,7 @@ export class ZarrWorkerPool {
       this.workerLastRequests[i] = 0;
 
       worker.onmessage = (event: MessageEvent<ZarrWorkerResponse>) => {
-        const { type: msgType, id, error, data, min, max, avg, rawMin, rawMax, fetchMs, assemblyMs, queueMs, chunkHits, chunkTotal, chunkStoreBytes, chunkStoreRequests } = event.data;
+        const { type: msgType, id, error, data, min, max, avg, rawMin, rawMax, fetchMs, assemblyMs, queueMs, chunkHits, chunkTotal, chunkStoreBytes, chunkStoreRequests, coreChunkKeys, fetchedChunkBytes } = event.data;
         const pending = this.pendingRequests.get(id);
         if (!pending) return;
         this.pendingRequests.delete(id);
@@ -124,6 +128,10 @@ export class ZarrWorkerPool {
             this.chunkHitTotal += chunkHits;
             this.chunkReqTotal += chunkTotal;
           }
+          if (fetchedChunkBytes) {
+            for (const [key, bytes] of fetchedChunkBytes) this.bytesByChunk.set(key, (this.bytesByChunk.get(key) ?? 0) + bytes);
+          }
+          if (coreChunkKeys) for (const key of coreChunkKeys) this.coreChunks.add(key);
           // Diff against this worker's last-seen cumulative store totals —
           // the store counter is monotonic, so this is exact even if two
           // loadBrick calls overlap on the same worker.
@@ -176,6 +184,7 @@ export class ZarrWorkerPool {
           // ?p4=1 — read here (main thread), forwarded since a worker
           // can't read the page URL itself. See docs/audits/kiln-render - fetch_patterns.md.
           refcountedAborts: isFlagEnabled('p4'),
+          trackChunkBytes: isFlagEnabled('bench'),
         };
         worker.postMessage(req);
       });
@@ -313,6 +322,7 @@ export class ZarrWorkerPool {
       avgUploadMs: 0, // measured in StreamingManager
       sampleCount: this.fetchAvg.count,
       chunkCacheHitRatio: this.chunkReqTotal > 0 ? this.chunkHitTotal / this.chunkReqTotal : 0,
+      ...(this.bytesByChunk.size > 0 ? summarizeBorderBytes(this.bytesByChunk, this.coreChunks) : {}),
     };
   }
 

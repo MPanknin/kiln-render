@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeBrickChunkFootprint,
+  computeBrickCoreChunkRange,
+  summarizeBorderBytes,
   estimateBrickChunkFanout,
   estimateDatasetFanoutMultiplier,
   clampedLutEntry,
@@ -284,5 +286,44 @@ describe('chunkCoords / chunkLayout (storage order and packed channels)', () => 
     expect(chunkCoords(1, 0, 1, 0, 4, 5, 6, [0, 1, 2])).toEqual([0, 6, 5, 4]);
     const l = chunkLayout({ shape: [1, 16, 8, 4], stride: [1, 1, 16, 128] }, 0, 1, 0, [0, 1, 2]);
     expect(l).toEqual({ base: 0, strideX: 1, strideY: 16, strideZ: 128 });
+  });
+});
+
+describe('computeBrickCoreChunkRange (bench: what the ghost border costs)', () => {
+  const cube = (dim: number, cs: number): LodChunkParams => ({
+    scaleX: 1, scaleY: 1, scaleZ: 1,
+    actualDimX: dim, actualDimY: dim, actualDimZ: dim,
+    csx: cs, csy: cs, csz: cs,
+  });
+
+  it('chunks aligned with bricks: the core needs 1 chunk, the bordered footprint 27', () => {
+    const params = cube(256, 64);
+    const core = computeBrickCoreChunkRange(params, 1, 1, 1, LOGICAL);
+    expect(core).toEqual({ minCx: 1, maxCx: 1, minCy: 1, maxCy: 1, minCz: 1, maxCz: 1 });
+    expect(chunkRangeCount(computeBrickChunkFootprint(params, 1, 1, 1, LOGICAL, PHYSICAL))).toBe(27);
+  });
+
+  it('96³ chunks: a core spans 1 or 2 chunks per axis, the border can add a neighbour', () => {
+    const params = cube(384, 96);
+    expect(computeBrickCoreChunkRange(params, 0, 0, 0, LOGICAL).maxCx).toBe(0); // voxels 0..63
+    const b1 = computeBrickCoreChunkRange(params, 1, 0, 0, LOGICAL); // voxels 64..127 cross 96
+    expect([b1.minCx, b1.maxCx]).toEqual([0, 1]);
+    const b2 = computeBrickCoreChunkRange(params, 2, 0, 0, LOGICAL); // voxels 128..191 inside chunk 1
+    expect([b2.minCx, b2.maxCx]).toEqual([1, 1]);
+    const fp2 = computeBrickChunkFootprint(params, 2, 0, 0, LOGICAL, PHYSICAL); // 127..192 reaches chunk 2
+    expect([fp2.minCx, fp2.maxCx]).toEqual([1, 2]);
+  });
+
+  it('clamps a partial edge brick to the array', () => {
+    const core = computeBrickCoreChunkRange(cube(100, 64), 1, 1, 1, LOGICAL);
+    expect([core.minCx, core.maxCx]).toEqual([1, 1]);
+  });
+});
+
+describe('summarizeBorderBytes', () => {
+  it('counts bytes of chunks no core needed as border-only', () => {
+    const bytes = new Map([['a', 10], ['b', 5], ['c', 7]]);
+    expect(summarizeBorderBytes(bytes, new Set(['a']))).toEqual({ chunkBytes: 22, borderOnlyBytes: 12 });
+    expect(summarizeBorderBytes(bytes, new Set(['a', 'b', 'c']))).toEqual({ chunkBytes: 22, borderOnlyBytes: 0 });
   });
 });

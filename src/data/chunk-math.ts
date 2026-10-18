@@ -65,6 +65,44 @@ export function computeBrickChunkFootprint(
   };
 }
 
+/** Which Zarr chunks a brick's logical core (without the ghost border) touches,
+ *  in the same space as computeBrickChunkFootprint. Chunks in the footprint but
+ *  not here are fetched only for the one-voxel border. */
+export function computeBrickCoreChunkRange(
+  params: LodChunkParams,
+  bx: number,
+  by: number,
+  bz: number,
+  logicalSize: number,
+): ChunkRange {
+  const axis = (b: number, scale: number, dim: number, cs: number): [number, number] => {
+    const v0 = b * logicalSize;
+    const a0 = Math.min(dim - 1, Math.floor(v0 * scale));
+    // round(), matching the footprint's end rounding
+    const a1 = Math.min(dim - 1, Math.round((v0 + logicalSize - 1) * scale));
+    return [Math.floor(a0 / cs), Math.floor(a1 / cs)];
+  };
+  const [minCx, maxCx] = axis(bx, params.scaleX, params.actualDimX, params.csx);
+  const [minCy, maxCy] = axis(by, params.scaleY, params.actualDimY, params.csy);
+  const [minCz, maxCz] = axis(bz, params.scaleZ, params.actualDimZ, params.csz);
+  return { minCx, maxCx, minCy, maxCy, minCz, maxCz };
+}
+
+/** Bench accounting: total downloaded chunk payload bytes (excluding shared shard indexes), and the part from chunks
+ *  that no brick's core needed (downloaded only for ghost borders). */
+export function summarizeBorderBytes(
+  bytesByChunk: ReadonlyMap<string, number>,
+  coreChunks: ReadonlySet<string>,
+): { chunkBytes: number; borderOnlyBytes: number } {
+  let chunkBytes = 0;
+  let borderOnlyBytes = 0;
+  for (const [key, bytes] of bytesByChunk) {
+    chunkBytes += bytes;
+    if (!coreChunks.has(key)) borderOnlyBytes += bytes;
+  }
+  return { chunkBytes, borderOnlyBytes };
+}
+
 /** Max chunks a footprint of `len` voxels can straddle along one axis of `dim`
  *  voxels in `cs`-sized chunks, at the worst alignment (e.g. 66 over 64 → 3). */
 function worstCaseChunkSpan(len: number, dim: number, cs: number): number {

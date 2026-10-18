@@ -60,3 +60,4 @@ A new viewer-facing option touches all of these:
 - Headless browsers (SwiftShader) compile WGSL and validate pipelines, but lose the device when bricks upload, on `main` too. That is the environment, not a regression.
 - Rendering can't be verified headless. Every PR deploys a preview to `kilnrender.com/preview/<branch>/`; say in the PR what to look at there.
 - Performance: compare `?bench=1` with and without the feature flag on the preview.
+- `test/ray-iso-feedback.html` is a manual WebGPU check that Vitest does not run: serve the repository root with Vite and open the page. It compiles the production compute shader and tests the ray-feedback functions on the GPU.

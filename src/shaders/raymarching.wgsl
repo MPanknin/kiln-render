@@ -152,4 +152,3 @@ fn rayMarchSimple(
 
     return vec4f(color, alpha);
 }
-

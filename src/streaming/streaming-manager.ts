@@ -867,9 +867,9 @@ export class StreamingManager {
     this.rayVisibility = new RayVisibility(this.config.datasetGrid);
   }
 
-  /** One visibility readback from the renderer: bit i set ⇔ a ray entered finest-level cell i. */
-  reportRayVisibility(bits: Uint32Array): void {
-    if (this.rayGuidanceActive) this.rayVisibility?.report(bits);
+  /** One visibility readback from the renderer, covering `frames` frames: bit i set ⇔ a ray entered finest-level cell i. */
+  reportRayVisibility(bits: Uint32Array, frames = 1): void {
+    if (this.rayGuidanceActive) this.rayVisibility?.report(bits, frames);
   }
 
   /** Rays are only marched in the volume modes; slice planes may sample any brick. */

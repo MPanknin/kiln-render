@@ -33,6 +33,17 @@ Control rendering settings via URL parameters to share or bookmark specific view
 
 The **Share** button (top-right of the demo) copies the current view as a URL with all parameters filled in.
 
+## Diagnostics and experiments
+
+These are for measuring and debugging; share links don't include them.
+
+| Parameter | Description |
+|-----------|-------------|
+| `debug=1` | Opens the stats panel on load (also toggled with `D` or by clicking the status strip) |
+| `bench=1` | Waits until streaming and accumulation have converged, then logs a report to the console (time to converge, load milestones, bytes, bricks, pipeline timings) and stores it as `window.__KILN_BENCH_RESULT`. `benchLabel` names the run, `benchTimeout` (ms, default 120000) and `benchStable` (polls, default 8) tune convergence detection, and `report=<url>` POSTs the JSON there |
+| `rayguide=1` | Experimental [ray-guided brick selection](/architecture/streaming#ray-guided-selection): bricks no ray reaches are not streamed |
+| `local=true` | Set by the viewer after loading a local directory; reopens the stored directory handle |
+
 > Multichannel datasets use a different set of URL parameters (per-channel colour, windowing, and visibility). See [Multichannel → URL parameters](/rendering/multichannel#url-parameters).
 
 ## Source selection (OME-Zarr)

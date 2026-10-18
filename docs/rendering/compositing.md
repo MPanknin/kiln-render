@@ -4,23 +4,25 @@
 |------|-----------|----------|
 | **DVR** | Front-to-back alpha compositing with transfer function | General visualization |
 | **MIP** | Maximum intensity along ray | Angiography, vessel detection |
-| **ISO** | First surface at threshold + Phong shading | Surface extraction |
-| **LOD** | Color-coded by resolution level | Debug LOD distribution |
+| **ISO** | First surface at threshold + Phong shading, light at the camera | Surface extraction |
+| **LOD** | Color-coded by resolution level (the **LOD Levels** toggle under Advanced, or `mode=lod`) | Debug LOD distribution |
 | **Slice** | Three orthogonal planes sampling the atlas directly | Anatomical navigation |
 
-DVR compositing uses the optical model with extinction:
+DVR compositing uses the optical model with extinction (Beer–Lambert), so opacity per sample scales with the step length and coarse bricks with larger steps stay consistent:
 
 ```wgsl
-fn composeSample(density, stepSize, color, alpha) {
-    let tfColor = textureSample(transferFunction, density);
-    let extinction = tfColor.a * stepSize * volumeScale;
-    let sampleAlpha = 1.0 - exp(-extinction);
+fn composeSample(density: f32, extinctionScale: f32, color: ptr<function, vec3f>, alpha: ptr<function, f32>) {
+    let tfColor = textureSampleLevel(tfTexture, tfSampler, vec2f(density, 0.5), 0.0);
+    // extinctionScale = stepSize × densityScale × volume size × log2(e)
+    let sampleAlpha = 1.0 - exp2(-tfColor.a * extinctionScale);
 
     // Front-to-back blending
     *color += tfColor.rgb * sampleAlpha * (1.0 - *alpha);
     *alpha += sampleAlpha * (1.0 - *alpha);
 }
 ```
+
+Rays stop early once accumulated opacity passes 0.95.
 
 ## Shading and boundary emphasis
 
@@ -57,6 +59,6 @@ for (var ch = 0u; ch < numChannels; ch++) {
 composeSampleAdditive(channelColor, maxDensity, ...);
 ```
 
-The `composeSampleAdditive` function normalises the summed colour by the maximum density to avoid over-brightening, then applies front-to-back compositing (DVR) or tracks per-channel maximums (MIP).
+The `composeSampleAdditive` function normalises the summed colour by the maximum density to avoid over-brightening and takes the sample's opacity from that maximum, then applies front-to-back compositing (DVR). MIP tracks per-channel maximums instead.
 
 Transfer functions are not used in multichannel mode. See [Multichannel](/rendering/multichannel) for per-mode behaviour and API details.

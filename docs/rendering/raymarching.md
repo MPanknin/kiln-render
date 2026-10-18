@@ -51,7 +51,7 @@ For each ray segment, the shader:
 1. **Computes brick index**: `floor(voxelPos / LOGICAL_BRICK_SIZE)`
 2. **Looks up indirection**: `textureLoad(indirectionTexture, brickIndex)`
 3. **Calculates brick exit**: Ray-box intersection with brick AABB
-4. **Samples within brick**: Steps through at adaptive rate based on LOD
+4. **Samples within brick**: Steps 64 times per brick diagonal, times the brick's coarsest per-axis LOD scale (capped at 4), so coarse bricks take larger steps
 
 ```wgsl
 fn setupBrick(ray, t) -> BrickInfo {
@@ -64,8 +64,10 @@ fn setupBrick(ray, t) -> BrickInfo {
     info.valid = indirection.w > 0u && indirection.w < 255u;
 
     if (info.valid) {
-        info.lodScale = exp2(f32(indirection.w) - 1.0);
-        info.stepSize = computeStepSize(brickSize, lodScale);
+        // Per-axis finest voxels per voxel of this level (w = LOD + 1), from a uniform table
+        info.lodScale = uniforms.lodScales[indirection.w - 1u].xyz;
+        let lodStepMul = min(max(info.lodScale.x, max(info.lodScale.y, info.lodScale.z)), 4.0);
+        info.stepSize = (brickWorldSize / STEPS_PER_BRICK) * lodStepMul;
     }
 
     return info;
@@ -77,18 +79,19 @@ fn setupBrick(ray, t) -> BrickInfo {
 The shader transforms logical voxel coordinates to atlas texture coordinates:
 
 ```wgsl
-fn sampleAtlas(voxelPos: vec3f, indirection: vec4u, lodScale: f32) -> f32 {
+fn sampleAtlas(voxelPos: vec3f, indirection: vec4u, lodScale: vec3f) -> f32 {
     // Position within logical brick [0, 64)
     let posInBrick = (voxelPos % (LOGICAL_BRICK_SIZE * lodScale)) / lodScale;
 
     // Atlas base from integer slot indices
     let atlasBase = vec3f(indirection.xyz) * PHYSICAL_BRICK_SIZE / ATLAS_SIZE;
 
-    // Offset by border (1 voxel), add 0.5 for texel center
-    let atlasUV = atlasBase + (posInBrick + BORDER + 0.5) / ATLAS_SIZE;
+    // Skip the 1-voxel border. posInBrick already sits on voxel centres
+    // (voxel i spans [i, i + 1)), so no extra half-texel offset.
+    let atlasUV = atlasBase + (posInBrick + BORDER) / ATLAS_SIZE;
 
     return textureSampleLevel(volumeTexture, volumeSampler, atlasUV, 0.0).r;
 }
 ```
 
-The `lodScale` factor handles coarse LOD sampling: a LOD 2 brick covers 256³ logical voxels but only contains 64³ actual samples, so coordinates are divided by 4 before indexing into the brick.
+The `lodScale` factor handles coarse LOD sampling: in a 2:1 pyramid a LOD 2 brick covers 256³ finest-level voxels but only contains 64³ actual samples, so coordinates are divided by 4 before indexing into the brick. Native pyramids that downsample axes differently get a different factor per axis. The hot loop uses the same mapping, precomputed per brick as an affine transform (`atlasOffset + voxelPos * atlasScale`).

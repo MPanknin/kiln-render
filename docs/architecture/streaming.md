@@ -4,11 +4,14 @@ The **StreamingManager** (`src/streaming/streaming-manager.ts`) implements a **r
 
 ## Desired set computation
 
-Each frame (throttled to every N frames while camera moves), the manager performs:
+Every 10 frames, and immediately when the camera stops, the manager performs:
 
-1. **Octree Traversal**: Starting from the coarsest LOD, recursively descend based on screen-space error
-2. **Frustum Culling**: Reject bricks whose AABBs lie entirely outside the view frustum
-3. **SSE-based LOD Selection**: At each node, compute screen-space error to decide whether to split
+1. **Hierarchy traversal**: Starting from the coarsest LOD, recursively descend based on screen-space error
+2. **Frustum culling**: Reject bricks whose AABBs lie entirely outside the view frustum
+3. **SSE-based LOD selection**: At each node, compute screen-space error to decide whether to split
+4. **Skipping**: Bricks known to be empty are never requested, and with [ray guidance](#ray-guided-selection) neither are bricks no ray reached
+
+The desired set keeps being recomputed while the camera moves, so stale requests are cancelled promptly, but new requests are only dispatched once the interaction ends.
 
 ```typescript
 const traverse = (bx, by, bz, lod) => {
@@ -19,13 +22,13 @@ const traverse = (bx, by, bz, lod) => {
 
   // Screen-space error LOD decision
   const dist = distance(cameraPos, aabbCenter(aabb));
-  const lodScale = Math.pow(2, lod);  // Voxel size multiplier
-  const voxelWorldSize = lodScale * voxelSpacing;
+  const voxelWorldSize = getVoxelWorldSize(lod); // this level's voxel size, from the pyramid
   const projectedError = (voxelWorldSize / dist) * projectionFactor;
-  const shouldSplit = lod > 0 && projectedError > sseThreshold;
+  const shouldSplit = lod > 0 && projectedError > maxPixelError;
 
   if (shouldSplit && finerLodExists(lod - 1)) {
-    // Recurse to 8 children at finer LOD
+    // Recurse into the children at the finer LOD: 1 or 2 per axis, depending on
+    // how that level was downsampled (8 for a uniform 2:1 pyramid)
     for (child of getChildren(bx, by, bz, lod)) {
       traverse(child.x, child.y, child.z, lod - 1);
     }
@@ -36,7 +39,7 @@ const traverse = (bx, by, bz, lod) => {
 };
 ```
 
-**Screen-Space Error (SSE)** measures how many pixels a voxel projects to on screen. When the projected error exceeds a threshold (default: 8.0 pixels), the brick splits to a finer LOD. A hysteresis band (splitting only above the threshold, collapsing only below 0.7× it) prevents LOD oscillation during gestures. This approach adapts automatically to:
+**Screen-Space Error (SSE)** measures how many pixels a voxel projects to on screen. When the projected error exceeds `maxPixelError` (default 8 pixels, URL parameter `sse`), the brick splits to a finer LOD. Between 0.7× and 1× the threshold, a brick stays split only if its children are already resident; this hysteresis prevents LOD oscillation during gestures. This approach adapts automatically to:
 - Screen resolution (higher res = more splits for same view)
 - Field of view (narrower FOV = more detail at same distance)
 - Anisotropic voxel spacing (non-uniform datasets)
@@ -62,6 +65,18 @@ Refined bricks follow the same "show data as soon as it exists" rule as the base
 
 Measured on a 10 MB/s, 40 ms link: first new detail after a zoom on a 4-channel embryo 11.5 s → 3.2 s, on 4-channel yeast 4.4 s → 1.0 s, with identical converged images; a pan across the embryo re-converges in 2.1 s instead of 5.4 s with 97% fewer bytes.
 
+## Ray-guided selection
+
+> **Experimental**, behind the `?rayguide=1` URL flag.
+
+Frustum culling and SSE keep bricks that are in view, but many of them are hidden behind opaque material or outside the clip box. With ray guidance, the renderer tells the streaming manager which bricks the rays actually reached:
+
+1. While marching, the compute shader sets one bit per LOD 0 brick cell a ray enters before it terminates. In ISO mode, the cells next to the surface that the gradient taps read are marked too.
+2. The renderer copies the bitset back every 4 frames, and once more when accumulation converges, so the last view is always reported.
+3. A brick finer than the base level is desired only if a ray entered one of its cells within the last 16 rendered frames. Frames rather than wall time: a still, converged image stops rendering, and what was visible stays visible.
+
+The base level is never culled, so everything stays displayable at coarse resolution. Slice mode marches no rays and turns guidance off. The stats panel and `?bench=1` report how many bricks guidance left out. Gains are largest in views that refine deep into the finest levels.
+
 ## Priority queue and request management
 
 After computing the desired set, the manager:
@@ -71,18 +86,7 @@ After computing the desired set, the manager:
 3. **Queues missing bricks**: Sorts by distance, closest first (prioritizes visible regions)
 4. **Rate limits requests**: Caps concurrent requests (8 single-channel, 12 multichannel) to avoid network saturation. Stale requests wait a 200 ms grace period before cancellation so brief LOD oscillation doesn't thrash fetches
 
-```
-Desired Set: [A, B, C, D, E, F, G, H]  (sorted by distance)
-Currently Loaded: [A, B, X, Y, Z]
-In-Flight: [C]
-                     │
-                     ▼
-Actions:
-  - Touch A, B (update LRU)
-  - Cancel X, Y, Z if in-flight (no longer needed)
-  - Keep C in-flight (still desired)
-  - Queue D, E, F, G, H (limited to max concurrent: 8 single / 12 multichannel)
-```
+![How the desired set is reconciled with loaded and in-flight bricks](../diagrams/desired-set.svg)
 
 ## LRU eviction
 
@@ -95,20 +99,21 @@ allocate(frame: number): AllocationResult {
     return { slot: freeList.pop(), evicted: null };
   }
 
-  // Find LRU victim
+  // Find LRU victim, skipping pinned and recently touched slots
   let victim = -1, oldestFrame = Infinity;
   for (slot of usedSlots) {
+    if (pinned.has(slot) || frame - lastUsedFrame[slot] < MIN_EVICTION_AGE) continue;
     if (lastUsedFrame[slot] < oldestFrame) {
       oldestFrame = lastUsedFrame[slot];
       victim = slot;
     }
   }
+  if (victim === -1) return null; // nothing evictable: the brick stays desired and retries
 
-  // Evict and return
+  // Reuse the slot; the caller repoints the evicted brick's cells at its displayed ancestor
   const evicted = slotMetadata[victim];
-  indirectionTable.clear(evicted.bx, evicted.by, evicted.bz, evicted.lod);
   return { slot: victim, evicted };
 }
 ```
 
-**Pinned bricks** (the coarsest LOD) are never evicted, ensuring a complete fallback representation always exists. Slots touched within the last 30 frames are also protected, so a freshly loaded brick can't be evicted by the next allocation in the same burst (thrash guard).
+**Pinned bricks** (the coarsest LOD) are never evicted, ensuring a complete fallback representation always exists. Slots touched within the last 30 frames are also protected, so a freshly loaded brick can't be evicted by the next allocation in the same burst (thrash guard). When the streaming manager receives an evicted brick, it points that brick's indirection cells back at the coarser ancestor still on screen, or marks them empty when that ancestor is known empty.

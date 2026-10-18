@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 176" width="720" height="176" font-size="12" role="img" aria-label="The same 1024 × 512 × 1024 volume at LOD 0 to 3: each level halves the brick grid per axis, so one 64³ brick covers 64³, 128³, 256³ and 512³ voxels of the original.">
+<style>
+text{fill:#1f2328;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.muted{fill:#59636e}.faint{fill:#818b98}
+.box{fill:#f6f8fa;stroke:#d1d9e0}.panel{fill:none;stroke:#d1d9e0}.page{fill:#fff}
+.line{fill:none;stroke:#818b98}.head{fill:#818b98}
+.accent{fill:rgba(9,105,218,.12);stroke:#0969da}.accent-line{fill:none;stroke:#0969da}.accent-head,.accent-text{fill:#0969da}
+.ok{fill:rgba(26,127,55,.12);stroke:#1a7f37}.ok-line{fill:none;stroke:#1a7f37}.ok-text{fill:#1a7f37}
+.bad{fill:rgba(207,34,46,.1);stroke:#cf222e}.bad-text{fill:#cf222e}
+@media (prefers-color-scheme:dark){
+text{fill:#f0f6fc}.muted{fill:#9198a1}.faint{fill:#656c76}
+.box{fill:#151b23;stroke:#3d444d}.panel{stroke:#3d444d}.page{fill:#0d1117}
+.line{stroke:#656c76}.head{fill:#656c76}
+.accent{fill:rgba(68,147,248,.15);stroke:#4493f8}.accent-line{stroke:#4493f8}.accent-head,.accent-text{fill:#4493f8}
+.ok{fill:rgba(63,185,80,.15);stroke:#3fb950}.ok-line{stroke:#3fb950}.ok-text{fill:#3fb950}
+.bad{fill:rgba(248,81,73,.15);stroke:#f85149}.bad-text{fill:#f85149}}
+</style>
+<text x="0" y="14" class="muted">1024 × 512 × 1024 voxels, front view (x × y)</text>
+<rect x="0" y="30" width="156" height="78" class="box"/>
+<path d="M9.8,30 V108 M19.5,30 V108 M29.2,30 V108 M39,30 V108 M48.8,30 V108 M58.5,30 V108 M68.2,30 V108 M78,30 V108 M87.8,30 V108 M97.5,30 V108 M107.2,30 V108 M117,30 V108 M126.8,30 V108 M136.5,30 V108 M146.2,30 V108 M0,39.8 H156 M0,49.5 H156 M0,59.2 H156 M0,69 H156 M0,78.8 H156 M0,88.5 H156 M0,98.2 H156" class="panel" stroke-width="1"/>
+<rect x="0" y="30" width="9.8" height="9.8" class="accent" stroke-width="1.5"/>
+<text x="0" y="132" font-size="13" font-weight="600">LOD 0</text>
+<text x="156" y="132" class="muted mono" text-anchor="end">1:1</text>
+<text x="0" y="152" class="muted">16 × 8 × 16 = 2,048 bricks</text>
+<rect x="0" y="163" width="10" height="10" class="accent" stroke-width="1.5"/>
+<text x="16" y="172">one brick covers 64³</text>
+<rect x="188" y="30" width="156" height="78" class="box"/>
+<path d="M207.5,30 V108 M227,30 V108 M246.5,30 V108 M266,30 V108 M285.5,30 V108 M305,30 V108 M324.5,30 V108 M188,49.5 H344 M188,69 H344 M188,88.5 H344" class="panel" stroke-width="1"/>
+<rect x="188" y="30" width="19.5" height="19.5" class="accent" stroke-width="1.5"/>
+<text x="188" y="132" font-size="13" font-weight="600">LOD 1</text>
+<text x="344" y="132" class="muted mono" text-anchor="end">1:2</text>
+<text x="188" y="152" class="muted">8 × 4 × 8 = 256 bricks</text>
+<rect x="188" y="163" width="10" height="10" class="accent" stroke-width="1.5"/>
+<text x="204" y="172">one brick covers 128³</text>
+<rect x="376" y="30" width="156" height="78" class="box"/>
+<path d="M415,30 V108 M454,30 V108 M493,30 V108 M376,69 H532" class="panel" stroke-width="1"/>
+<rect x="376" y="30" width="39" height="39" class="accent" stroke-width="1.5"/>
+<text x="376" y="132" font-size="13" font-weight="600">LOD 2</text>
+<text x="532" y="132" class="muted mono" text-anchor="end">1:4</text>
+<text x="376" y="152" class="muted">4 × 2 × 4 = 32 bricks</text>
+<rect x="376" y="163" width="10" height="10" class="accent" stroke-width="1.5"/>
+<text x="392" y="172">one brick covers 256³</text>
+<rect x="564" y="30" width="156" height="78" class="box"/>
+<path d="M642,30 V108" class="panel" stroke-width="1"/>
+<rect x="564" y="30" width="78" height="78" class="accent" stroke-width="1.5"/>
+<text x="564" y="132" font-size="13" font-weight="600">LOD 3</text>
+<text x="720" y="132" class="muted mono" text-anchor="end">1:8</text>
+<text x="564" y="152" class="muted">2 × 1 × 2 = 4 bricks</text>
+<rect x="564" y="163" width="10" height="10" class="accent" stroke-width="1.5"/>
+<text x="580" y="172">one brick covers 512³</text>
+</svg>

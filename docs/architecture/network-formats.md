@@ -4,36 +4,24 @@
 
 Data providers (`src/data/`) handle fetching brick data. The **ShardedDataProvider** uses **HTTP Range requests** to fetch individual bricks without downloading entire LOD files:
 
-```
-GET /datasets/volume/lod0.bin
-Range: bytes=1835008-2122503
-                │
-                ▼
-┌─────────────────────────────────────────┐
-│ lod0.bin (concatenated brick data)      │
-│ ┌─────┬─────┬─────┬─────┬─────┬─────┐  │
-│ │  0  │  1  │  2  │  3  │ ... │ N   │  │
-│ └─────┴─────┴──▲──┴─────┴─────┴─────┘  │
-│                │                        │
-│     Byte range for brick 2 only         │
-└─────────────────────────────────────────┘
-```
+![An index lookup turns into one HTTP Range request for one brick](../diagrams/range-request.svg)
 
-The **index file** (`lod0_index.json`) provides byte offsets, sizes, and pre-computed statistics:
+The **index file** (`lod0_index.json`) provides byte offsets, compressed sizes, and pre-computed statistics:
 
 ```json
 {
   "entries": {
-    "0/0/0": { "offset": 0, "size": 287496, "min": 0, "max": 45, "avg": 12.3 },
-    "1/0/0": { "offset": 287496, "size": 287496, "min": 0, "max": 0, "avg": 0 }
+    "0/0/0": { "offset": 0, "size": 61204, "min": 0, "max": 45, "avg": 12 },
+    "1/0/0": { "offset": 61204, "size": 143880, "min": 0, "max": 198, "avg": 61 },
+    "2/0/0": { "offset": 205084, "size": 98412, "min": 0, "max": 87, "avg": 23 }
   }
 }
 ```
 
-**Empty brick detection**: Before fetching, the loader checks if `max < threshold`. Bricks with no significant data are marked empty in the indirection table (LOD = 255) without any network request.
+**Empty brick detection**: Before fetching, the loader checks the index's `max` against a threshold that depends on the data type and window. Bricks with no significant data are marked empty in the indirection table (`w` = 255) without any network request. OME-Zarr has no such index, so there a brick is found empty once it has been assembled, and is not requested again.
 
 Network statistics are tracked in real-time:
-- **Throughput**: Rolling 2-second window of bytes/second
+- **Throughput**: bytes per second over the last 10 seconds
 - **Total downloaded**: Cumulative bytes since session start
 - **Request count**: Total HTTP requests issued
 
@@ -41,9 +29,7 @@ Network statistics are tracked in real-time:
 
 Bricks are stored with gzip compression to reduce network transfer size. A **DecompressionPool** of Web Workers handles parallel decompression without blocking the main thread:
 
-```
-Compressed Brick (HTTP) → Worker Pool → Decompressed Data → GPU Upload
-```
+![Fetch, decompress in workers, upload to an atlas slot](../diagrams/decompression.svg)
 
 Typical compression ratios:
 - Dense volumes (CT/MRI): 30-60% of original size

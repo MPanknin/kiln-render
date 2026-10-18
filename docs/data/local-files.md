@@ -47,6 +47,7 @@ await clearHandle();
 
 ## Limitations vs. HTTP streaming
 
-- Runs on the main thread (the `FileSystemDirectoryHandle` cannot be transferred to a worker)
-- No HTTP Range streaming — each chunk is read fully from disk
-- Otherwise identical feature support: LOD streaming, 16-bit, clipping, etc.
+- Chunk reads and brick assembly run on the main thread, not in the worker pool used for HTTP
+- Each chunk file is read whole; there are no partial reads
+- Sharded Zarr v3 stores (the `sharding_indexed` codec) can't be read locally yet, because reading one chunk out of a shard needs partial reads. Serve them over HTTP instead
+- Otherwise identical feature support: LOD streaming, multichannel, 16-bit, clipping, etc.

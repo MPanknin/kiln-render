@@ -64,7 +64,8 @@ try {
 - **OME-Zarr & Kiln binary** — Stream from S3, CDN, or load local files (OME-Zarr v0.4/v0.5, uint8/uint16/int16/float32)
 - **Local filesystem** — Load local `.zarr` / `.ome.zarr` directories via the File System Access API (Chrome/Edge)
 - **uint8, uint16, int16 & float32 input** — `uint16` is stored bit-exact as `r16unorm` where the GPU supports it, otherwise as `r16float` (exact up to 12 bits); `int16` and `float32` use `r16float`, with window/level controls
-- **Compute shader raymarching** — Brick-aware DVR (with density scale), MIP, isosurface, and slice plane rendering
+- **Compute shader raymarching** — Brick-aware DVR (with density scale and optional gradient shading), MIP, isosurface, and slice plane rendering
+- **Embeddable** — `KilnViewer` for a canvas in a few lines, or `KilnEngine` for apps that bring their own WebGPU device, camera and frame loop
 
 ## Developing from source
 
@@ -92,9 +93,11 @@ The demo loads a sample dataset from S3. To load custom datasets, see [Loading d
 ## Browser Requirements
 
 Kiln requires **WebGPU** support:
-- Chrome/Edge 113+
+- Chrome/Edge 113+ (Windows, macOS, ChromeOS; Android 121+; Linux depends on the GPU)
 - Safari 26+
-- Firefox 141+
+- Firefox 141+ on Windows, 145+ on Apple-silicon Macs
+
+See the [FAQ](docs/guide/faq.md#which-browsers-are-supported) for details.
 
 Make sure hardware acceleration is enabled in your browser settings.
 

@@ -2,7 +2,7 @@
 
 ## 1. Screen-space error LOD selection
 
-SSE determines when to use finer/coarser LODs based on how many pixels a voxel projects to. This adapts automatically to screen resolution, FOV, and viewing distance. A single threshold (default 8.0 pixels) controls the quality/performance tradeoff.
+SSE determines when to use finer/coarser LODs based on how many pixels a voxel projects to. This adapts automatically to screen resolution, FOV, and viewing distance. A single threshold (`maxPixelError`, default 8 pixels) controls the quality/performance tradeoff.
 
 ## 2. LRU eviction
 
@@ -14,11 +14,11 @@ Only load bricks that are missing; touch existing ones to keep them fresh. This 
 
 ## 4. Empty brick skipping
 
-Pre-computed statistics (min/max/avg) in Kiln's sharded binary index file allow skipping bricks with no useful data before any network request. This is particularly effective for sparse volumes like CT scans with large air regions.
+Pre-computed statistics (min/max/avg) in Kiln's sharded binary index file allow skipping bricks with no useful data before any network request. For OME-Zarr, a brick found empty after assembly is remembered and never requested again. This is particularly effective for sparse volumes like CT scans with large air regions or microscopy with dark background.
 
 ## 5. Multi-slot indirection
 
-Coarse LOD bricks fill multiple cells in the indirection table (2^lod per dimension), with LOD priority to prevent coarse from overwriting fine. This enables seamless LOD transitions handled entirely by the indirection lookup.
+Coarse LOD bricks fill multiple cells in the indirection table (2^lod per dimension in a 2:1 pyramid; native pyramids use each level's per-axis factors), with LOD priority to prevent coarse from overwriting fine. This enables seamless LOD transitions handled entirely by the indirection lookup.
 
 ## 6. LOD 255 = empty marker
 

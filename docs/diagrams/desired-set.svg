@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 170" width="720" height="170" font-size="12" role="img" aria-label="Reconciling the desired set A to H with current state: loaded A and B are touched, in-flight C is kept, D to H are queued nearest first; undesired loaded bricks X, Y, Z stay until LRU evicts them, and undesired in-flight W is aborted after 200 ms.">
+<style>
+text{fill:#1f2328;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.muted{fill:#59636e}.faint{fill:#818b98}
+.box{fill:#f6f8fa;stroke:#d1d9e0}.panel{fill:none;stroke:#d1d9e0}.page{fill:#fff}
+.line{fill:none;stroke:#818b98}.head{fill:#818b98}
+.accent{fill:rgba(9,105,218,.12);stroke:#0969da}.accent-line{fill:none;stroke:#0969da}.accent-head,.accent-text{fill:#0969da}
+.ok{fill:rgba(26,127,55,.12);stroke:#1a7f37}.ok-line{fill:none;stroke:#1a7f37}.ok-text{fill:#1a7f37}
+.bad{fill:rgba(207,34,46,.1);stroke:#cf222e}.bad-text{fill:#cf222e}
+@media (prefers-color-scheme:dark){
+text{fill:#f0f6fc}.muted{fill:#9198a1}.faint{fill:#656c76}
+.box{fill:#151b23;stroke:#3d444d}.panel{stroke:#3d444d}.page{fill:#0d1117}
+.line{stroke:#656c76}.head{fill:#656c76}
+.accent{fill:rgba(68,147,248,.15);stroke:#4493f8}.accent-line{stroke:#4493f8}.accent-head,.accent-text{fill:#4493f8}
+.ok{fill:rgba(63,185,80,.15);stroke:#3fb950}.ok-line{stroke:#3fb950}.ok-text{fill:#3fb950}
+.bad{fill:rgba(248,81,73,.15);stroke:#f85149}.bad-text{fill:#f85149}}
+</style>
+<text x="0" y="16" font-size="13" font-weight="600">Desired set, nearest first</text>
+<text x="480" y="16" font-size="13" font-weight="600">No longer desired</text>
+<rect x="0" y="30" width="40" height="34" rx="5" class="box" stroke-width="1.5"/>
+<text x="20" y="52" class="mono" font-size="14" text-anchor="middle" font-weight="600">A</text>
+<rect x="50" y="30" width="40" height="34" rx="5" class="box" stroke-width="1.5"/>
+<text x="70" y="52" class="mono" font-size="14" text-anchor="middle" font-weight="600">B</text>
+<rect x="100" y="30" width="40" height="34" rx="5" class="accent" stroke-width="1.5"/>
+<text x="120" y="52" class="mono accent-text" font-size="14" text-anchor="middle" font-weight="600">C</text>
+<rect x="170" y="30" width="40" height="34" rx="5" class="panel" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="190" y="52" class="mono faint" font-size="14" text-anchor="middle" font-weight="600">D</text>
+<rect x="220" y="30" width="40" height="34" rx="5" class="panel" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="240" y="52" class="mono faint" font-size="14" text-anchor="middle" font-weight="600">E</text>
+<rect x="270" y="30" width="40" height="34" rx="5" class="panel" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="290" y="52" class="mono faint" font-size="14" text-anchor="middle" font-weight="600">F</text>
+<rect x="320" y="30" width="40" height="34" rx="5" class="panel" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="340" y="52" class="mono faint" font-size="14" text-anchor="middle" font-weight="600">G</text>
+<rect x="370" y="30" width="40" height="34" rx="5" class="panel" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="390" y="52" class="mono faint" font-size="14" text-anchor="middle" font-weight="600">H</text>
+<rect x="480" y="30" width="40" height="34" rx="5" class="box" stroke-width="1.5"/>
+<text x="500" y="52" class="mono" font-size="14" text-anchor="middle" font-weight="600">X</text>
+<rect x="530" y="30" width="40" height="34" rx="5" class="box" stroke-width="1.5"/>
+<text x="550" y="52" class="mono" font-size="14" text-anchor="middle" font-weight="600">Y</text>
+<rect x="580" y="30" width="40" height="34" rx="5" class="box" stroke-width="1.5"/>
+<text x="600" y="52" class="mono" font-size="14" text-anchor="middle" font-weight="600">Z</text>
+<rect x="640" y="30" width="40" height="34" rx="5" class="accent" stroke-width="1.5"/>
+<text x="660" y="52" class="mono accent-text" font-size="14" text-anchor="middle" font-weight="600">W</text>
+<path d="M2,72 V78 H88 V72" class="line" stroke-width="1.5"/>
+<text x="0" y="100" font-weight="600">touch</text>
+<text x="0" y="116" class="muted">refresh LRU</text>
+<path d="M102,72 V78 H138 V72" class="line" stroke-width="1.5"/>
+<text x="100" y="100" font-weight="600">keep</text>
+<text x="100" y="116" class="muted">in flight</text>
+<path d="M172,72 V78 H408 V72" class="line" stroke-width="1.5"/>
+<text x="170" y="100" font-weight="600">queue</text>
+<text x="170" y="116" class="muted">at most 8 in flight (12 multichannel)</text>
+<path d="M482,72 V78 H618 V72" class="line" stroke-width="1.5"/>
+<text x="480" y="100" font-weight="600">keep resident</text>
+<text x="480" y="116" class="muted">LRU evicts when full</text>
+<path d="M642,72 V78 H678 V72" class="line" stroke-width="1.5"/>
+<text x="640" y="100" class="bad-text" font-weight="600">abort</text>
+<text x="640" y="116" class="muted">after 200 ms</text>
+<rect x="0" y="150" width="16" height="14" rx="3" class="box" stroke-width="1.5"/>
+<text x="24" y="161" class="muted">loaded</text>
+<rect x="90" y="150" width="16" height="14" rx="3" class="accent" stroke-width="1.5"/>
+<text x="114" y="161" class="muted">in flight</text>
+<rect x="190" y="150" width="16" height="14" rx="3" class="panel" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="214" y="161" class="muted">not loaded</text>
+</svg>

@@ -84,3 +84,35 @@
 @media (max-width: 640px) {
   .kiln-hero-meta { justify-content: center; }
 }
+
+/* Diagrams (docs/diagrams/*.svg), inlined by the image rule in config.ts.
+   Each SVG carries the same classes with standalone colours for GitHub; here
+   they follow the site theme. Narrow screens scroll, like code blocks. */
+.kiln-diagram {
+  display: block;
+  margin: 20px 0;
+  overflow-x: auto;
+}
+.kiln-diagram svg {
+  display: block;
+  width: 100%;
+  min-width: 560px;
+  height: auto;
+}
+.kiln-diagram text { fill: var(--vp-c-text-1); font-family: var(--vp-font-family-base); }
+.kiln-diagram .mono { font-family: var(--vp-font-family-mono); }
+.kiln-diagram .muted { fill: var(--vp-c-text-2); }
+.kiln-diagram .faint { fill: var(--vp-c-text-3); }
+.kiln-diagram .box { fill: var(--vp-c-bg-soft); stroke: var(--vp-c-divider); }
+.kiln-diagram .panel { fill: none; stroke: var(--vp-c-divider); }
+.kiln-diagram .page { fill: var(--vp-c-bg); }
+.kiln-diagram .line { fill: none; stroke: var(--vp-c-text-3); }
+.kiln-diagram .head { fill: var(--vp-c-text-3); }
+.kiln-diagram .accent { fill: var(--vp-c-brand-soft); stroke: var(--vp-c-brand-1); }
+.kiln-diagram .accent-line { fill: none; stroke: var(--vp-c-brand-1); }
+.kiln-diagram .accent-head, .kiln-diagram .accent-text { fill: var(--vp-c-brand-1); }
+.kiln-diagram .ok { fill: var(--vp-c-success-soft); stroke: var(--vp-c-success-1); }
+.kiln-diagram .ok-text { fill: var(--vp-c-success-1); }
+.kiln-diagram .bad { fill: var(--vp-c-danger-soft); stroke: var(--vp-c-danger-1); }
+.kiln-diagram .bad-text { fill: var(--vp-c-danger-1); }
+.kiln-diagram .ok-line { fill: none; stroke: var(--vp-c-success-1); }

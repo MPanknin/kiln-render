@@ -45,7 +45,7 @@ See the [Data Guide → Local OME-Zarr](/data/local-files) for details and limit
 
 ## Multichannel
 
-Multichannel OME-Zarr datasets (up to 4 channels) are detected automatically. Per-channel colour, window/level, and visibility can be controlled via the renderer:
+Multichannel OME-Zarr datasets are detected automatically; up to 4 source channels are shown at once (the first four by default, or the ones you pass as `sourceChannels`). Per-channel colour, window/level, and visibility can be controlled via the renderer:
 
 ```typescript
 // Check channel count
@@ -81,7 +81,7 @@ if (issues.length > 0) {
 
 ## Demo viewer — loading custom datasets
 
-Add the `dataset` URL parameter to load your own data:
+Click **Load** in the top bar and paste a URL, or add the `dataset` URL parameter:
 
 ```
 https://kilnrender.com/app/?dataset=YOUR_DATASET_URL
@@ -98,21 +98,22 @@ Compatible multiscale OME-Zarr datasets require no Kiln-specific conversion — 
 
 **Supported formats:**
 - OME-NGFF v0.4 and v0.5
-- Single-channel and multichannel datasets (up to 4 channels — see [Multichannel](/rendering/multichannel))
+- `z, y, x` or `x, y, z` spatial axis order, so [webKnossos](https://webknossos.org) datasets open directly; the URL doesn't need to end in `.zarr`
+- Single-channel and multichannel datasets (up to 4 channels shown at once — see [Multichannel](/rendering/multichannel))
 - `uint8`, `uint16`, `int16` and `float32` input (`float64` is read as `float32`); `uint16` is stored as `r16unorm` where the GPU supports it, otherwise like `int16` and `float32` as `r16float`
 
 See the [Data Guide](/data/ome-zarr) for full format requirements.
 
 ### Local datasets (File System Access API)
 
-Load local Zarr datasets directly from your filesystem using the "Load Local" button.
+Load local Zarr datasets directly from your filesystem: click **Load** in the top bar, then **Choose Directory**.
 
 > **Browser requirement:** Local dataset loading requires the File System Access API, which is currently **only supported in Chrome/Edge**. Safari and Firefox do not support this feature.
 
 **How it works:**
-1. Click "Load Local" button
+1. Click **Load**, then **Choose Directory**
 2. Select a `.zarr` or `.ome.zarr` directory
 3. Grant read permission when prompted
-4. Dataset loads with auto-leveling based on OMERO metadata (if available)
+4. The directory is checked, then the dataset loads with auto-leveling based on OMERO metadata (if available)
 
-**Note:** When you load a local dataset, all URL parameters are cleared to ensure the new dataset loads with fresh defaults.
+**Note:** Loading a local dataset replaces the URL with `?local=true`, so the new dataset starts from fresh defaults. On a later visit with that URL, the viewer asks for permission to reopen the same directory.

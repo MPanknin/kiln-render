@@ -54,9 +54,9 @@ WebGL's `texSubImage3D()` is synchronous on the CPU timeline. While the GPU may 
 
 ### 3D texture limits
 
-WebGPU allows querying actual device limits via `device.limits.maxTextureDimension3D`. Modern GPUs commonly support 16384³, though this varies by hardware.
+WebGPU guarantees 2048 texels per axis for 3D textures (the default `maxTextureDimension3D`); an adapter may offer more, and `KilnEngine.createDevice()` requests whatever the adapter supports. Kiln's largest atlas, 660³ per channel, fits the guaranteed limit.
 
-WebGL 2 specifies a minimum of 256³ for 3D textures, with most implementations supporting 2048³. Larger atlases may require multiple textures or texture arrays.
+WebGL 2 specifies a minimum of 256³ for 3D textures, with most implementations supporting 2048³. The practical size limit for both is usually memory, not the dimension limit.
 
 ### Integer texture formats
 
@@ -69,7 +69,7 @@ WebGL 2 supports integer textures but with more limited format options and requi
 | Capability | WebGL 2 | WebGPU |
 |------------|---------|--------|
 | 16-bit / float textures | Emulated | Native `r16unorm` / `r16float` |
-| 3D texture limit | Typically 2048³ | Up to 16384³ |
+| 3D texture limit | 256³ guaranteed, typically 2048³ | 2048³ guaranteed, more if the adapter allows |
 | Compute shaders | No | Yes (pipeline flexibility, future headroom) |
 | Texture uploads | Synchronous | Asynchronous queue |
 | Integer textures | Limited | Full support |

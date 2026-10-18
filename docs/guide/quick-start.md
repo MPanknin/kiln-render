@@ -2,7 +2,7 @@
 
 This guide takes you from an empty page to an interactive viewer streaming a remote OME-Zarr dataset. You'll need a WebGPU-capable browser and a dataset URL — a public example is used below.
 
-Kiln's API is a single entry point: `KilnViewer.create()` returns a viewer whose behaviour — render mode, windowing, channels, camera — is driven through plain properties.
+Most apps need one entry point: `KilnViewer.create()` returns a viewer whose behaviour — render mode, windowing, channels, camera — is driven through plain properties. Apps that already own a WebGPU device, camera and frame loop can use [`KilnEngine`](#bring-your-own-device-and-frame-loop) instead.
 
 ## Installation
 
@@ -45,10 +45,12 @@ const viewer = await KilnViewer.create(canvas, url, {
   windowCenter: 0.35,   // 0–1 (normalised window centre)
   windowWidth: 0.55,    // 0–1 (normalised window width)
   isoValue: 0.2,        // 0–1 (isosurface threshold)
+  densityScale: 1.0,    // 0.1–10 DVR density / opacity scale
   shading: 0.0,         // 0–1 DVR gradient shading (default 0 = flat)
   gradientOpacity: 0,   // 0–1 DVR boundary emphasis (opacity follows gradient magnitude)
   renderScale: 0.5,     // 0.25–1.0 (render resolution multiplier)
-  maxPixelError: 2.0,   // LOD screen-space error threshold in pixels
+  maxPixelError: 8,     // LOD screen-space error threshold in pixels (default 8; lower = sharper, more bricks)
+  atlasBudgetBytes: 1_400_000_000, // atlas VRAM budget (default, ~1.3 GiB); the atlas grid shrinks to fit
   pyramid: 'native',    // level model: omit for native with automatic legacy fallback
   tfPreset: 'grayscale',// transfer function colour preset
   tfPoints: [{ x: 0, y: 0 }, { x: 1, y: 1 }], // TF opacity control points (overrides preset defaults)
@@ -65,6 +67,8 @@ const viewer = await KilnViewer.create(canvas, url, {
   showWireframe: false, // bounding box wireframe overlay
   showAxis: false,      // world-space axis overlay
   visibleChannels: [true, true, false, false], // multichannel: hidden channels are not streamed until shown
+  sourceChannels: [0, 1, 2, 3], // OME-Zarr source channels in display order (1–4; default: the first four)
+  timepoint: 0,         // OME-Zarr timepoint
 });
 ```
 
@@ -85,6 +89,7 @@ viewer.renderer;         // Renderer
 viewer.transferFunction; // TransferFunction
 viewer.streamingManager; // StreamingManager
 viewer.metadata;         // VolumeMetadata (dimensions, spacing, bitDepth, …)
+viewer.milestones;       // LoadMilestones: performance.now() timestamps of each load stage
 ```
 
 ## State serialisation
@@ -94,6 +99,7 @@ viewer.metadata;         // VolumeMetadata (dimensions, spacing, bitDepth, …)
 ```typescript
 const state = viewer.getState();
 // {
+//   sourceChannels, timepoint,   // OME-Zarr selection, when set
 //   mode, windowCenter, windowWidth, densityScale, shading, gradientOpacity,
 //   isoValue, renderScale,
 //   tfPreset, tfPoints, upAxis, cam, clipMin, clipMax,
@@ -113,7 +119,30 @@ Called at the start of every RAF tick. Use it to drive FPS counters or frame-rat
 ## Cleanup
 
 ```typescript
-viewer.dispose(); // cancels RAF loop, disconnects ResizeObserver, terminates workers
+viewer.dispose(); // cancels the RAF loop, disconnects the ResizeObserver, terminates workers, releases GPU resources
 ```
+
+## Bring your own device and frame loop
+
+`KilnViewer` is a thin host around `KilnEngine`: it creates the device, owns the canvas, camera and `requestAnimationFrame` loop. To render Kiln inside an existing WebGPU app, create the engine on your device and drive it from your own loop:
+
+```typescript
+import { KilnEngine } from 'kiln-render';
+
+const device = await KilnEngine.createDevice(); // or your own device, with large buffer and 3D texture limits
+const format = navigator.gpu.getPreferredCanvasFormat();
+const engine = await KilnEngine.create(device, url, { mode: 'dvr', outputFormat: format });
+engine.setSize(width, height); // device pixels; call again on resize
+
+function frame() {
+  // Your camera, as ViewParams: position (volume space), view and proj matrices, fovY, width, height.
+  const view = { position, view: viewMatrix, proj: projMatrix, fovY, width, height };
+  if (engine.update(view)) engine.render(context.getCurrentTexture().createView(), view);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+```
+
+`update()` advances streaming and returns `true` when a new frame is needed (something changed, or temporal accumulation has not converged). `engine.dispose()` releases the engine's GPU resources; the device stays yours.
 
 Next: [loading data](/guide/loading-data) from remote URLs, local files, and multichannel stores.

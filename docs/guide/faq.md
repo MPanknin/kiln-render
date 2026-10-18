@@ -2,7 +2,13 @@
 
 ## Which browsers are supported?
 
-Kiln requires WebGPU. Chrome/Edge 113+ and Safari 26+ support it out of the box. Firefox ships WebGPU by default in recent versions (141+), though support may be partial on some platforms — check `dom.webgpu.enabled` if needed. Make sure hardware acceleration is enabled in your browser settings.
+Kiln requires WebGPU. Support as of late 2026 (see the [WebGPU implementation status](https://github.com/gpuweb/gpuweb/wiki/implementation-status) for changes):
+
+- **Chrome / Edge** 113+ on Windows, macOS and ChromeOS; 121+ on Android. On Linux, Chrome 144+ enables it for Intel Gen12+ GPUs and 147+ for NVIDIA on Wayland; other Linux setups need the `--enable-unsafe-webgpu` flag.
+- **Safari** 26+ on macOS, iOS, iPadOS and visionOS.
+- **Firefox** 141+ on Windows, and on Apple-silicon Macs from 145 (macOS 26) or 147. On Linux and Intel Macs only Nightly has it so far.
+
+Make sure hardware acceleration is enabled in your browser settings.
 
 If WebGPU is unavailable, `KilnViewer.create()` rejects with a descriptive error (e.g. "WebGPU not supported") rather than failing silently — the demo viewer surfaces that message on the page instead of showing a blank canvas.
 
@@ -26,4 +32,4 @@ LOD transitions can produce brief visual discontinuities while bricks stream in.
 
 ## Can I use Kiln in my own application?
 
-Yes. Install `kiln-render` from npm and use `KilnViewer.create()` — see the [Quick start](/guide/quick-start). Kiln is Apache 2.0 licensed.
+Yes. Install `kiln-render` from npm and use `KilnViewer.create()` — see the [Quick start](/guide/quick-start). If your app already has a WebGPU device and render loop, use `KilnEngine` instead ([Bring your own device and frame loop](/guide/quick-start#bring-your-own-device-and-frame-loop)). Kiln is Apache 2.0 licensed.

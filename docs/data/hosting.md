@@ -1,6 +1,6 @@
 # Hosting for streaming
 
-Host the [sharded binary](/data/sharded-binary) output directory on any server that supports HTTP Range requests.
+Host the [sharded binary](/data/sharded-binary) output directory on any server that supports HTTP Range requests. OME-Zarr stores need no Range support unless they use Zarr v3 sharding, but both need CORS headers that allow your viewer's origin (and the `Range` header, where used).
 
 ## Amazon S3
 
@@ -12,11 +12,12 @@ Ensure CORS is configured to allow Range requests from your domain.
 
 ## Local development
 
-Vite's dev server supports Range requests out of the box:
+Vite's dev server supports Range requests out of the box and serves the repository's `public/` folder under the viewer's base path:
 
 ```bash
 bun run dev
-# Volume available at http://localhost:5173/datasets/myvolume/volume.json
+# Volume available at http://localhost:3000/kiln-render/app/datasets/myvolume/volume.json
+# Open it with ?dataset=http://localhost:3000/kiln-render/app/datasets/myvolume
 ```
 
 ## CDN

@@ -26,6 +26,7 @@ bun run dev:site           # docs site
 - `src/shaders/`: WGSL, assembled in `index.ts`; uniform layout in `uniform-layout.ts`
 - `examples/`: the basic and multichannel viewers (UI, URL parameters), served at kilnrender.com/app/
 - `docs/`: the VitePress site, kilnrender.com
+- `docs/diagrams/`: SVG diagrams, referenced as plain Markdown images. The site inlines them (`markdown.config` in `docs/.vitepress/config.ts`) and colours them through the classes in `custom.css`, so use those classes instead of fixed colours. No ASCII-art diagrams
 - `test/`: Vitest unit tests
 
 ## Principles

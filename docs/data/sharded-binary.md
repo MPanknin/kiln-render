@@ -10,7 +10,7 @@ bun scripts/decompose-volume.ts <input.raw> <W> <H> <D> [options]
 
 Example:
 ```bash
-bun scripts/decompose-volume.ts data/chameleon_1024x1024x1080.raw --bits 16
+bun scripts/decompose-volume.ts data/chameleon_1024x1024x1080.raw public/datasets/chameleon --bits 16
 ```
 
 ## Input format
@@ -56,7 +56,7 @@ When dimensions are provided as positional args, the output directory defaults t
 | `--dimensions WxHxD` | From filename | Volume dimensions |
 | `--spacing X,Y,Z` | `1,1,1` | Voxel spacing |
 | `--header N` | `0` | Header bytes to skip |
-| `--brick-size N` | `64` | Logical brick size |
+| `--brick-size N` | `64` | Logical brick size. Keep the default: the viewer's bricks are always 64³ |
 | `--max-lod N` | Auto | Maximum LOD levels |
 | `--bits N` | `8` | Input bit depth (8 or 16) |
 | `--native` | Off | Preserve 16-bit precision (don't normalize to 8-bit) |
@@ -135,7 +135,7 @@ The `compressed` field indicates bricks are gzip compressed.
 
 ### Index files
 
-Each `lodN_index.json` contains byte offsets and per-brick statistics:
+Each `lodN_index.json` contains byte offsets, gzip-compressed sizes and per-brick statistics of the 64³ core. Keys are `x/y/z` brick coordinates, and bricks are written with x varying fastest:
 
 ```json
 {
@@ -146,15 +146,13 @@ Each `lodN_index.json` contains byte offsets and per-brick statistics:
   "totalBricks": 4352,
   "totalBytes": 1251041280,
   "entries": {
-    "0/0/0": { "offset": 0, "size": 287496, "min": 0, "max": 142, "avg": 12 },
-    "1/0/0": { "offset": 287496, "size": 287496, "min": 0, "max": 198, "avg": 45 }
+    "0/0/0": { "offset": 0, "size": 61204, "min": 0, "max": 142, "avg": 12 },
+    "1/0/0": { "offset": 61204, "size": 143880, "min": 0, "max": 198, "avg": 45 }
   }
 }
 ```
 
-The per-brick statistics (`min`, `max`, `avg`) enable:
-- **Empty brick skipping** - Skip bricks where `max < threshold`
-- **Importance-based loading** - Prioritize bricks with higher density variation
+The per-brick `max` enables **empty brick skipping**: bricks whose `max` is below the empty threshold are marked empty without being downloaded. `totalBytes` is the size of the `.bin` file.
 
 ## Brick format details
 

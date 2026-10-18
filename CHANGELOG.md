@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - OME-Zarr with x, y, z axis order and Zarr URLs without `.zarr`, so public [webKnossos](https://webknossos.org) datasets open directly.
 - Auto contrast per channel in the multichannel viewer (an **Auto** button on each channel, `A` fits all visible channels).
 - `StreamingManager.getChannelHistogram(channel, bins)`: the value distribution of a channel over the loaded base level.
+- `?bench=1` reports how much of the downloaded chunk data came from chunks that only the one-voxel brick border needed.
 - Experimental ray-guided brick selection behind the `?rayguide=1` URL flag: rays mark the brick cells they enter, and bricks no ray reached (behind opaque material, outside the clip box) are not streamed. The stats panel and `?bench=1` report how many bricks it left out.
 
 ### Changed

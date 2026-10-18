@@ -69,6 +69,7 @@ fn rayMarchISO(
                 let surfaceBrickIdx = floor(surfaceVoxel / LOGICAL_BRICK_SIZE);
                 let surfaceIndirection = lookupIndirection(surfaceBrickIdx);
                 let surfaceLodScale = getLodScale(surfaceIndirection);
+                markIsoGradientVisited(surfaceVoxel, surfaceLodScale);
                 let gradient = computeGradient(surfaceVoxel, surfaceIndirection, surfaceLodScale);
 
                 // Gradient is in stored-texel units; normalise so the threshold means the
@@ -92,3 +93,4 @@ fn rayMarchISO(
     // No isosurface found
     return vec4f(0.0, 0.0, 0.0, 0.0);
 }
+

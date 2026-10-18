@@ -37,6 +37,8 @@ fn setupBrick(
     let tBrick = intersectBoxInv(rayOrigin, invDir, brickMinWorld, brickMaxWorld);
     info.tEnd = min(tBrick.y, tEnd);
 
+    markRayVisited(brickIndex);
+
     info.indirection = lookupIndirection(brickIndex);
     // w=0 means not loaded, w=255 means known empty - both are invalid
     info.valid = info.indirection.w > 0u && info.indirection.w < 255u;
@@ -63,6 +65,41 @@ fn setupBrick(
     }
 
     return info;
+}
+
+// Ray-guided streaming: record that a ray entered this finest-level brick cell.
+// Called per brick a ray steps into, so cells behind early ray termination,
+// outside the clip box or never reached stay unmarked. The atomic read avoids
+// redundant atomic writes when many rays share a cell; it still has a GPU cost.
+fn markRayVisited(brickIndex: vec3f) {
+    let words = arrayLength(&rayVisited);
+    if (words <= 1u) { return; }
+    let grid = textureDimensions(indirectionTexture);
+    // ISO gradient offsets may leave the volume. Reject them before unsigned
+    // conversion / flattening, which could otherwise alias an unrelated cell.
+    if (any(brickIndex < vec3f(0.0)) || any(brickIndex >= vec3f(grid))) { return; }
+    let c = vec3u(brickIndex);
+    let cell = (c.z * grid.y + c.y) * grid.x + c.x;
+    let word = 1u + (cell >> 5u);
+    let bit = 1u << (cell & 31u);
+    if (word < words && (atomicLoad(&rayVisited[word]) & bit) == 0u) {
+        atomicOr(&rayVisited[word], bit);
+    }
+}
+
+// ISO normals depend on six samples, including cells no ray entered (e.g. just
+// beyond a clip plane). Keep those cells eligible for refinement as well.
+fn markIsoGradientVisited(voxelPos: vec3f, lodScale: vec3f) {
+    if (arrayLength(&rayVisited) <= 1u) { return; }
+    let center = floor(voxelPos / LOGICAL_BRICK_SIZE);
+    for (var axis = 0u; axis < 3u; axis++) {
+        var offset = vec3f(0.0);
+        offset[axis] = lodScale[axis];
+        let lo = floor((voxelPos - offset) / LOGICAL_BRICK_SIZE);
+        let hi = floor((voxelPos + offset) / LOGICAL_BRICK_SIZE);
+        if (any(lo != center)) { markRayVisited(lo); }
+        if (any(hi != center)) { markRayVisited(hi); }
+    }
 }
 
 // Refine isosurface position using bisection with windowing.
@@ -115,3 +152,4 @@ fn rayMarchSimple(
 
     return vec4f(color, alpha);
 }
+

@@ -1,0 +1,91 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>DVR gradient LOD regression</title>
+<pre id="result">Running…</pre>
+<script type="module">
+// Serve the repository root with Vite (configFile: false), then open /test/dvr-gradient.html.
+// Run the production gradient and edge calculation on WebGPU with an analytic
+// sampler. This isolates LOD/ghost-border math from texture quantisation and I/O.
+import { buildComputeShader } from '/src/shaders/index.ts';
+
+const result = document.querySelector('#result');
+try {
+  const adapter = await navigator.gpu?.requestAdapter();
+  if (!adapter) throw new Error('WebGPU adapter unavailable');
+  const device = await adapter.requestDevice();
+  const shader = buildComputeShader();
+  const module = device.createShaderModule({ code: shader });
+  const errors = (await module.getCompilationInfo()).messages.filter(m => m.type === 'error');
+  if (errors.length) throw new Error(errors.map(m => m.message).join('\n'));
+  await device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+  // Use the actual DVR call site as well as brickGradient, so a disconnected
+  // helper or an extra LOD correction in the consumer cannot silently pass.
+  const edgeCode = shader.match(/let g = brickGradient\(voxel, brick\);\s*let edge = [^;]+;/)?.[0];
+  const normalCode = shader.match(/let n = normalize\(g[^;]+;/)?.[0];
+  if (!edgeCode || !normalCode) throw new Error('DVR gradient call site changed; update this test');
+  const passed = [];
+  for (const scale of [[1, 1, 1], [4, 4, 4], [4, 2, 1]]) {
+    for (const face of ['interior', 'low', 'high']) {
+      const slope = [0.01, 0.02, 0.03];
+      const voxel = scale.map(h => (face === 'low' ? 0 : face === 'high' ? 64 : 32) * h);
+      const name = `${scale.join('×')} ${face}`;
+      const code = shader
+        .replace(/fn sampleAtlasAffine\([^]*?\n}/, `
+          fn sampleAtlasAffine(voxelPos: vec3f, atlasOffset: vec3f, atlasScale: vec3f) -> f32 {
+            return 0.2 + dot(voxelPos, vec3f(${slope.join(', ')}));
+          }`)
+        .replace(/@compute @workgroup_size\(8, 8, 1\)[^]*$/, `
+          @group(0) @binding(12) var<storage, read_write> output: array<vec4f>;
+          @compute @workgroup_size(1) fn main() {
+            var brick: BrickInfo;
+            brick.lodScale = vec3f(${scale.join(', ')});
+            brick.sampleMin = -0.5 * brick.lodScale;
+            brick.sampleMax = 64.5 * brick.lodScale;
+            let voxel = vec3f(${voxel.join(', ')});
+            let edgeGain = EDGE_GAIN;
+            let voxelsPerUnit = vec3f(1.0, 2.0, 0.5);
+            ${edgeCode}
+            ${normalCode}
+            output[0] = vec4f(g, edge);
+            output[1] = vec4f(n, 0.0);
+          }`);
+      device.pushErrorScope('validation');
+      const pipeline = await device.createComputePipelineAsync({
+        layout: 'auto', compute: { module: device.createShaderModule({ code }), entryPoint: 'main' },
+      });
+      const output = device.createBuffer({ size: 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+      const staging = device.createBuffer({ size: 32, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      const group = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [
+        { binding: 12, resource: { buffer: output } },
+      ] });
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, group);
+      pass.dispatchWorkgroups(1);
+      pass.end();
+      encoder.copyBufferToBuffer(output, 0, staging, 0, 32);
+      device.queue.submit([encoder.finish()]);
+      await staging.mapAsync(GPUMapMode.READ);
+      const actual = Array.from(new Float32Array(staging.getMappedRange()));
+      staging.unmap();
+      output.destroy();
+      staging.destroy();
+      const validation = await device.popErrorScope();
+      if (validation) throw new Error(`${name}: ${validation.message}`);
+      const worldGradient = [slope[0], slope[1] * 2, slope[2] * 0.5];
+      const expected = [...slope, 1 - 2 ** (-6 * Math.hypot(...slope)),
+        ...worldGradient.map(v => v / Math.hypot(...worldGradient)), 0];
+      if (actual.some((v, i) => Math.abs(v - expected[i]) > 0.00002)) {
+        throw new Error(`${name}: got ${actual}, expected ${expected}`);
+      }
+      passed.push(name);
+    }
+  }
+  device.destroy();
+  window.testResult = { passed };
+} catch (error) {
+  window.testResult = { error: String(error) };
+}
+result.textContent = JSON.stringify(window.testResult, null, 2);
+</script>

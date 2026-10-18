@@ -56,7 +56,7 @@ export class Renderer {
   densityScale = 1.0;
 
   // DVR gradient shading strength (0 = flat, 1 = full headlight shading at sharp boundaries)
-  shading = 1.0;
+  shading = 0.0;
 
   // DVR boundary emphasis: how far opacity follows gradient magnitude (0 = off, 1 = boundaries only)
   gradientOpacity = 0.0;

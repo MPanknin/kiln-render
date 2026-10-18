@@ -58,7 +58,7 @@ export class VolumeUI {
     windowCenter: 0.5,
     windowWidth: 1.0,
     densityScale: 1.0,
-    shading: 1.0,
+    shading: 0.0,
     gradientOpacity: 0.0,
     renderScale: 0.5,
     enableJitter: true,

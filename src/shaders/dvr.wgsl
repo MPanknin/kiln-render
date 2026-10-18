@@ -1,7 +1,7 @@
 // Direct Volume Rendering (DVR) - Front-to-back compositing with windowing
 
 // Edge strength = 1 - 2^(-EDGE_GAIN * slope), slope in windowed density per
-// level voxel: ~0.2 for noise-level slopes, ~0.65 at 0.25, ~1 at sharp boundaries.
+// finest-level voxel: ~0.2 for noise-level slopes, ~0.65 at 0.25, ~1 at sharp boundaries.
 const EDGE_GAIN: f32 = 6.0;
 // Below this contribution to the pixel a sample keeps its unshaded colour,
 // which saves the six gradient reads in near-transparent regions.
@@ -132,7 +132,7 @@ fn rayMarchDVR(
                         let edge = 1.0 - exp2(-length(g) * edgeGain);
                         opacity *= mix(1.0, edge, gradientOpacity);
                         if (shading > 0.0 && edge > 0.001) {
-                            let n = normalize(g / brick.lodScale * voxelsPerUnit);
+                            let n = normalize(g * voxelsPerUnit);
                             rgb = mix(rgb, shadeTwoSided(n, lightDir, rgb), shading * edge);
                         }
                     }

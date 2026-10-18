@@ -112,7 +112,8 @@ fn markIsoGradientVisited(voxelPos: vec3f, lodScale: vec3f) {
 // DVR hot loop needs no indirection lookups. Offsets are clamped to the slot's
 // sampleable range; near a brick face the difference then spans less than two
 // level voxels, and dividing by the actual span keeps the slope right.
-// Returns raw texel units per level voxel, along the voxel axes.
+// Returns raw texel units per finest-level voxel, along the voxel axes.
+// A fixed spatial ramp must have the same magnitude at every pyramid level.
 fn brickGradient(voxel: vec3f, brick: BrickInfo) -> vec3f {
     let h = brick.lodScale;
     return vec3f(
@@ -126,7 +127,7 @@ fn brickGradient(voxel: vec3f, brick: BrickInfo) -> vec3f {
 fn brickSlope(voxel: vec3f, offset: vec3f, h: f32, brick: BrickInfo) -> f32 {
     let hi = clamp(voxel + offset, brick.sampleMin, brick.sampleMax);
     let lo = clamp(voxel - offset, brick.sampleMin, brick.sampleMax);
-    let span = max(dot(hi - lo, offset) / (h * h), 0.001); // in level voxels
+    let span = max(dot(hi - lo, offset) / h, 0.001); // in finest-level voxels
     return (sampleAtlasAffine(hi, brick.atlasOffset, brick.atlasScale)
           - sampleAtlasAffine(lo, brick.atlasOffset, brick.atlasScale)) / span;
 }

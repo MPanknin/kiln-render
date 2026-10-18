@@ -10,7 +10,7 @@ Control rendering settings via URL parameters to share or bookmark specific view
 | `ww` | 0-1 | Window width | `ww=0.55` |
 | `iso` | 0-1 | Isosurface threshold | `iso=0.15` |
 | `density` | 0.1-10 | DVR density (opacity) scale | `density=1.5` |
-| `shade` | 0-1 | DVR gradient shading strength (default 1, 0 = flat) | `shade=0.5` |
+| `shade` | 0-1 | DVR gradient shading strength (default 0, 0 = flat) | `shade=0.5` |
 | `boundary` | 0-1 | DVR boundary emphasis: opacity follows gradient magnitude (default 0) | `boundary=0.6` |
 | `tf` | `grayscale`, `grayscale-inverted`, `coolwarm`, `hot`, `cool`, `viridis`, `plasma`, `seismic` | Transfer function preset | `tf=coolwarm` |
 | `tfpts` | x,y pairs | TF opacity control points (comma-separated) | `tfpts=0,0,0.5,0.8,1,1` |

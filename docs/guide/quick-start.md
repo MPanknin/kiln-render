@@ -45,7 +45,7 @@ const viewer = await KilnViewer.create(canvas, url, {
   windowCenter: 0.35,   // 0–1 (normalised window centre)
   windowWidth: 0.55,    // 0–1 (normalised window width)
   isoValue: 0.2,        // 0–1 (isosurface threshold)
-  shading: 1.0,         // 0–1 DVR gradient shading (0 = flat)
+  shading: 0.0,         // 0–1 DVR gradient shading (default 0 = flat)
   gradientOpacity: 0,   // 0–1 DVR boundary emphasis (opacity follows gradient magnitude)
   renderScale: 0.5,     // 0.25–1.0 (render resolution multiplier)
   maxPixelError: 2.0,   // LOD screen-space error threshold in pixels

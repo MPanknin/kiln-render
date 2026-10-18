@@ -38,7 +38,7 @@ export interface EngineOptions {
   windowWidth?: number;
   /** DVR density / opacity scale (0.1–10, default 1) */
   densityScale?: number;
-  /** DVR gradient shading strength (0–1, default 1; 0 = flat) */
+  /** DVR gradient shading strength (0–1, default 0; 0 = flat) */
   shading?: number;
   /** DVR boundary emphasis: opacity follows gradient magnitude (0–1, default 0 = off) */
   gradientOpacity?: number;

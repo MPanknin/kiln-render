@@ -76,7 +76,7 @@ function harness({ taa = false, enabled = true } = {}) {
     clipMin: [0, 0, 0], clipMax: [1, 1, 1],
     channelColors: new Float32Array(16), channelWindowCenter: new Float32Array(4), channelWindowWidth: new Float32Array(4),
     rayReadback: enabled ? staging : null, rayReadbackBusy: false, rayFramesPending: 0,
-    onRayVisibility: vi.fn((value: Uint32Array) => manager.reportRayVisibility(value)),
+    onRayVisibility: vi.fn((value: Uint32Array, frames: number) => manager.reportRayVisibility(value, frames)),
   });
   const engine: any = Object.create(KilnEngine.prototype);
   Object.assign(engine, {
@@ -112,6 +112,21 @@ beforeEach(() => vi.stubGlobal('GPUMapMode', { READ: 1 }));
 afterEach(() => vi.unstubAllGlobals());
 
 describe('ray feedback when rendering goes idle', () => {
+  it.each([false, true])('expires visibility after 16 rendered frames through the full feedback path (TAA: %s)', async (taa) => {
+    const h = harness({ taa });
+    const batchSize = taa ? 4 : 1;
+    for (let i = 0; i < batchSize; i++) h.frame(0);
+    await h.completeMap();
+    for (let elapsed = batchSize; elapsed <= 16; elapsed += batchSize) {
+      for (let i = 0; i < batchSize; i++) {
+        if (!taa) h.renderer.resetAccumulation();
+        h.frame(); // no rays revisit cell zero
+      }
+      await h.completeMap();
+      expect(h.manager.rayCulls(0, 0, 0, 0)).toBe(elapsed === 16);
+    }
+  });
+
   it('delivers the first TAA-off frame so refinement can start', async () => {
     const h = harness();
     expect(h.manager.rayCulls(1, 0, 0, 0)).toBe(true);
@@ -120,6 +135,7 @@ describe('ray feedback when rendering goes idle', () => {
     expect(h.manager.rayCulls(1, 0, 0, 0)).toBe(false);
     expect(h.frame(1)).toBe(false);
     expect(h.march).toHaveBeenCalledOnce();
+    expect(h.renderer.onRayVisibility).toHaveBeenCalledWith(bits(1), 1);
   });
 
   it('delivers a stationary parameter change without requesting more draws', async () => {
@@ -152,6 +168,8 @@ describe('ray feedback when rendering goes idle', () => {
     expect(h.manager.rayCulls(1, 0, 0, 0)).toBe(false);
     expect(h.manager.rayCulls(2, 0, 0, 0)).toBe(false);
     expect(h.march).toHaveBeenCalledTimes(3);
+    expect(h.renderer.onRayVisibility).toHaveBeenNthCalledWith(1, bits(0), 1);
+    expect(h.renderer.onRayVisibility).toHaveBeenNthCalledWith(2, bits(1, 2), 2);
     expect(h.staging.mapAsync).toHaveBeenCalledTimes(2);
     expect(h.frame(2)).toBe(false);
   });
@@ -183,6 +201,8 @@ describe('ray feedback when rendering goes idle', () => {
     await h.completeMap();
     expect(h.manager.rayCulls(1, 0, 0, 0)).toBe(false);
     expect(h.march).toHaveBeenCalledTimes(5);
+    expect(h.renderer.onRayVisibility).toHaveBeenNthCalledWith(1, bits(0), 4);
+    expect(h.renderer.onRayVisibility).toHaveBeenNthCalledWith(2, bits(1), 1);
     expect(h.staging.mapAsync).toHaveBeenCalledTimes(2);
   });
 

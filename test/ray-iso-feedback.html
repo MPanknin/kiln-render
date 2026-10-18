@@ -1,0 +1,89 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ISO ray feedback regression</title>
+<pre id="result">Running…</pre>
+<script type="module">
+// Serve the repository root with Vite (configFile: false), then open /test/ray-iso-feedback.html.
+// Executes the production WGSL feedback functions on WebGPU, including readback.
+import { buildComputeShader } from '/src/shaders/index.ts';
+
+const result = document.querySelector('#result');
+try {
+  const adapter = await navigator.gpu?.requestAdapter();
+  if (!adapter) throw new Error('WebGPU adapter unavailable');
+  const device = await adapter.requestDevice();
+  const shader = buildComputeShader();
+  const module = device.createShaderModule({ code: shader });
+  const errors = (await module.getCompilationInfo()).messages.filter(m => m.type === 'error');
+  if (errors.length) throw new Error(errors.map(m => m.message).join('\n'));
+  await device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+  // Follow the actual ISO shading path: a disconnected helper must not make this test pass.
+  const gradientFeedback = /markIsoGradientVisited\(surfaceVoxel, surfaceLodScale\);\s*let gradient = computeGradient/.test(shader);
+
+  const grid = [4, 3, 2];
+  const texture = device.createTexture({
+    size: grid, dimension: '3d', format: 'rgba8uint', usage: GPUTextureUsage.TEXTURE_BINDING,
+  });
+  const cases = [
+    { name: 'clipped surface retains negative X neighbor', pos: [64.25, 32, 32], scale: [1, 1, 1], cells: [[1, 0, 0], [0, 0, 0]] },
+    { name: 'positive X neighbor', pos: [63.75, 32, 32], scale: [1, 1, 1], cells: [[0, 0, 0], [1, 0, 0]] },
+    { name: 'negative Y neighbor', pos: [32, 64.25, 32], scale: [1, 1, 1], cells: [[0, 1, 0], [0, 0, 0]] },
+    { name: 'negative Z neighbor', pos: [32, 32, 64.25], scale: [1, 1, 1], cells: [[0, 0, 1], [0, 0, 0]] },
+    { name: 'anisotropic LOD offsets', pos: [96, 63, 32], scale: [64, 2, 1], cells: [[1, 0, 0], [0, 0, 0], [2, 0, 0], [1, 1, 0]] },
+    { name: 'negative out-of-volume samples do not alias cell zero', pos: [0.25, 96, 96], scale: [1, 1, 1], cells: [[0, 1, 1]] },
+    { name: 'positive out-of-volume samples do not alias next row', pos: [255.75, 96, 32], scale: [1, 1, 1], cells: [[3, 1, 0]] },
+    { name: 'interior samples do not retain extra bricks', pos: [32, 32, 32], scale: [1, 1, 1], cells: [[0, 0, 0]] },
+    { name: 'disabled feedback stays empty', pos: [64.25, 32, 32], scale: [1, 1, 1], cells: [], disabled: true },
+  ];
+  const passed = [];
+  for (const test of cases) {
+    device.pushErrorScope('validation');
+    // Replace only the entry point: all feedback code comes from the production shader.
+    const code = shader.replace(/@compute @workgroup_size\(8, 8, 1\)[\s\S]*$/, `
+      @compute @workgroup_size(1) fn main() {
+        let pos = vec3f(${test.pos.join(', ')});
+        markRayVisited(floor(pos / LOGICAL_BRICK_SIZE));
+        ${gradientFeedback ? `markIsoGradientVisited(pos, vec3f(${test.scale.join(', ')}));` : ''}
+      }
+    `);
+    const pipeline = await device.createComputePipelineAsync({
+      layout: 'auto', compute: { module: device.createShaderModule({ code }), entryPoint: 'main' },
+    });
+    const size = test.disabled ? 4 : 8; // unused word 0, then 24 grid bits
+    const visited = device.createBuffer({ size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    const staging = device.createBuffer({ size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const group = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [
+      { binding: 6, resource: texture.createView() },
+      { binding: 11, resource: { buffer: visited } },
+    ] });
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, group);
+    pass.dispatchWorkgroups(1);
+    pass.end();
+    encoder.copyBufferToBuffer(visited, 0, staging, 0, size);
+    device.queue.submit([encoder.finish()]);
+    await staging.mapAsync(GPUMapMode.READ);
+    const actual = Array.from(new Uint32Array(staging.getMappedRange()));
+    staging.unmap();
+    const expected = new Uint32Array(size / 4);
+    for (const [x, y, z] of test.cells) expected[1] |= 1 << ((z * grid[1] + y) * grid[0] + x);
+    visited.destroy();
+    staging.destroy();
+    const validation = await device.popErrorScope();
+    if (validation) throw new Error(`${test.name}: ${validation.message}`);
+    if (actual.some((word, i) => word !== expected[i])) {
+      throw new Error(`${test.name}: got ${actual}, expected ${Array.from(expected)}`);
+    }
+    passed.push(test.name);
+  }
+  texture.destroy();
+  device.destroy();
+  window.testResult = { passed };
+  result.textContent = JSON.stringify(window.testResult, null, 2);
+} catch (error) {
+  window.testResult = { error: String(error) };
+  result.textContent = JSON.stringify(window.testResult, null, 2);
+}
+</script>

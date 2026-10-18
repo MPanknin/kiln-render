@@ -75,12 +75,30 @@ fn markRayVisited(brickIndex: vec3f) {
     let words = arrayLength(&rayVisited);
     if (words <= 1u) { return; }
     let grid = textureDimensions(indirectionTexture);
+    // ISO gradient offsets may leave the volume. Reject them before unsigned
+    // conversion / flattening, which could otherwise alias an unrelated cell.
+    if (any(brickIndex < vec3f(0.0)) || any(brickIndex >= vec3f(grid))) { return; }
     let c = vec3u(brickIndex);
     let cell = (c.z * grid.y + c.y) * grid.x + c.x;
     let word = 1u + (cell >> 5u);
     let bit = 1u << (cell & 31u);
     if (word < words && (atomicLoad(&rayVisited[word]) & bit) == 0u) {
         atomicOr(&rayVisited[word], bit);
+    }
+}
+
+// ISO normals depend on six samples, including cells no ray entered (e.g. just
+// beyond a clip plane). Keep those cells eligible for refinement as well.
+fn markIsoGradientVisited(voxelPos: vec3f, lodScale: vec3f) {
+    if (arrayLength(&rayVisited) <= 1u) { return; }
+    let center = floor(voxelPos / LOGICAL_BRICK_SIZE);
+    for (var axis = 0u; axis < 3u; axis++) {
+        var offset = vec3f(0.0);
+        offset[axis] = lodScale[axis];
+        let lo = floor((voxelPos - offset) / LOGICAL_BRICK_SIZE);
+        let hi = floor((voxelPos + offset) / LOGICAL_BRICK_SIZE);
+        if (any(lo != center)) { markRayVisited(lo); }
+        if (any(hi != center)) { markRayVisited(hi); }
     }
 }
 
@@ -134,3 +152,4 @@ fn rayMarchSimple(
 
     return vec4f(color, alpha);
 }
+

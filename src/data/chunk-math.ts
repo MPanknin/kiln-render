@@ -88,7 +88,7 @@ export function computeBrickCoreChunkRange(
   return { minCx, maxCx, minCy, maxCy, minCz, maxCz };
 }
 
-/** Bench accounting: total downloaded chunk bytes, and the part from chunks
+/** Bench accounting: total downloaded chunk payload bytes (excluding shared shard indexes), and the part from chunks
  *  that no brick's core needed (downloaded only for ghost borders). */
 export function summarizeBorderBytes(
   bytesByChunk: ReadonlyMap<string, number>,

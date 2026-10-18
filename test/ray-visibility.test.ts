@@ -31,13 +31,30 @@ describe('RayVisibility', () => {
     expect(v.anySeen([0, 0, 0], [2, 2, 2])).toBe(false);
   });
 
-  it('keeps a cell visible for the hold window, counted in readbacks', () => {
+  it('keeps a cell visible for the hold window, counted in frames', () => {
     const v = new RayVisibility(grid, 2);
     v.report(bits(grid, [cell(1, 1, 1)]));
     v.report(bits(grid, []));
     expect(v.anySeen([1, 1, 1], [1, 1, 1])).toBe(true);
     v.report(bits(grid, []));
     expect(v.anySeen([1, 1, 1], [1, 1, 1])).toBe(false);
+  });
+
+  it('holds for the same number of frames whatever each readback covers', () => {
+    const batched = new RayVisibility(grid, 8);
+    batched.report(bits(grid, [cell(1, 1, 1)]), 4);
+    batched.report(bits(grid, []), 4);
+    expect(batched.anySeen([1, 1, 1], [1, 1, 1])).toBe(true);
+    batched.report(bits(grid, []), 4);
+    expect(batched.anySeen([1, 1, 1], [1, 1, 1])).toBe(false);
+
+    // TAA off: one frame per readback must not shrink the window to 8 / 4 readbacks
+    const single = new RayVisibility(grid, 8);
+    single.report(bits(grid, [cell(1, 1, 1)]), 1);
+    for (let i = 0; i < 7; i++) single.report(bits(grid, []), 1);
+    expect(single.anySeen([1, 1, 1], [1, 1, 1])).toBe(true);
+    single.report(bits(grid, []), 1);
+    expect(single.anySeen([1, 1, 1], [1, 1, 1])).toBe(false);
   });
 
   it('forgets everything on reset', () => {

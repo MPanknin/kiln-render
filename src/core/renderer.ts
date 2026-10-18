@@ -125,8 +125,10 @@ export class Renderer {
   private readonly rayReadback: GPUBuffer | null;
   private rayReadbackBusy = false;
   private rayFramesPending = 0;
-  /** Called with each visibility readback (bit i ⇔ a ray entered finest-level cell i). */
-  onRayVisibility?: (bits: Uint32Array) => void;
+  /** Frames covered by the copy currently being read back. */
+  private rayReadbackFrames = 0;
+  /** Called with each visibility readback (bit i ⇔ a ray entered finest-level cell i) and the frames it covers. */
+  onRayVisibility?: (bits: Uint32Array, frames: number) => void;
 
   // Temporal accumulation
   private accumPipeline: GPUComputePipeline;
@@ -872,6 +874,7 @@ export class Renderer {
     const bytes = this.rayReadback.size;
     encoder.copyBufferToBuffer(this.rayVisitedBuffer, 4, this.rayReadback, 0, bytes);
     encoder.clearBuffer(this.rayVisitedBuffer, 4, bytes);
+    this.rayReadbackFrames = this.rayFramesPending;
     this.rayFramesPending = 0;
     return true;
   }
@@ -885,7 +888,7 @@ export class Renderer {
       buffer.unmap();
       this.rayReadbackBusy = false;
       if (this.disposed) return;
-      this.onRayVisibility?.(bits);
+      this.onRayVisibility?.(bits, this.rayReadbackFrames);
 
       // Rendering can finish while mapAsync is pending. Drain the last batch with
       // a copy-only submission: no extra raymarch, TAA reset or redraw loop needed.

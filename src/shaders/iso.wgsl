@@ -93,4 +93,3 @@ fn rayMarchISO(
     // No isosurface found
     return vec4f(0.0, 0.0, 0.0, 0.0);
 }
-

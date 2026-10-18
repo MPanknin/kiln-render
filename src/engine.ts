@@ -461,7 +461,7 @@ export class KilnEngine {
     );
     if (renderer.rayGuided) {
       streamingManager.enableRayGuidance();
-      renderer.onRayVisibility = (bits) => streamingManager.reportRayVisibility(bits);
+      renderer.onRayVisibility = (bits, frames) => streamingManager.reportRayVisibility(bits, frames);
     }
     // When base LOD derives float/channel ranges, update renderer + metadata.
     streamingManager.setRangesDerivedCallback((opts) => {

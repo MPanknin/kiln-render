@@ -1,5 +1,5 @@
 /**
- * Ray-guided streaming (behind `?rayguide=1`): which finest-level brick cells
+ * Ray-guided streaming (on by default, off with `?rayguide=0`): which finest-level brick cells
  * the raycaster actually entered recently. The compute shader sets one bit per
  * cell a ray enters before it terminates; the renderer reads that bitset back
  * every few frames and reports it here.

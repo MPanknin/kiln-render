@@ -22,11 +22,18 @@
 
 const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
 const TRUTHY = new Set(['1', 'true', 'on']);
+const FALSY = new Set(['0', 'false', 'off']);
 
 /** True if `?<name>=1` (or "true"/"on") is present in the page URL. */
 export function isFlagEnabled(name: string): boolean {
   const raw = params?.get(name);
   return raw !== null && raw !== undefined && TRUTHY.has(raw.toLowerCase());
+}
+
+/** True if `?<name>=0` (or "false"/"off") is present: turns off a behaviour that is on by default. */
+export function isFlagDisabled(name: string): boolean {
+  const raw = params?.get(name);
+  return raw !== null && raw !== undefined && FALSY.has(raw.toLowerCase());
 }
 
 /** Names of all flags currently set to on — for logging/bench-report traceability. */

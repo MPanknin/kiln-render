@@ -23,7 +23,7 @@ import { ZarrDataProvider } from './data/zarr-provider.js';
 import type { TargetFormat } from './data/brick-convert.js';
 import { initializeWithPyramidFallback } from './data/pyramid-fallback.js';
 import { UINT16_FLOAT16_OFFSET } from './utils/float16.js';
-import { isFlagEnabled } from './core/feature-flags.js';
+import { isFlagDisabled } from './core/feature-flags.js';
 
 export interface EngineOptions {
   /** Zero-based OME-Zarr source channels, in display order (one to four). */
@@ -148,7 +148,7 @@ interface GpuSetup {
   textureFormat: GPUTextureFormat;
   bitDepth: 8 | 16;
   atlasBudgetBytes?: number;
-  /** Ray-guided brick selection, behind the `?rayguide=1` feature flag */
+  /** Ray-guided brick selection; on by default, `?rayguide=0` turns it off */
   rayGuided: boolean;
 }
 
@@ -313,7 +313,7 @@ export class KilnEngine {
 
     const gpu: GpuSetup = {
       outputFormat: format, textureFormat, bitDepth: effectiveBitDepth, atlasBudgetBytes: options.atlasBudgetBytes,
-      rayGuided: isFlagEnabled('rayguide'),
+      rayGuided: !isFlagDisabled('rayguide'),
     };
     const { resources, renderer } = KilnEngine.buildGpu(device, metadata, config, gpu);
     milestones.gpuReady = performance.now();

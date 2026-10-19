@@ -79,7 +79,7 @@ export interface BenchReport {
   evicted: number;
   loadedCount: number;
   desiredCount: number;
-  /** Bricks ray guidance (?rayguide=1) left out of the final desired set. */
+  /** Bricks ray guidance left out of the final desired set. */
   rayCulled: number;
   avgBrickLatencyMs: number;
   chunkCacheHitRatio: number;

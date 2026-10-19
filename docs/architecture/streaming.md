@@ -6,7 +6,7 @@
 
 Recomputed every 10 frames and as soon as the camera stops. Starting at the coarsest level, each brick is
 
-1. dropped if it is outside the view frustum, known to be empty, or (with [ray guidance](#ray-guided-selection)) not reached by any ray,
+1. dropped if it is outside the view frustum, known to be empty, or not reached by any ray ([ray guidance](#ray-guided-selection)),
 2. split into its children if its screen-space error is above the threshold,
 3. otherwise added to the desired set.
 
@@ -50,7 +50,7 @@ On the same link: first new detail after a zoom went from 11.5 s to 3.2 s (4-cha
 
 ## Ray-guided selection
 
-> **Experimental**, behind `?rayguide=1`.
+On by default; `?rayguide=0` turns it off.
 
 Frustum culling keeps bricks hidden behind opaque material or outside the clip box. Ray guidance skips them:
 

@@ -71,7 +71,7 @@ export interface StreamingStats {
   bricksFailed: number; // channel 0 load failed; left unloaded (never marked empty) and retried
   // End-to-end latency: dispatch → committed (rolling avg ms)
   avgBrickLatencyMs: number;
-  // Bricks left out of the last desired set because no ray reached them (?rayguide=1)
+  // Bricks left out of the last desired set because no ray reached them
   rayCulledCount: number;
 }
 
@@ -231,7 +231,7 @@ export class StreamingManager {
     rayCulledCount: 0,
   };
 
-  // Ray-guided brick selection (?rayguide=1): null when off
+  // Ray-guided brick selection: null when off (?rayguide=0)
   private rayVisibility: RayVisibility | null = null;
   private rayGuidanceActive = true;
 
@@ -862,7 +862,7 @@ export class StreamingManager {
     return dist > this.cameraMovementThreshold;
   }
 
-  /** Ray-guided brick selection (?rayguide=1): only bricks that rays actually reach get refined. */
+  /** Ray-guided brick selection: only bricks that rays actually reach get refined. */
   enableRayGuidance(): void {
     this.rayVisibility = new RayVisibility(this.config.datasetGrid);
   }

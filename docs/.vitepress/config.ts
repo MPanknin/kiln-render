@@ -1,4 +1,6 @@
 import { defineConfig } from 'vitepress';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // The Kiln site is built by VitePress from this docs/ folder; the two demo
@@ -83,6 +85,23 @@ export default defineConfig({
       ['meta', { name: 'twitter:title', content: title }],
       ['meta', { name: 'twitter:description', content: desc }],
     );
+  },
+  markdown: {
+    // Diagrams are SVG files in docs/diagrams/, referenced as plain Markdown
+    // images so GitHub shows them too. The site inlines them instead: an <img>
+    // can't follow the light/dark toggle, inline SVG takes its colours from
+    // custom.css. The file's own <style> (for standalone viewing) is dropped.
+    config(md) {
+      const image = md.renderer.rules.image!;
+      md.renderer.rules.image = (tokens, idx, options, env, self) => {
+        const src = tokens[idx]!.attrGet('src') ?? '';
+        if (!/(^|\/)diagrams\/[\w-]+\.svg$/.test(src)) return image(tokens, idx, options, env, self);
+        const file = resolve(dirname(env.realPath ?? env.path), src);
+        env.includes?.push(file); // dev server reloads the page when the SVG changes
+        const svg = readFileSync(file, 'utf8').replace(/<style>[\s\S]*?<\/style>\s*/, '');
+        return `<span class="kiln-diagram">${svg}</span>`;
+      };
+    },
   },
   themeConfig: {
     nav: [

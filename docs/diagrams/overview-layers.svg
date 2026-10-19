@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 452" width="720" height="452" font-size="12" role="img" aria-label="Kiln in three layers: the application layer (streaming manager, camera, UI) drives residency management (atlas allocator, indirection table, data providers), which fills the GPU resources (atlas texture, indirection texture, compute pipeline).">
+<style>
+text{fill:#1f2328;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.muted{fill:#59636e}.faint{fill:#818b98}
+.box{fill:#f6f8fa;stroke:#d1d9e0}.panel{fill:none;stroke:#d1d9e0}.page{fill:#fff}
+.line{fill:none;stroke:#818b98}.head{fill:#818b98}
+.accent{fill:rgba(9,105,218,.12);stroke:#0969da}.accent-line{fill:none;stroke:#0969da}.accent-head,.accent-text{fill:#0969da}
+.ok{fill:rgba(26,127,55,.12);stroke:#1a7f37}.ok-line{fill:none;stroke:#1a7f37}.ok-text{fill:#1a7f37}
+.bad{fill:rgba(207,34,46,.1);stroke:#cf222e}.bad-text{fill:#cf222e}
+@media (prefers-color-scheme:dark){
+text{fill:#f0f6fc}.muted{fill:#9198a1}.faint{fill:#656c76}
+.box{fill:#151b23;stroke:#3d444d}.panel{stroke:#3d444d}.page{fill:#0d1117}
+.line{stroke:#656c76}.head{fill:#656c76}
+.accent{fill:rgba(68,147,248,.15);stroke:#4493f8}.accent-line{stroke:#4493f8}.accent-head,.accent-text{fill:#4493f8}
+.ok{fill:rgba(63,185,80,.15);stroke:#3fb950}.ok-line{stroke:#3fb950}.ok-text{fill:#3fb950}
+.bad{fill:rgba(248,81,73,.15);stroke:#f85149}.bad-text{fill:#f85149}}
+</style>
+<rect x="0.8" y="0.8" width="718.5" height="142.5" rx="10" class="panel" stroke-width="1.5"/>
+<text x="16" y="24" class="muted" font-size="11" font-weight="600" letter-spacing="0.08em">APPLICATION LAYER</text>
+<rect x="12" y="36" width="224" height="96" rx="6" class="box"/>
+<text x="26" y="59" font-size="13" font-weight="600">StreamingManager</text>
+<text x="26" y="82" class="muted">Desired-set computation</text>
+<text x="26" y="100" class="muted">Priority queue</text>
+<text x="26" y="118" class="muted">Request lifecycle</text>
+<rect x="248" y="36" width="224" height="96" rx="6" class="box"/>
+<text x="262" y="59" font-size="13" font-weight="600">Camera + frustum</text>
+<text x="262" y="82" class="muted">View-projection</text>
+<text x="262" y="100" class="muted">Frustum planes</text>
+<text x="262" y="118" class="muted">Distance calculation</text>
+<rect x="484" y="36" width="224" height="96" rx="6" class="box"/>
+<text x="498" y="59" font-size="13" font-weight="600">UI / controls</text>
+<text x="498" y="82" class="muted">Transfer function</text>
+<text x="498" y="100" class="muted">Render mode</text>
+<text x="498" y="118" class="muted">LOD thresholds</text>
+<rect x="0.8" y="154.8" width="718.5" height="142.5" rx="10" class="panel" stroke-width="1.5"/>
+<text x="16" y="178" class="muted" font-size="11" font-weight="600" letter-spacing="0.08em">RESIDENCY MANAGEMENT</text>
+<rect x="12" y="190" width="224" height="96" rx="6" class="box"/>
+<text x="26" y="213" font-size="13" font-weight="600">AtlasAllocator</text>
+<text x="26" y="236" class="muted">LRU slot tracking</text>
+<text x="26" y="254" class="muted">Eviction selection</text>
+<text x="26" y="272" class="muted">Metadata bookkeeping</text>
+<rect x="248" y="190" width="224" height="96" rx="6" class="box"/>
+<text x="262" y="213" font-size="13" font-weight="600">IndirectionTable</text>
+<text x="262" y="236" class="muted">Virtual → physical map</text>
+<text x="262" y="254" class="muted">Multi-LOD support</text>
+<text x="262" y="272" class="muted">Empty-brick markers</text>
+<rect x="484" y="190" width="224" height="96" rx="6" class="box"/>
+<text x="498" y="213" font-size="13" font-weight="600">DataProviders</text>
+<text x="498" y="236" class="muted">Sharded binary</text>
+<text x="498" y="254" class="muted">OME-Zarr</text>
+<text x="498" y="272" class="muted">Worker pools</text>
+<rect x="0.8" y="308.8" width="718.5" height="142.5" rx="10" class="accent-line" stroke-width="1.5"/>
+<text x="16" y="332" class="accent-text" font-size="11" font-weight="600" letter-spacing="0.08em">GPU RESOURCES</text>
+<rect x="12" y="344" width="224" height="96" rx="6" class="box"/>
+<text x="26" y="367" font-size="13" font-weight="600">Atlas texture (3D)</text>
+<text x="26" y="390" class="muted">Up to 660³, fitted to the budget</text>
+<text x="26" y="408" class="muted">66³ slots, ghost border incl.</text>
+<text x="26" y="426" class="muted">r8unorm, r16unorm or r16float</text>
+<rect x="248" y="344" width="224" height="96" rx="6" class="box"/>
+<text x="262" y="367" font-size="13" font-weight="600">Indirection texture</text>
+<text x="262" y="390" class="muted">LOD 0 brick grid, rgba8uint</text>
+<text x="262" y="408" class="muted">Slot x, y, z + LOD per cell</text>
+<text x="262" y="426" class="muted">255 = known empty</text>
+<rect x="484" y="344" width="224" height="96" rx="6" class="box"/>
+<text x="498" y="367" font-size="13" font-weight="600">Compute pipeline</text>
+<text x="498" y="390" class="muted">Ray generation</text>
+<text x="498" y="408" class="muted">Brick traversal</text>
+<text x="498" y="426" class="muted">Compositing</text>
+</svg>

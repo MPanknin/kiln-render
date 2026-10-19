@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 290" width="720" height="290" font-size="12" role="img" aria-label="Single channel: intensity goes through a transfer function to colour and opacity. Multichannel: each channel’s windowed intensity scales its own colour, the results are summed, and opacity comes from the strongest channel.">
+<style>
+text{fill:#1f2328;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.muted{fill:#59636e}.faint{fill:#818b98}
+.box{fill:#f6f8fa;stroke:#d1d9e0}.panel{fill:none;stroke:#d1d9e0}.page{fill:#fff}
+.line{fill:none;stroke:#818b98}.head{fill:#818b98}
+.accent{fill:rgba(9,105,218,.12);stroke:#0969da}.accent-line{fill:none;stroke:#0969da}.accent-head,.accent-text{fill:#0969da}
+.ok{fill:rgba(26,127,55,.12);stroke:#1a7f37}.ok-line{fill:none;stroke:#1a7f37}.ok-text{fill:#1a7f37}
+.bad{fill:rgba(207,34,46,.1);stroke:#cf222e}.bad-text{fill:#cf222e}
+@media (prefers-color-scheme:dark){
+text{fill:#f0f6fc}.muted{fill:#9198a1}.faint{fill:#656c76}
+.box{fill:#151b23;stroke:#3d444d}.panel{stroke:#3d444d}.page{fill:#0d1117}
+.line{stroke:#656c76}.head{fill:#656c76}
+.accent{fill:rgba(68,147,248,.15);stroke:#4493f8}.accent-line{stroke:#4493f8}.accent-head,.accent-text{fill:#4493f8}
+.ok{fill:rgba(63,185,80,.15);stroke:#3fb950}.ok-line{stroke:#3fb950}.ok-text{fill:#3fb950}
+.bad{fill:rgba(248,81,73,.15);stroke:#f85149}.bad-text{fill:#f85149}}
+</style>
+<defs><linearGradient id="kiln-mc-tf" x1="0" x2="1"><stop offset="0" stop-color="#440154"/><stop offset="0.25" stop-color="#3b528b"/><stop offset="0.5" stop-color="#21918c"/><stop offset="0.75" stop-color="#5ec962"/><stop offset="1" stop-color="#fde725"/></linearGradient></defs>
+<text x="0" y="16" font-size="13" font-weight="600">Single channel</text>
+<rect x="0" y="30" width="130" height="56" rx="6" class="box"/>
+<text x="14" y="52" font-weight="600">intensity</text>
+<rect x="14" y="62" width="102" height="10" rx="2" class="panel" stroke-width="1"/>
+<rect x="14" y="62" width="63" height="10" rx="2" class="muted"/>
+<path d="M134,58 L166,58" class="line" stroke-width="1.5"/>
+<polygon points="172,58 165,61.5 165,54.5" class="head"/>
+<rect x="176" y="30" width="260" height="56" rx="6" class="box"/>
+<text x="190" y="52" font-weight="600">transfer function</text>
+<rect x="190" y="62" width="232" height="12" class="panel" stroke-width="1" style="fill:url(#kiln-mc-tf)"/>
+<path d="M333.8,58 v20" class="line" stroke-width="2"/>
+<path d="M440,58 L472,58" class="line" stroke-width="1.5"/>
+<polygon points="478,58 471,61.5 471,54.5" class="head"/>
+<rect x="482" y="34" width="48" height="48" rx="6" class="panel" stroke-width="1" style="fill:#35b779"/>
+<text x="544" y="54" font-weight="600">colour + opacity</text>
+<text x="544" y="72" class="muted">per sample</text>
+<text x="0" y="130" font-size="13" font-weight="600">Multichannel</text>
+<text x="40" y="152" class="muted" font-size="11">windowed intensity</text>
+<text x="184" y="152" class="muted" font-size="11" text-anchor="middle">colour</text>
+<text x="0" y="175" class="mono muted" font-size="11">ch 0</text>
+<rect x="40" y="166" width="102" height="10" rx="2" class="panel" stroke-width="1"/>
+<rect x="40" y="166" width="71" height="10" rx="2" class="muted"/>
+<text x="158" y="175" class="muted" font-size="14" text-anchor="middle">×</text>
+<rect x="174" y="161" width="20" height="20" rx="4" class="panel" stroke-width="1" style="fill:#0000ff"/>
+<path d="M198,171 C270,171 280,220 310,220" class="line" stroke-width="1.5"/>
+<text x="0" y="207" class="mono muted" font-size="11">ch 1</text>
+<rect x="40" y="198" width="102" height="10" rx="2" class="panel" stroke-width="1"/>
+<rect x="40" y="198" width="41" height="10" rx="2" class="muted"/>
+<text x="158" y="207" class="muted" font-size="14" text-anchor="middle">×</text>
+<rect x="174" y="193" width="20" height="20" rx="4" class="panel" stroke-width="1" style="fill:#ffff00"/>
+<path d="M198,203 C270,203 280,220 310,220" class="line" stroke-width="1.5"/>
+<text x="0" y="239" class="mono muted" font-size="11">ch 2</text>
+<rect x="40" y="230" width="102" height="10" rx="2" class="panel" stroke-width="1"/>
+<rect x="40" y="230" width="51" height="10" rx="2" class="muted"/>
+<text x="158" y="239" class="muted" font-size="14" text-anchor="middle">×</text>
+<rect x="174" y="225" width="20" height="20" rx="4" class="panel" stroke-width="1" style="fill:#ff0000"/>
+<path d="M198,235 C270,235 280,220 310,220" class="line" stroke-width="1.5"/>
+<text x="0" y="271" class="mono muted" font-size="11">ch 3</text>
+<rect x="40" y="262" width="102" height="10" rx="2" class="panel" stroke-width="1"/>
+<rect x="40" y="262" width="10" height="10" rx="2" class="muted"/>
+<text x="158" y="271" class="muted" font-size="14" text-anchor="middle">×</text>
+<rect x="174" y="257" width="20" height="20" rx="4" class="panel" stroke-width="1" style="fill:#ffffff"/>
+<path d="M198,267 C270,267 280,220 310,220" class="line" stroke-width="1.5"/>
+<circle cx="330" cy="220" r="18" class="box" stroke-width="1.5"/>
+<text x="330" y="226" font-size="18" text-anchor="middle" font-weight="600">+</text>
+<path d="M350,220 L380,220" class="line" stroke-width="1.5"/>
+<polygon points="386,220 379,223.5 379,216.5" class="head"/>
+<rect x="390" y="196" width="48" height="48" rx="6" class="panel" stroke-width="1" style="fill:#ff80cc"/>
+<text x="452" y="208" font-weight="600">summed colour</text>
+<text x="452" y="226" class="muted">no transfer function;</text>
+<text x="452" y="244" class="muted">opacity from the strongest channel</text>
+</svg>

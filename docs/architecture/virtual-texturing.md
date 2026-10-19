@@ -1,93 +1,48 @@
-# Virtual texturing pipeline
+# Virtual texturing
 
-Volumetric data exhibits strong spatial coherence: only a small working set of bricks is visible at any moment. By virtualizing the address space, a large logical volume maps onto a bounded physical cache.
+Only a small working set of bricks is visible at any moment, so a large volume can be mapped onto a fixed-size cache.
 
-## 1. Brick decomposition
+## 1. Bricks
 
-The source volume is pre-processed into a multi-resolution **brick pyramid**:
+Every dataset is addressed as a pyramid of bricks: 64³ voxels each, stored as 66³ with a one-voxel border. OME-Zarr brings its own levels, and workers cut each brick from the chunks it overlaps on demand. The [sharded binary format](/data/sharded-binary) is bricked ahead of time.
 
-```
-Original Volume: 1024 × 512 × 1024 voxels
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────────┐
-│ LOD 0 (1:1)    16×8×16 = 2,048 bricks   64³ logical voxels │
-│ LOD 1 (1:2)     8×4×8  =   256 bricks   covers 128³ region │
-│ LOD 2 (1:4)     4×2×4  =    32 bricks   covers 256³ region │
-│ LOD 3 (1:8)     2×1×2  =     4 bricks   covers 512³ region │
-└─────────────────────────────────────────────────────────────┘
-```
+![The brick pyramid from LOD 0 to LOD 3](../diagrams/brick-pyramid.svg)
 
-Each brick is 64³ **logical voxels**, stored as 66³ **physical voxels** with a 1-voxel border for correct trilinear interpolation at brick boundaries. Bricks are serialized into per-LOD binary files with a JSON index containing byte offsets and statistics (min/max/avg intensity).
+The diagram shows a uniform 2:1 pyramid. Native OME-Zarr pyramids can downsample each axis independently (XY only, for example), so a brick has 1 or 2 children per axis.
 
 ## 2. Indirection table
 
-The **indirection table** is a 3D texture (`rgba8uint`) dimensioned to the LOD 0 brick grid. Each texel encodes:
+A 3D `rgba8uint` texture with one texel per LOD 0 brick:
 
-| Channel | Purpose                                           |
-|---------|---------------------------------------------------|
-| R       | Atlas slot X coordinate (0-9 at full grid)        |
-| G       | Atlas slot Y coordinate (0-9 at full grid)        |
-| B       | Atlas slot Z coordinate (0-9 at full grid)        |
-| A       | LOD level + 1 (0=unloaded, 1-4=LOD 0-3, 255=empty)|
+| Channel | Content |
+|---------|---------|
+| R, G, B | Atlas slot x, y, z |
+| A | LOD + 1; 0 = not loaded, 255 = known empty |
 
-When a coarse LOD brick is loaded, it fills **multiple cells** in the indirection table proportional to its coverage. A LOD 2 brick covers a 4×4×4 region in the LOD 0 grid, so 64 cells are updated with the same atlas coordinates. This enables seamless LOD transitions without shader-side LOD selection logic.
+A coarse brick writes its slot into every cell it covers; in a 2:1 pyramid a LOD 2 brick fills 4×4×4 cells. A finer brick then overwrites just its own cells. The shader reads the cell at the sample position and gets the finest loaded data, with no LOD selection of its own.
 
-```
-Indirection Table (LOD 0 grid)              Atlas Texture
-┌───┬───┬───┬───┬───┬───┬───┬───┐          ┌─────────────────┐
-│2,1│2,1│3,0│3,0│   │   │   │   │          │ Slot (2,1,0)    │
-│,0 │,0 │,1 │,1 │...│...│...│...│    ───►  │ Contains LOD 1  │
-├───┼───┼───┼───┼───┼───┼───┼───┤          │ brick data      │
-│2,1│2,1│3,0│3,0│   │   │   │   │          └─────────────────┘
-│,0 │,0 │,1 │,1 │...│...│...│...│
-└───┴───┴───┴───┴───┴───┴───┴───┘
-  ▲
-  └── 2×2 region filled by single LOD 1 brick
-```
+![Indirection cells pointing into atlas slots](../diagrams/indirection-atlas.svg)
 
-When a finer LOD brick loads, it **overwrites** only its specific cell, leaving coarser LOD data in adjacent cells. The shader always reads the cell corresponding to the current sample position, automatically getting the finest available resolution.
+## 3. Atlas
 
-## 3. Atlas texture
+One 3D texture per channel, divided into 66³ slots: up to 660³ (10 × 10 × 10 slots), chosen at startup by `computeAtlasGrid()` so that `channels × size³ × bytes per voxel` fits the budget (`atlasBudgetBytes`, default ~1.3 GiB).
 
-The **atlas** is a single 3D texture organized as a grid of 66³ slots. Its size adapts to fit a VRAM budget — up to `660³` (a 10×10×10 grid), shrinking for multichannel datasets (see below). The texture format depends on the source data:
-- **`uint8`**: `r8unorm` (1 byte per voxel)
-- **`uint16`**: `r16unorm` (2 bytes per voxel, bit-exact) when the device has `texture-formats-tier1`; otherwise `r16float` storing value − 2048, exact up to 4096 (12-bit data), mapped back to value / 65535 in the shader
-- **`int16` and `float32`**: `r16float` (2 bytes per voxel) — raw values in half precision; the shader normalises them by the data range
-- **Fallback**: if `r16float` is unsupported, the atlas drops to `r8unorm` (16→8-bit, quality loss)
+![The atlas as a 10 × 10 × 10 grid of 66³ slots](../diagrams/atlas-layout.svg)
 
-> **Note:** The maximum atlas grid (`660³`, 1,000 slots) is defined in `src/core/config.ts`. The actual size is chosen at startup by `computeAtlasGrid()` to fit a VRAM budget — `numChannels × atlasSize³ × bytesPerVoxel` stays under the budget (default ~1.3 GiB, overridable via `ViewerOptions.atlasBudgetBytes`). Single- and dual-channel datasets keep the full `660³`.
+| Source | Format | Full 660³ atlas |
+|--------|--------|-----------------|
+| `uint8` | `r8unorm` | 274 MiB |
+| `uint16` | `r16unorm`, bit-exact, where the device [supports it](/reference/webgpu); else `r16float` storing value − 2048, exact up to 4096 | 548 MiB |
+| `int16`, `float32` | `r16float`, raw values, normalised by the data range in the shader | 548 MiB |
 
-```
-Atlas Layout (660³ total)
-┌──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┐
-│ 0,0,0│ 1,0,0│ 2,0,0│ 3,0,0│ 4,0,0│ 5,0,0│ 6,0,0│ 7,0,0│ 8,0,0│ 9,0,0│  ← Z=0 layer
-├──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┤
-│ 0,1,0│ 1,1,0│ ...  │      │      │      │      │      │      │      │
-├──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┤
-│      │      │      │      │      │      │      │      │      │      │
-   ...           1,000 total slots (10×10×10)          ...
-```
-
-Each slot stores 66³ voxels. At the full `660³` grid (1,000 slots):
-- **8-bit**: 287,496 bytes per slot × 1,000 slots = **~274 MiB** VRAM
-- **16-bit**: 574,992 bytes per slot × 1,000 slots = **~548 MiB** VRAM
+Without `r16float` the atlas falls back to `r8unorm`, losing precision.
 
 ### Multichannel atlas
 
-For multichannel datasets (up to 4 channels), each channel gets its own atlas texture, so VRAM scales with channel count. To stay within budget the atlas grid shrinks as channels increase — e.g. a 4-channel 16-bit dataset uses an ~528³ grid (~1.2 GiB total) instead of the full 660³ (~2.2 GiB). The indirection table is shared across all channels — all channels of a given brick use the same atlas slot indices. See [Multichannel](/rendering/multichannel) for details.
+Each channel has its own atlas; the indirection table is shared, so a brick uses the same slot in every channel. One or two 16-bit channels keep 660³; four get 528³ each (~1.1 GiB in total, instead of ~2.1 GiB at 660³).
 
-The 1-voxel **ghost border** duplicates neighboring brick data to enable hardware trilinear filtering without seams:
+## 4. Ghost border
 
-```
-Physical Brick (66³)
-┌─────────────────────────────────────────┐
-│ G │                                 │ G │  G = Ghost voxels (duplicated from neighbors)
-├───┼─────────────────────────────────┼───┤
-│   │                                 │   │
-│ G │      Logical Data (64³)         │ G │
-│   │                                 │   │
-├───┼─────────────────────────────────┼───┤
-│ G │                                 │ G │
-└─────────────────────────────────────────┘
-```
+The border duplicates the neighbouring bricks' edge voxels, so hardware trilinear filtering never reads across slots, even though neighbours sit anywhere in the atlas.
+
+![Ghost borders copied between neighbouring bricks](../diagrams/ghost-border.svg)

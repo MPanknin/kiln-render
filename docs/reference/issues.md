@@ -1,27 +1,18 @@
-# Known Issues
+# Known issues
 
-## Empty brick threshold is not bit-depth aware
+## Rendering
 
-`DatasetConfig.emptyBrickThreshold` (default: 100) is compared against raw integer brick stats.
-- 8-bit: 100/255 ≈ 39% of range — reasonable
-- 16-bit: 100/65535 ≈ 0.15% of range — effectively no culling
+- **LOD transitions:** when finer bricks arrive, their region switches resolution, briefly visible until the neighbours catch up.
+- **Banding while refining:** accumulation restarts as bricks are committed, so during heavy refinement the image averages only a few jittered frames and can show stripes ("woodgrain"). It clears once streaming settles.
+- **ISO seams at LOD boundaries:** isosurface normal taps can reach into a neighbouring brick at a different LOD, which can leave the boundary faintly visible. DVR gradients stay inside the ghost border.
+- **Multichannel:** no ISO, no transfer function, no DVR shading ([limitations](/rendering/multichannel#known-limitations)).
 
-**Fix:** Normalize the threshold to 0–1 and compare against `(stats.max - window.min) / (window.max - window.min)` using the dataset's actual value range from `metadata.window`.
+## Streaming
 
-## Empty brick culling does not work for Zarr datasets
+- **OME-Zarr empty bricks are downloaded once:** without an index of brick statistics, a brick is recognised as empty only after its first load.
+- **Fixed empty threshold:** a brick counts as empty below 1 (8-bit) or 100 of 65535 (16-bit), lowered to the lowest window start if there is one. It isn't derived from the data, so a noisy fluorescence background above it still streams.
+- **Time series:** one timepoint at a time, no playback or prefetching.
 
-Brick stats (min/max) in the Zarr path are computed lazily during `assembleBrick()` in the worker and cached in `brickStatsCache`. The streaming manager calls `isBrickEmpty` **before** `loadBrick`, so `getBrickStats` always returns `null` on the first pass → `isBrickEmpty` returns `false` → all bricks are loaded regardless.
+## Local files
 
-Culling only activates on re-visits via the CPU brick cache (i.e., after an eviction/reload cycle).
-
-**Fix options:**
-- Add a stats-only pre-pass for the coarsest Zarr LOD (fetch and scan without storing full brick data)
-- Or accept the limitation and document it — Zarr culling is a future optimization
-
-## Empty brick threshold cannot be determined automatically without a pre-pass
-
-The threshold is inherently dataset-dependent (CT air vs. fluorescence background have different distributions). Automatic determination requires either:
-- A histogram of brick max-values from the coarsest LOD (infrastructure already exists via `onBaseLodLoaded`)
-- Or a global stats pre-pass before streaming begins
-
-Currently the value must be set manually. A conservative normalized default (e.g. `0.02`) would be safer than the current `100`.
+- **Sharded Zarr v3 can't be read from disk:** the local file store doesn't support partial reads yet. Serve such datasets over HTTP ([Local files](/data/local-files)).

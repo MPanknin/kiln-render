@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 352" width="720" height="352" font-size="12" role="img" aria-label="The atlas is one 3D texture of up to 10 × 10 × 10 slots, each 66³ voxels. Slot (3, 1, 0) starts at texel (198, 66, 0): the slot coordinate times 66.">
+<style>
+text{fill:#1f2328;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.muted{fill:#59636e}.faint{fill:#818b98}
+.box{fill:#f6f8fa;stroke:#d1d9e0}.panel{fill:none;stroke:#d1d9e0}.page{fill:#fff}
+.line{fill:none;stroke:#818b98}.head{fill:#818b98}
+.accent{fill:rgba(9,105,218,.12);stroke:#0969da}.accent-line{fill:none;stroke:#0969da}.accent-head,.accent-text{fill:#0969da}
+.ok{fill:rgba(26,127,55,.12);stroke:#1a7f37}.ok-line{fill:none;stroke:#1a7f37}.ok-text{fill:#1a7f37}
+.bad{fill:rgba(207,34,46,.1);stroke:#cf222e}.bad-text{fill:#cf222e}
+@media (prefers-color-scheme:dark){
+text{fill:#f0f6fc}.muted{fill:#9198a1}.faint{fill:#656c76}
+.box{fill:#151b23;stroke:#3d444d}.panel{stroke:#3d444d}.page{fill:#0d1117}
+.line{stroke:#656c76}.head{fill:#656c76}
+.accent{fill:rgba(68,147,248,.15);stroke:#4493f8}.accent-line{stroke:#4493f8}.accent-head,.accent-text{fill:#4493f8}
+.ok{fill:rgba(63,185,80,.15);stroke:#3fb950}.ok-line{stroke:#3fb950}.ok-text{fill:#3fb950}
+.bad{fill:rgba(248,81,73,.15);stroke:#f85149}.bad-text{fill:#f85149}}
+</style>
+<path d="M120,92 L340,92 L410,37 L190,37 Z" class="box" stroke-width="1"/>
+<path d="M340,92 L410,37 L410,257 L340,312 Z" class="box" stroke-width="1"/>
+<path d="M127,86.5 H347 M347,86.5 V306.5 M134,81 H354 M354,81 V301 M141,75.5 H361 M361,75.5 V295.5 M148,70 H368 M368,70 V290 M155,64.5 H375 M375,64.5 V284.5 M162,59 H382 M382,59 V279 M169,53.5 H389 M389,53.5 V273.5 M176,48 H396 M396,48 V268 M183,42.5 H403 M403,42.5 V262.5 M142,92 l70,-55 M340,114 l70,-55 M164,92 l70,-55 M340,136 l70,-55 M186,92 l70,-55 M340,158 l70,-55 M208,92 l70,-55 M340,180 l70,-55 M230,92 l70,-55 M340,202 l70,-55 M252,92 l70,-55 M340,224 l70,-55 M274,92 l70,-55 M340,246 l70,-55 M296,92 l70,-55 M340,268 l70,-55 M318,92 l70,-55 M340,290 l70,-55" class="panel" stroke-width="1"/>
+<rect x="120" y="92" width="220" height="220" class="box" stroke-width="1"/>
+<path d="M142,92 V312 M164,92 V312 M186,92 V312 M208,92 V312 M230,92 V312 M252,92 V312 M274,92 V312 M296,92 V312 M318,92 V312 M120,114 H340 M120,136 H340 M120,158 H340 M120,180 H340 M120,202 H340 M120,224 H340 M120,246 H340 M120,268 H340 M120,290 H340" class="panel" stroke-width="1"/>
+<rect x="186" y="114" width="22" height="22" class="accent" stroke-width="1.5"/>
+<path d="M120,330 L334,330" class="line" stroke-width="1.5"/>
+<polygon points="340,330 333,333.5 333,326.5" class="head"/>
+<text x="230" y="348" class="muted" text-anchor="middle">x: 10 slots × 66 = 660 voxels</text>
+<path d="M104,92 L104,306" class="line" stroke-width="1.5"/>
+<polygon points="104,312 100.5,305 107.5,305" class="head"/>
+<text x="96" y="198" class="muted" text-anchor="end">y</text>
+<text x="96" y="214" class="muted mono" font-size="11" text-anchor="end">660</text>
+<path d="M108,82 L173.3,30.7" class="line" stroke-width="1.5"/>
+<polygon points="178,27 174.7,34.1 170.3,28.6" class="head"/>
+<text x="186" y="33" class="muted">z: 10 layers</text>
+<path d="M197.0,125.0 H460" class="accent-line" stroke-width="1.5"/>
+<circle cx="197" cy="125" r="3" class="accent-head"/>
+<text x="470" y="119" font-size="13" font-weight="600">slot (3, 1, 0)</text>
+<text x="470" y="139" class="mono" font-size="11.5">starts at texel (198, 66, 0)</text>
+<text x="470" y="157" class="muted">texel origin = slot × 66</text>
+<text x="470" y="200" font-weight="600">One brick per slot:</text>
+<text x="470" y="218" class="muted">66³ voxels = 64³ + ghost border</text>
+<text x="470" y="236" class="muted">1,000 slots at full size; the grid</text>
+<text x="470" y="254" class="muted">shrinks to fit the VRAM budget</text>
+</svg>

@@ -1,52 +1,43 @@
 # URL parameters
 
-Control rendering settings via URL parameters to share or bookmark specific views.
+The demo viewer reads its state from the URL; **Share** (top right) copies the current view as a link.
 
-| Parameter | Values | Description | Example |
-|-----------|--------|-------------|---------|
-| `dataset` | URL | Volume data source | `dataset=https://...volume.ome.zarr` |
-| `mode` | `dvr`, `mip`, `iso`, `lod`, `slice` | Render mode | `mode=mip` |
-| `wc` | 0-1 | Window center | `wc=0.35` |
-| `ww` | 0-1 | Window width | `ww=0.55` |
-| `iso` | 0-1 | Isosurface threshold | `iso=0.15` |
-| `density` | 0.1-10 | DVR density (opacity) scale | `density=1.5` |
-| `shade` | 0-1 | DVR gradient shading strength (default 0, 0 = flat) | `shade=0.5` |
-| `boundary` | 0-1 | DVR boundary emphasis: opacity follows gradient magnitude (default 0) | `boundary=0.6` |
-| `tf` | `grayscale`, `grayscale-inverted`, `coolwarm`, `hot`, `cool`, `viridis`, `plasma`, `seismic` | Transfer function preset | `tf=coolwarm` |
-| `tfpts` | x,y pairs | TF opacity control points (comma-separated) | `tfpts=0,0,0.5,0.8,1,1` |
-| `up` | `x`, `y`, `z`, `-x`, `-y`, `-z` | Camera up axis | `up=-y` |
-| `scale` | 0.25-1.0 | Render resolution | `scale=1.0` |
-| `sse` | pixels | LOD screen-space error threshold (default 8; lower = sharper, more data) | `sse=4` |
-| `pyramid` | `native`, `legacy` | Level model. Omitted: native, falling back to legacy when the stored levels don't fit; setting it turns the fallback off | `pyramid=legacy` |
-| `cam` | 6 numbers | Camera state (rotation, distance, target) | `cam=0.1,2.3,3.5,0,0,0` |
-| `clipMin` | x,y,z | Clipping min (normalised 0–1) | `clipMin=0.2,0.1,0` |
-| `clipMax` | x,y,z | Clipping max (normalised 0–1) | `clipMax=0.8,0.9,1` |
-| `slices` | x,y,z | Slice plane positions (normalised 0–1, only used in `slice` mode) | `slices=0.5,0.5,0.5` |
-| `sliceVis` | 0–7 | Slice plane visibility bitmask (bit 0=X, 1=Y, 2=Z; default 7 = all visible) | `sliceVis=3` |
-| `wireframe` | `1` | Enable bounding box wireframe overlay | `wireframe=1` |
-| `axis` | `1` | Enable world-space axis overlay | `axis=1` |
+| Parameter | Values | Description |
+|-----------|--------|-------------|
+| `dataset` | URL | OME-Zarr or sharded binary dataset |
+| `sourceChannels` | zero-based indices, e.g. `5,1` | 1–4 source channels in display order (default: the first four) |
+| `timepoint` | zero-based index | Timepoint (default 0) |
+| `mode` | `dvr`, `mip`, `iso`, `lod`, `slice` | Render mode |
+| `wc`, `ww` | 0–1 | Window centre and width |
+| `iso` | 0–1 | Isosurface threshold |
+| `density` | 0.1–10 | DVR opacity scale |
+| `shade` | 0–1 | DVR gradient shading (default 0) |
+| `boundary` | 0–1 | DVR boundary emphasis: opacity follows gradient magnitude (default 0) |
+| `tf` | `grayscale`, `grayscale-inverted`, `coolwarm`, `hot`, `cool`, `viridis`, `plasma`, `seismic` | Transfer function preset |
+| `tfpts` | x,y pairs, e.g. `0,0,0.5,0.8,1,1` | Transfer function opacity points |
+| `up` | `x`, `y`, `z`, `-x`, `-y`, `-z` | Camera up axis |
+| `cam` | `rx,ry,dist,tx,ty,tz` | Camera rotation, distance and target |
+| `scale` | 0.25–1 | Render resolution scale |
+| `sse` | pixels | LOD screen-space error threshold (default 8; lower = sharper, more data) |
+| `pyramid` | `native`, `legacy` | Level model. Default: native, falling back to legacy if the levels don't fit; setting it disables the fallback |
+| `clipMin`, `clipMax` | x,y,z (0–1) | Clip box |
+| `slices` | x,y,z (0–1) | Slice positions (`slice` mode) |
+| `sliceVis` | 0–7 | Visible slice planes as a bitmask (X = 1, Y = 2, Z = 4; default 7) |
+| `wireframe`, `axis` | `1` | Bounding box and axis overlays |
 
-**Example:**
 ```
 ?dataset=https://example.com/scan.ome.zarr&mode=mip&wc=0.2&ww=0.3&tf=coolwarm
 ```
 
-The **Share** button (top-right of the demo) copies the current view as a URL with all parameters filled in.
+The multichannel viewer uses `channels` and `slice` instead of the single-channel display parameters: see [Multichannel demo](/rendering/multichannel#multichannel-demo).
 
-> Multichannel datasets use a different set of URL parameters (per-channel colour, windowing, and visibility). See [Multichannel → URL parameters](/rendering/multichannel#url-parameters).
+## Diagnostics and experiments
 
-## Source selection (OME-Zarr)
+Not included in share links.
 
-Both viewers accept `sourceChannels` (1–4 distinct, comma-separated **zero-based**
-source indices) and `timepoint` (one **zero-based** time index). For example,
-`?dataset=...&sourceChannels=5,1&timepoint=3` opens source channels 6 and 2 at the
-fourth timepoint. Use the multichannel viewer when selecting multiple channels.
-These parameters are independent of `channels`, which controls channel display styles.
-Without them, the first four available channels and timepoint zero are used.
-
-In the viewer, channel names in the Controls panel are pickers for the source channel,
-and datasets with a time axis get a **Time** card (scrubber, step buttons, `,` / `.`).
-Every change switches the volume in place: camera, display settings and already loaded
-channels are kept, and only new data streams. Choosing one channel in the multichannel
-viewer (or several in the single-channel viewer) opens the other viewer. The UI counts
-timepoints from one; share links retain zero-based indices.
+| Parameter | Description |
+|-----------|-------------|
+| `debug=1` | Opens the stats panel (also `D`) |
+| `bench=1` | Once streaming and accumulation have converged, logs a report (timings, bytes, bricks) and sets `window.__KILN_BENCH_RESULT`. Options: `benchLabel`, `benchTimeout` (ms, default 120000), `benchStable` (polls, default 8), `report=<url>` to POST the JSON |
+| `rayguide=1` | Experimental [ray-guided brick selection](/architecture/streaming#ray-guided-selection) |
+| `local=true` | Set by the viewer after opening a local directory; reopens it on reload |

@@ -1,62 +1,51 @@
 # Compositing modes
 
-| Mode | Algorithm | Use Case |
-|------|-----------|----------|
-| **DVR** | Front-to-back alpha compositing with transfer function | General visualization |
-| **MIP** | Maximum intensity along ray | Angiography, vessel detection |
-| **ISO** | First surface at threshold + Phong shading | Surface extraction |
-| **LOD** | Color-coded by resolution level | Debug LOD distribution |
-| **Slice** | Three orthogonal planes sampling the atlas directly | Anatomical navigation |
+| Mode | Algorithm |
+|------|-----------|
+| **DVR** | Front-to-back compositing through the transfer function |
+| **MIP** | Maximum intensity along the ray |
+| **ISO** | First crossing of the threshold, Phong-lit from the camera |
+| **Slice** | Three orthogonal planes sampled from the atlas |
+| **LOD** | Colour per resolution level, for debugging (**LOD Levels** under Advanced, or `mode=lod`) |
 
-DVR compositing uses the optical model with extinction:
+## DVR
+
+Opacity follows Beer–Lambert extinction, so it scales with the step length and coarse bricks with longer steps look the same. Rays stop once opacity passes 0.95.
 
 ```wgsl
-fn composeSample(density, stepSize, color, alpha) {
-    let tfColor = textureSample(transferFunction, density);
-    let extinction = tfColor.a * stepSize * volumeScale;
-    let sampleAlpha = 1.0 - exp(-extinction);
-
-    // Front-to-back blending
+fn composeSample(density: f32, extinctionScale: f32, color: ptr<function, vec3f>, alpha: ptr<function, f32>) {
+    let tfColor = textureSampleLevel(tfTexture, tfSampler, vec2f(density, 0.5), 0.0);
+    let sampleAlpha = 1.0 - exp2(-tfColor.a * extinctionScale); // stepSize × densityScale × volume size × log2(e)
     *color += tfColor.rgb * sampleAlpha * (1.0 - *alpha);
     *alpha += sampleAlpha * (1.0 - *alpha);
 }
 ```
 
-## Shading and boundary emphasis
+### Shading and boundary emphasis
 
-Single-channel DVR shades each sample by its gradient. The gradient is a central difference read from the brick the ray is in, using the brick's one-voxel ghost border, so it needs no indirection lookups. Near a brick face the offsets are clamped to that border and the difference is divided by the shorter span. The differences are divided by their span in finest-level voxels, so a fixed density ramp has the same edge strength across LODs, including anisotropic pyramids. Conversion to world axes then keeps lighting normals correct on anisotropic voxels.
+Both are off by default: `shading` and `gradientOpacity` (viewer options and renderer properties), **Shading** and **Boundaries** in the demo, `shade` and `boundary` in the URL. Single-channel only.
 
-The gradient magnitude, in windowed density per finest-level voxel, gives an edge strength between 0 in flat regions and 1 at sharp boundaries:
+The gradient is a central difference inside the current brick, using its ghost border, so it needs no extra indirection lookups. Near a brick face the taps are clamped to the border. Differences are measured per finest-level voxel, so a given density ramp has the same edge strength at every LOD, anisotropic ones included. Normals are converted to world axes, so lighting stays correct on anisotropic voxels.
 
 ```wgsl
-let edge = 1.0 - exp2(-length(gradient) * edgeGain);
+let edge = 1.0 - exp2(-length(gradient) * edgeGain);                 // 0 in flat regions, 1 at sharp boundaries
 opacity *= mix(1.0, edge, gradientOpacity);                          // boundary emphasis
-rgb = mix(rgb, shadeTwoSided(normal, -rayDir, rgb), shading * edge); // headlight shading
+rgb = mix(rgb, shadeTwoSided(normal, -rayDir, rgb), shading * edge); // light at the camera, diffuse |N·L|
 ```
 
-Weighting the shading by edge strength keeps noisy, homogeneous regions from turning into speckle. The light sits at the camera, and the diffuse term uses `|N·L|` because rays see boundaries from both sides. Samples that would add less than 0.2 % to the pixel skip the gradient unless boundary emphasis is on.
+Weighting shading by edge strength keeps noisy homogeneous regions from turning into speckle. Samples that would add less than 0.2 % to the pixel skip the gradient unless boundary emphasis is on.
 
-`shading` (default 0) and `gradientOpacity` (default 0) are renderer properties and viewer options; the demo exposes them as **Shading** and **Boundaries**, and as the `shade` and `boundary` URL parameters. Both effects are opt-in; existing links retain their unshaded appearance. Compare `shade=0` and `shade=1` with `bench=1` on your hardware before enabling shading by default. Multichannel DVR is not shaded yet.
+## Multichannel
 
-The manual WebGPU regression at `test/dvr-gradient.html` checks a linear density ramp across isotropic and anisotropic LODs, including both ghost-border faces, and verifies the lighting normal. Serve the repository root with Vite (`configFile: false`, `optimizeDeps.entries: ['test/dvr-gradient.html']`) and open that page. It is separate from the Vitest suite.
-
-## Multichannel compositing
-
-For multichannel datasets (up to 4 channels), the rendering pipeline switches from transfer-function-based compositing to **additive per-channel blending**. Each channel is sampled from its own atlas texture, windowed independently, and coloured with a user-defined colour. The weighted contributions are summed:
+Each channel is sampled from its own atlas, windowed, and weighted by its colour; the results are summed. There is no transfer function.
 
 ```wgsl
-// Per-channel: sample atlas, apply windowing, weight by channel colour
 for (var ch = 0u; ch < numChannels; ch++) {
-    let density = sampleAtlas(atlasTextures[ch], ...);
-    let windowed = applyWindow(density, channelCenter[ch], channelWidth[ch]);
+    let windowed = applyWindow(sampleAtlas(atlasTextures[ch], ...), channelCenter[ch], channelWidth[ch]);
     channelColor += channelColors[ch].rgb * windowed * channelColors[ch].a;
     maxDensity = max(maxDensity, windowed);
 }
-
-// Composite the additive result into the ray
 composeSampleAdditive(channelColor, maxDensity, ...);
 ```
 
-The `composeSampleAdditive` function normalises the summed colour by the maximum density to avoid over-brightening, then applies front-to-back compositing (DVR) or tracks per-channel maximums (MIP).
-
-Transfer functions are not used in multichannel mode. See [Multichannel](/rendering/multichannel) for per-mode behaviour and API details.
+`composeSampleAdditive` divides the sum by `maxDensity` to avoid over-brightening and takes the opacity from `maxDensity`. MIP keeps a maximum per channel instead. See [Multichannel](/rendering/multichannel).

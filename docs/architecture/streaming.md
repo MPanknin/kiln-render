@@ -29,6 +29,8 @@ const traverse = (bx, by, bz, lod) => {
 
 While the camera moves, the set is still recomputed so stale requests are cancelled, but new requests wait until the interaction ends.
 
+With several views (`KilnEngine.addView()`) the set is the union over the views: each is traversed with its own camera, a brick that more than one view needs is queued once at its nearest distance, and new requests wait while any view moves.
+
 ## Base load
 
 The coarsest level is loaded completely and pinned before any refinement. Its order is tuned for time to first image:
@@ -58,7 +60,7 @@ Frustum culling keeps bricks hidden behind opaque material or outside the clip b
 2. The renderer reads the bits back every 4 frames, and once more when accumulation converges.
 3. Bricks finer than the base level are desired only if a ray entered one of their cells within the last 16 rendered frames. Counting frames rather than time means a converged, idle image keeps what it showed.
 
-The base level is never skipped. Slice mode marches no rays and turns guidance off. The stats panel and `?bench=1` report how many bricks were skipped; the savings are largest in views that refine deep into the finest levels.
+The base level is never skipped. Slice mode marches no rays and turns guidance off. Each view keeps its own visibility, so a view in slice mode turns guidance off only for itself. The stats panel and `?bench=1` report how many bricks were skipped; the savings are largest in views that refine deep into the finest levels.
 
 ## Request scheduling
 

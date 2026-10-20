@@ -32,6 +32,19 @@ const RESET_MAX_WAIT_MS = 250;
 // bricks own the link; 2 keeps tiny two-brick base levels from serialising.
 const BASE_RAMP_START = 2;
 
+/** Ray guidance of one view: what its rays reached, and whether it marches rays at all. */
+interface RayView {
+  visibility: RayVisibility;
+  active: boolean;
+}
+
+/** One view, or one per pane of a multi-view layout. */
+type ViewInput = ViewParams | readonly ViewParams[];
+
+function asViews(view: ViewInput): readonly ViewParams[] {
+  return 'proj' in view ? [view] : view;
+}
+
 export interface BrickRequest {
   lod: number;
   bx: number;
@@ -231,16 +244,16 @@ export class StreamingManager {
     rayCulledCount: 0,
   };
 
-  // Ray-guided brick selection: null when off (?rayguide=0)
-  private rayVisibility: RayVisibility | null = null;
-  private rayGuidanceActive = true;
+  // Ray-guided brick selection, one entry per view (created on first use); off with ?rayguide=0
+  private rayGuided = false;
+  private rayViews: RayView[] = [];
 
   // Throttle updates (don't recompute every frame)
   private lastUpdateFrame = -1;
   private updateInterval = 10; // frames between full updates
 
-  // Camera movement detection
-  private lastCameraPos: [number, number, number] = [0, 0, 0];
+  // Camera movement detection, one position per view
+  private lastCameraPos: Array<[number, number, number]> = [];
   private cameraStillFrames = 0;
   private cameraMovementThreshold = 0.001; // Min movement to consider "moving"
   private cameraStillThreshold = 5; // Frames of stillness before re-prioritizing
@@ -802,22 +815,15 @@ export class StreamingManager {
    * Main update loop - call every frame
    * Returns true if any work was done
    */
-  update(view: ViewParams): void {
+  update(view: ViewInput): void {
     if (this.disposed) return;
     this.frameCount++;
-
-    const cameraPos: [number, number, number] = [
-      view.position[0]!,
-      view.position[1]!,
-      view.position[2]!,
-    ];
+    const views = asViews(view);
 
     // Detect camera movement
-    const cameraMoved = this.hasCameraMoved(cameraPos);
-
-    if (cameraMoved) {
+    if (this.camerasMoved(views)) {
       this.cameraStillFrames = 0;
-      this.lastCameraPos = cameraPos;
+      this.lastCameraPos = views.map(v => [v.position[0]!, v.position[1]!, v.position[2]!]);
     } else {
       this.cameraStillFrames++;
     }
@@ -840,62 +846,78 @@ export class StreamingManager {
 
     if (regularUpdate || cameraJustStopped) {
       this.lastUpdateFrame = this.frameCount;
-      this.computeDesiredSet(view);
+      this.computeDesiredSet(views);
     }
 
     // Gate new dispatches during interaction — keep recomputing the desired
     // set (so cancellation stays fresh) but don't start new loads that will
     // likely be stale in 100ms. Stream full detail when the camera settles.
-    if (view.interacting !== true) {
+    if (!views.some(v => v.interacting === true)) {
       this.processLoadQueue();
     }
   }
 
-  /**
-   * Check if camera has moved significantly
-   */
-  private hasCameraMoved(currentPos: [number, number, number]): boolean {
-    const dx = currentPos[0] - this.lastCameraPos[0];
-    const dy = currentPos[1] - this.lastCameraPos[1];
-    const dz = currentPos[2] - this.lastCameraPos[2];
-    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    return dist > this.cameraMovementThreshold;
+  /** Whether any view's camera moved significantly, or a view was added or removed. */
+  private camerasMoved(views: readonly ViewParams[]): boolean {
+    if (views.length !== this.lastCameraPos.length) return true;
+    return views.some((view, i) => {
+      const last = this.lastCameraPos[i]!;
+      const dx = view.position[0]! - last[0];
+      const dy = view.position[1]! - last[1];
+      const dz = view.position[2]! - last[2];
+      return Math.sqrt(dx * dx + dy * dy + dz * dz) > this.cameraMovementThreshold;
+    });
   }
 
   /** Ray-guided brick selection: only bricks that rays actually reach get refined. */
   enableRayGuidance(): void {
-    this.rayVisibility = new RayVisibility(this.config.datasetGrid);
+    this.rayGuided = true;
+    this.rayViews = [];
   }
 
-  /** One visibility readback from the renderer, covering `frames` frames: bit i set ⇔ a ray entered finest-level cell i. */
-  reportRayVisibility(bits: Uint32Array, frames = 1): void {
-    if (this.rayGuidanceActive) this.rayVisibility?.report(bits, frames);
+  /** Ray guidance state of view `view`; null when guidance is off. */
+  private rayView(view: number): RayView | null {
+    if (!this.rayGuided) return null;
+    return this.rayViews[view] ??= { visibility: new RayVisibility(this.config.datasetGrid), active: true };
+  }
+
+  /** One visibility readback from view `view`'s renderer, covering `frames` frames: bit i set ⇔ a ray entered finest-level cell i. */
+  reportRayVisibility(bits: Uint32Array, frames = 1, view = 0): void {
+    const rv = this.rayView(view);
+    if (rv?.active) rv.visibility.report(bits, frames);
   }
 
   /** Rays are only marched in the volume modes; slice planes may sample any brick. */
-  setRayGuidanceActive(active: boolean): void {
-    if (active === this.rayGuidanceActive) return;
-    this.rayGuidanceActive = active;
-    this.rayVisibility?.reset();
+  setRayGuidanceActive(active: boolean, view = 0): void {
+    const rv = this.rayView(view);
+    if (!rv || active === rv.active) return;
+    rv.active = active;
+    rv.visibility.reset();
   }
 
-  /** Whether ray guidance leaves out this brick: below the pinned base level and not reached by a ray lately. */
-  private rayCulls(bx: number, by: number, bz: number, lod: number): boolean {
-    const visibility = this.rayVisibility;
-    if (!visibility || !this.rayGuidanceActive || lod >= this.maxLod) return false;
+  /** Forget the state of view `view`; later views move down one index. */
+  removeView(view: number): void {
+    this.rayViews.splice(view, 1);
+    this.lastCameraPos.splice(view, 1);
+  }
+
+  /** Whether view `view`'s ray guidance leaves out this brick: below the pinned base level and not reached by its rays lately. */
+  private rayCulls(bx: number, by: number, bz: number, lod: number, view = 0): boolean {
+    const rv = this.rayView(view);
+    if (!rv || !rv.active || lod >= this.maxLod) return false;
     // Until the first readback arrives, wait rather than load bricks blind
-    if (!visibility.ready) return true;
+    if (!rv.visibility.ready) return true;
     const span = this.config.levelSpanCells(lod);
-    return !visibility.anySeen([bx * span[0], by * span[1], bz * span[2]], span);
+    return !rv.visibility.anySeen([bx * span[0], by * span[1], bz * span[2]], span);
   }
 
   /**
    * Force immediate recomputation of desired set
    */
-  forceUpdate(view: ViewParams): void {
+  forceUpdate(view: ViewInput): void {
     if (this.disposed) return;
     this.lastUpdateFrame = this.frameCount;
-    this.computeDesiredSet(view);
+    this.computeDesiredSet(asViews(view));
   }
 
   /**
@@ -1022,31 +1044,24 @@ export class StreamingManager {
 
   /**
    * Compute the desired set of bricks based on camera position and frustum
-   * Uses Screen-Space Error (SSE) for LOD selection
+   * Uses Screen-Space Error (SSE) for LOD selection. With several views it is
+   * the union of each view's set, at the nearest distance any view sees a brick.
    */
-  private computeDesiredSet(view: ViewParams): void {
-    const cameraPos: [number, number, number] = [
-      view.position[0]!,
-      view.position[1]!,
-      view.position[2]!,
-    ];
-
+  private computeDesiredSet(views: readonly ViewParams[]): void {
     // a fresh desired set is the retry point for refused allocations.
     this.allocationStalled = false;
 
-    // Get frustum planes
-    const viewProj = mat4.multiply(view.proj, view.view);
-    const frustum = extractFrustumPlanes(viewProj);
-
-    // projectionFactor targets full viewport resolution — LOD selection pre-loads
-    // fine bricks during interaction; dispatch gating prevents wasted loads.
-    this.projectionFactor = view.height / (2 * Math.tan(view.fovY / 2));
+    // The view being traversed; set per view below
+    let viewIndex = 0;
+    let cameraPos: [number, number, number] = [0, 0, 0];
+    let frustum = extractFrustumPlanes(mat4.identity());
 
     // Get LOD range from metadata
     const maxLod = this.maxLod;
 
-    // Desired bricks from traversal
+    // Desired bricks from traversal, each key once
     const desiredBricks: BrickRequest[] = [];
+    const desiredIndex = new Map<string, number>();
 
     // Recursive traversal function
     const traverse = (bx: number, by: number, bz: number, lod: number): void => {
@@ -1122,7 +1137,7 @@ export class StreamingManager {
     };
 
     // Helper to add a brick to desired set
-    let rayCulled = 0;
+    const rayCulledKeys = new Set<string>();
     this.addDesiredBrick = (bricks: BrickRequest[], bx: number, by: number, bz: number, lod: number, dist: number) => {
       const key = `lod${lod}:${bz}/${by}/${bx}`;
 
@@ -1131,26 +1146,45 @@ export class StreamingManager {
         return;
       }
 
-      if (this.rayCulls(bx, by, bz, lod)) {
-        rayCulled++;
+      if (this.rayCulls(bx, by, bz, lod, viewIndex)) {
+        rayCulledKeys.add(key);
         return;
       }
 
+      const existing = desiredIndex.get(key);
+      if (existing !== undefined) {
+        bricks[existing]!.distance = Math.min(bricks[existing]!.distance, dist);
+        return;
+      }
+      desiredIndex.set(key, bricks.length);
       bricks.push({ lod, bx, by, bz, distance: dist, key });
     };
 
-    // Start from coarsest LOD
-    const rootLevel = this.levelsByLod[maxLod];
-    if (rootLevel) {
-      const [gridX, gridY, gridZ] = rootLevel.brickGrid;
-      for (let bz = 0; bz < gridZ; bz++) {
-        for (let by = 0; by < gridY; by++) {
-          for (let bx = 0; bx < gridX; bx++) {
-            traverse(bx, by, bz, maxLod);
+    for (const [index, view] of views.entries()) {
+      viewIndex = index;
+      cameraPos = [view.position[0]!, view.position[1]!, view.position[2]!];
+      frustum = extractFrustumPlanes(mat4.multiply(view.proj, view.view));
+
+      // projectionFactor targets full viewport resolution — LOD selection pre-loads
+      // fine bricks during interaction; dispatch gating prevents wasted loads.
+      this.projectionFactor = view.height / (2 * Math.tan(view.fovY / 2));
+
+      // Start from coarsest LOD
+      const rootLevel = this.levelsByLod[maxLod];
+      if (rootLevel) {
+        const [gridX, gridY, gridZ] = rootLevel.brickGrid;
+        for (let bz = 0; bz < gridZ; bz++) {
+          for (let by = 0; by < gridY; by++) {
+            for (let bx = 0; bx < gridX; bx++) {
+              traverse(bx, by, bz, maxLod);
+            }
           }
         }
       }
     }
+    // Culled in one view but desired by another: not left out
+    let rayCulled = 0;
+    for (const key of rayCulledKeys) if (!desiredIndex.has(key)) rayCulled++;
 
     // Update desired keys set (used for stale check)
     this.desiredKeys.clear();

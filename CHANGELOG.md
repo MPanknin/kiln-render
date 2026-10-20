@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `StreamingManager.getChannelHistogram(channel, bins)`: the value distribution of a channel over the loaded base level.
 - `?bench=1` reports how much of the downloaded chunk payload data (excluding shared shard indexes) came from chunks that only the one-voxel brick border needed.
 - Ray-guided brick selection, on by default: rays mark the brick cells they enter, and bricks no ray reached (behind opaque material, outside the clip box) are not streamed. In DVR views that refine deeply it cut time to converge by 24–41 % and downloads by 32–47 %. `?rayguide=0` turns it off. The stats panel and `?bench=1` report how many bricks it left out.
+- Several views of one dataset, for example the panes of a multi-view layout: `KilnEngine.addView()`, `updateViews()` and `render(colorView, view, index)`. The views share the atlas and the stream, which loads what any of them needs. Each has its own camera, render mode and accumulation; the other display settings follow view 0.
 - Opt-in, LOD-consistent gradient shading in single-channel DVR, and optional boundary emphasis, where opacity follows the gradient magnitude. Set them with the `shading` and `gradientOpacity` options, the **Shading** and **Boundaries** sliders, or the `shade` and `boundary` URL parameters.
 
 ### Changed

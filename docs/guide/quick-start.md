@@ -93,3 +93,22 @@ requestAnimationFrame(frame);
 ```
 
 `update()` advances streaming and returns `true` when a frame is needed. `engine.dispose()` frees the engine's resources; the device stays yours.
+
+### Several views
+
+One engine can render several views of the dataset, for example the panes of a multi-view layout. They share the atlas and the stream; each has its own camera, render mode and accumulation, and every other display setting follows view 0.
+
+```typescript
+const side = engine.addView(); // 1; render it into another canvas configured with the same device
+engine.setSize(sideWidth, sideHeight, side);
+engine.getRenderer(side).volumeRenderMode = 'mip'; // later changes also call resetAccumulation()
+
+function frame() {
+  const [drawMain, drawSide] = engine.updateViews([mainView, sideView]);
+  if (drawMain) engine.render(mainContext.getCurrentTexture().createView(), mainView);
+  if (drawSide) engine.render(sideContext.getCurrentTexture().createView(), sideView, side);
+  requestAnimationFrame(frame);
+}
+```
+
+`removeView(index)` drops a view; later views move down one index.

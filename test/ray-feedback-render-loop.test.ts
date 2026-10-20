@@ -16,7 +16,7 @@ function harness({ taa = false, enabled = true } = {}) {
   const manager: any = Object.create(StreamingManager.prototype);
   Object.assign(manager, {
     config: { datasetGrid: [4, 4, 4], levelSpanCells: (lod: number) => [2 ** lod, 2 ** lod, 2 ** lod] },
-    maxLod: 2, rayGuidanceActive: true, rayVisibility: null,
+    maxLod: 2,
     update: vi.fn(), milestones: { firstAtlasCommit: null },
   });
   if (enabled) manager.enableRayGuidance();
@@ -80,9 +80,9 @@ function harness({ taa = false, enabled = true } = {}) {
   });
   const engine: any = Object.create(KilnEngine.prototype);
   Object.assign(engine, {
-    _renderer: renderer, _streamingManager: manager, dirty: true,
-    vpScratch: new Float32Array(16), lastVP: mat4.identity(), hasLastVP: true,
-    lastMoveTime: -10000, userRenderScale: 1, interactionRenderScale: 0, firstContentSubmit: null,
+    views: [{ renderer, dirty: true, lastVP: mat4.identity(), hasLastVP: true, lastMoveTime: -10000, width: 8, height: 8 }],
+    _streamingManager: manager, vpScratch: new Float32Array(16),
+    userRenderScale: 1, interactionRenderScale: 0, firstContentSubmit: null,
   });
   renderer.onDirty = () => engine.markDirty();
   const view = { proj: mat4.identity(), view: mat4.identity(), position: [0, 0, 2], interacting: false };
@@ -225,7 +225,7 @@ describe('ray feedback when rendering goes idle', () => {
     h.manager.setRayGuidanceActive(false);
     await h.completeMap();
     expect(h.copy).toHaveBeenCalledOnce();
-    expect(h.manager.rayVisibility.ready).toBe(false);
+    expect(h.manager.rayViews[0].visibility.ready).toBe(false);
   });
 
   it.each([false, true])('does not deliver or drain feedback after disposal (map rejected: %s)', async (reject) => {

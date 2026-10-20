@@ -8,8 +8,8 @@ const grid: [number, number, number] = [4, 4, 4];
 function manager(): any {
   const m = Object.create(StreamingManager.prototype) as any;
   m.maxLod = 2;
-  m.rayGuidanceActive = true;
-  m.rayVisibility = null;
+  m.rayGuided = false;
+  m.rayViews = [];
   m.config = { datasetGrid: grid, levelSpanCells: (lod: number) => [2 ** lod, 2 ** lod, 2 ** lod] };
   return m;
 }

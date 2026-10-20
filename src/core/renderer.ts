@@ -15,6 +15,14 @@ import { RayVisibility } from '../streaming/ray-visibility.js';
 // Batch ray visibility while rendering continues; always flush the final frame before going idle.
 const RAY_READBACK_INTERVAL = 4;
 
+// Display settings that the views of a multi-view layout share (all but the render mode)
+const LOOK_SCALARS = [
+  'useIndirection', 'showWireframe', 'densityScale', 'shading', 'gradientOpacity', 'showAxis',
+  'enableJitter', 'enableTAA', 'isoValue', 'windowCenter', 'windowWidth', 'floatMin', 'floatMax',
+  'texelScale', 'texelBias', 'sliceX', 'sliceY', 'sliceZ', 'showSliceX', 'showSliceY', 'showSliceZ',
+] as const;
+const LOOK_ARRAYS = ['clipMin', 'clipMax', 'channelColors', 'channelWindowCenter', 'channelWindowWidth'] as const;
+
 // Volume render mode (shader-side)
 export type VolumeRenderMode = 'dvr' | 'mip' | 'iso' | 'lod' | 'slice' | 'slice-lod';
 
@@ -423,6 +431,28 @@ export class Renderer {
       set.accumFrameCount = 0;
     }
     this.onDirty?.();
+  }
+
+  /**
+   * Copy the shared display settings of `src` (everything but the render mode) into this
+   * renderer. Returns true if anything changed; the caller then resets accumulation.
+   */
+  syncLook(src: Renderer): boolean {
+    let changed = false;
+    const dst = this as Record<(typeof LOOK_SCALARS)[number], unknown>;
+    for (const key of LOOK_SCALARS) {
+      if (dst[key] !== src[key]) {
+        dst[key] = src[key];
+        changed = true;
+      }
+    }
+    for (const key of LOOK_ARRAYS) {
+      if (this[key].some((v, i) => v !== src[key][i])) {
+        this[key].set(src[key]);
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   /** Whether the image is stable (no further rendering will change the output) */

@@ -9,7 +9,7 @@ describe('engine channel-count changes', () => {
     engine.metadata = { sourceChannels: [0, 1, 2, 3], numChannels: 4, timepoint: 0, bitDepth: 8 };
     engine.config = {};
     engine.gpu = { bitDepth: 8 };
-    engine._renderer = { numChannels: 4, resetAccumulation: vi.fn() };
+    engine.views = [{ renderer: { numChannels: 4, resetAccumulation: vi.fn() } }];
     engine.dataProvider = {
       setSourceSelection: (selection: SourceSelection) => {
         engine.metadata.sourceChannels = [...selection.sourceChannels!];
@@ -17,7 +17,7 @@ describe('engine channel-count changes', () => {
       },
     };
     engine.rebuildGpu = vi.fn(() => {
-      engine._renderer = { numChannels: engine.metadata.numChannels, resetAccumulation: vi.fn() };
+      engine.views[0].renderer = { numChannels: engine.metadata.numChannels, resetAccumulation: vi.fn() };
     });
 
     engine.setSourceSelection({ sourceChannels: remaining });
@@ -32,7 +32,7 @@ describe('engine channel-count changes', () => {
   it('keeps an identical selection as a no-op', () => {
     const engine = Object.create(KilnEngine.prototype) as any;
     engine.metadata = { sourceChannels: [0, 1], numChannels: 2, timepoint: 0 };
-    engine._renderer = { numChannels: 2 };
+    engine.views = [{ renderer: { numChannels: 2 } }];
     engine.dataProvider = { setSourceSelection: vi.fn() };
     engine.rebuildGpu = vi.fn();
 

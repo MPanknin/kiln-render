@@ -142,6 +142,19 @@ function levelModel(policy: PyramidPolicy, metadata: VolumeMetadata): PyramidLev
   return policy === 'native' ? metadata.pyramid : undefined;
 }
 
+/** One output of the engine: its renderer (render mode, accumulation) and camera tracking. */
+class EngineView {
+  readonly lastVP = new Float32Array(16);
+  hasLastVP = false;
+  lastMoveTime = 0;
+  dirty = true;
+  width = 0;
+  height = 0;
+  /** Transfer function version this view last accumulated with (views other than 0). */
+  tfVersion = 0;
+  constructor(public renderer: Renderer) {}
+}
+
 /** What the atlas and renderer are built from, besides the channel count. */
 interface GpuSetup {
   outputFormat: GPUTextureFormat;
@@ -161,10 +174,11 @@ export class KilnEngine {
   readonly config: DatasetConfig;
 
   // Replaced by setSourceSelection() when the channel count changes: read them per use, don't cache.
-  private _renderer: Renderer;
+  private readonly views: EngineView[];
   private _resources: VolumeResources;
   private _streamingManager: StreamingManager;
-  get renderer(): Renderer { return this._renderer; }
+  /** View 0's renderer; its display settings (all but the render mode) are shared by every view. */
+  get renderer(): Renderer { return this.views[0]!.renderer; }
   get resources(): VolumeResources { return this._resources; }
   get streamingManager(): StreamingManager { return this._streamingManager; }
 
@@ -176,15 +190,9 @@ export class KilnEngine {
 
   /** User-intended render scale; update() may temporarily override it during interaction. */
   private userRenderScale: number;
-  private dirty = true;
   private disposed = false;
-  private width = 0;
-  private height = 0;
 
   private readonly vpScratch = new Float32Array(16);
-  private readonly lastVP = new Float32Array(16);
-  private hasLastVP = false;
-  private lastMoveTime = 0;
 
   private readonly gpu: GpuSetup;
   private readonly setupMilestones: SetupMilestones;
@@ -204,7 +212,7 @@ export class KilnEngine {
   ) {
     this.setupMilestones = setupMilestones;
     this.device = device;
-    this._renderer = renderer;
+    this.views = [new EngineView(renderer)];
     this._resources = resources;
     this.transferFunction = transferFunction;
     this.dataProvider = dataProvider;
@@ -212,7 +220,7 @@ export class KilnEngine {
     this.config = config;
     this.gpu = gpu;
     this.userRenderScale = renderer.renderScale;
-    this._streamingManager = this.attachStreaming(renderer, resources);
+    this._streamingManager = this.attachStreaming(resources);
   }
 
   /**
@@ -438,33 +446,58 @@ export class KilnEngine {
     console.log(`[Kiln] atlas grid ${gridSize}³ (${atlasSize}³ voxels) × ${metadata.numChannels} channel(s) ≈ ${atlasVramMB} MB VRAM`);
 
     const resources = new VolumeResources(device, gpu.bitDepth, gpu.textureFormat, config, metadata.numChannels, gridSize);
+    const renderer = KilnEngine.buildRenderer(device, metadata, config, gpu, resources);
+    return { resources, renderer };
+  }
+
+  /** A renderer that samples `resources`. */
+  private static buildRenderer(
+    device: GPUDevice, metadata: VolumeMetadata, config: DatasetConfig, gpu: GpuSetup, resources: VolumeResources,
+  ): Renderer {
     const renderer = new Renderer(device, gpu.outputFormat, resources, config, gpu.rayGuided);
     // uint16 on r16float is stored as value - offset; map texels back to value / 65535
     if (gpu.textureFormat === 'r16float' && !metadata.isFloat) {
       renderer.texelScale = 65535;
       renderer.texelBias = -UINT16_FLOAT16_OFFSET;
     }
-    return { resources, renderer };
+    return renderer;
   }
 
-  /** Start streaming into `resources`; derived ranges flow back into the renderer. */
-  private attachStreaming(renderer: Renderer, resources: VolumeResources): StreamingManager {
-    renderer.onDirty = () => { this.dirty = true; };
+  /** Renderer for a view other than 0: same atlas and transfer function, view 0's look. */
+  private buildViewRenderer(mode: VolumeRenderMode): Renderer {
+    const renderer = KilnEngine.buildRenderer(this.device, this.metadata, this.config, this.gpu, this._resources);
+    renderer.setTransferFunction(this.transferFunction);
+    renderer.syncLook(this.renderer);
+    renderer.volumeRenderMode = mode;
+    renderer.renderScale = this.userRenderScale;
+    return renderer;
+  }
+
+  /** Redraw requests and ray visibility of a view's renderer. */
+  private wireView(view: EngineView): void {
+    view.renderer.onDirty = () => { view.dirty = true; };
+    if (view.renderer.rayGuided) {
+      view.renderer.onRayVisibility = (bits, frames) =>
+        this._streamingManager.reportRayVisibility(bits, frames, this.views.indexOf(view));
+    }
+  }
+
+  /** Start streaming into `resources` for every view; derived ranges flow back into view 0's renderer. */
+  private attachStreaming(resources: VolumeResources): StreamingManager {
+    for (const view of this.views) this.wireView(view);
     const streamingManager = new StreamingManager(
       resources,
       this.dataProvider,
       this.metadata,
       this.device,
       this.config,
-      () => renderer.resetAccumulation(),
-      visibleChannelMask(renderer),
+      () => { for (const view of this.views) view.renderer.resetAccumulation(); },
+      visibleChannelMask(this.renderer),
     );
-    if (renderer.rayGuided) {
-      streamingManager.enableRayGuidance();
-      renderer.onRayVisibility = (bits, frames) => streamingManager.reportRayVisibility(bits, frames);
-    }
+    if (this.gpu.rayGuided) streamingManager.enableRayGuidance();
     // When base LOD derives float/channel ranges, update renderer + metadata.
     streamingManager.setRangesDerivedCallback((opts) => {
+      const renderer = this.renderer;
       if (opts.dataRange) {
         renderer.floatMin = opts.dataRange[0];
         renderer.floatMax = opts.dataRange[1];
@@ -495,7 +528,7 @@ export class KilnEngine {
     // A different channel count resizes the atlas: reject it before anything changes.
     const nextCount = selection.sourceChannels?.length ?? Math.min(4, this.metadata.sourceChannelCount ?? this.metadata.numChannels);
     // Fewer channels never shrink the atlas, so only a growing selection can stop fitting.
-    if (nextCount > this._renderer.numChannels && nextCount <= 4) {
+    if (nextCount > this.renderer.numChannels && nextCount <= 4) {
       KilnEngine.assertBaseFits(this.metadata, nextCount, this.gpu);
     }
     this.dataProvider.setSourceSelection(selection); // validates first; throws without changing anything
@@ -504,36 +537,36 @@ export class KilnEngine {
     let changedChannels = 0;
     sourceChannels.forEach((c, slot) => { if (c !== before[slot]) changedChannels |= 1 << slot; });
     const stale = timepoint !== beforeTimepoint ? (1 << numChannels) - 1 : changedChannels;
-    if (!stale && numChannels === this._renderer.numChannels) return;
+    if (!stale && numChannels === this.renderer.numChannels) return;
 
     this.config.emptyBrickThreshold = emptyThresholdFor(this.metadata);
-    if (numChannels !== this._renderer.numChannels) {
+    if (numChannels !== this.renderer.numChannels) {
       this.rebuildGpu(changedChannels);
     } else {
-      applyChannelDefaults(this._renderer, this.metadata, changedChannels, this.gpu.bitDepth);
+      applyChannelDefaults(this.renderer, this.metadata, changedChannels, this.gpu.bitDepth);
       if (this.metadata.isFloat && this.metadata.dataRange) {
-        this._renderer.floatMin = this.metadata.dataRange[0];
-        this._renderer.floatMax = this.metadata.dataRange[1];
+        this.renderer.floatMin = this.metadata.dataRange[0];
+        this.renderer.floatMax = this.metadata.dataRange[1];
       }
-      this._streamingManager.setVisibleChannels(visibleChannelMask(this._renderer));
+      this._streamingManager.setVisibleChannels(visibleChannelMask(this.renderer));
       this._streamingManager.reload(stale);
     }
-    this._renderer.resetAccumulation();
-    this.dirty = true;
+    this.renderer.resetAccumulation();
+    this.markDirty();
   }
 
-  /** New atlas + renderer for the current channel count; display state carries over, streaming restarts. */
+  /** New atlas + renderers for the current channel count; display state carries over, streaming restarts. */
   private rebuildGpu(changedChannels: number): void {
     KilnEngine.assertBaseFits(this.metadata, this.metadata.numChannels, this.gpu); // before tearing anything down
-    const old = this._renderer;
+    const old = this.renderer;
     const { maxPixelError } = this._streamingManager;
     this._streamingManager.dispose();
-    old.dispose();
+    for (const view of this.views) view.renderer.dispose();
     this._resources.dispose();
 
     const { resources, renderer } = KilnEngine.buildGpu(this.device, this.metadata, this.config, this.gpu);
     this._resources = resources;
-    this._renderer = renderer;
+    this.views[0]!.renderer = renderer;
 
     // Per-slot display state: kept where the channel stayed, metadata defaults where it changed.
     renderer.channelColors.set(old.channelColors);
@@ -564,9 +597,10 @@ export class KilnEngine {
     renderer.showAxis = old.showAxis;
     renderer.setTransferFunction(this.transferFunction);
     renderer.renderScale = this.userRenderScale;
-    if (this.width > 0) this.setSize(this.width, this.height);
+    for (const view of this.views.slice(1)) view.renderer = this.buildViewRenderer(view.renderer.volumeRenderMode);
+    this.views.forEach((view, i) => { if (view.width > 0) this.setSize(view.width, view.height, i); });
 
-    this._streamingManager = this.attachStreaming(renderer, resources);
+    this._streamingManager = this.attachStreaming(resources);
     this._streamingManager.maxPixelError = maxPixelError;
   }
 
@@ -575,23 +609,56 @@ export class KilnEngine {
   set renderScale(value: number) {
     this.userRenderScale = value;
     // build the scale set now (off the gesture path) and re-render
-    this.renderer.prepareScale(value);
-    this.dirty = true;
+    for (const view of this.views) view.renderer.prepareScale(value);
+    this.markDirty();
   }
 
-  /** Output size in device pixels. Call whenever the target colour view changes size. */
-  setSize(width: number, height: number): void {
-    this.width = width;
-    this.height = height;
-    this.renderer.resize(width, height);
-    if (this.interactionRenderScale > 0) this.renderer.prepareScale(this.interactionRenderScale);
-    this.renderer.prepareScale(this.userRenderScale);
-    this.dirty = true;
+  /** Number of views: 1, plus one per addView(). */
+  get viewCount(): number { return this.views.length; }
+
+  /** Renderer of view `view`. Set its `volumeRenderMode` per view; other display settings follow view 0. */
+  getRenderer(view = 0): Renderer {
+    const v = this.views[view];
+    if (!v) throw new RangeError(`No view ${view}`);
+    return v.renderer;
+  }
+
+  /**
+   * Add a view of the same data, e.g. one pane of a multi-view layout. It streams from the
+   * same atlas and has its own camera (the ViewParams passed for it), render mode and
+   * accumulation; every other display setting follows view 0. Returns its index for
+   * setSize(), updateViews() and render(); call setSize() before rendering it.
+   */
+  addView(): number {
+    const view = new EngineView(this.buildViewRenderer(this.renderer.volumeRenderMode));
+    view.tfVersion = this.transferFunction.version;
+    this.views.push(view);
+    this.wireView(view);
+    return this.views.length - 1;
+  }
+
+  /** Remove a view added with addView(); later views move down one index. */
+  removeView(view: number): void {
+    if (view < 1 || view >= this.views.length) throw new RangeError(`No removable view ${view}`);
+    this.views.splice(view, 1)[0]!.renderer.dispose();
+    this._streamingManager.removeView(view);
+  }
+
+  /** Output size of view `view` in device pixels. Call whenever its colour view changes size. */
+  setSize(width: number, height: number, view = 0): void {
+    const v = this.views[view];
+    if (!v) throw new RangeError(`No view ${view}`);
+    v.width = width;
+    v.height = height;
+    v.renderer.resize(width, height);
+    if (this.interactionRenderScale > 0) v.renderer.prepareScale(this.interactionRenderScale);
+    v.renderer.prepareScale(this.userRenderScale);
+    v.dirty = true;
   }
 
   /** Signal that the scene needs a re-render (without resetting accumulation). */
   markDirty(): void {
-    this.dirty = true;
+    for (const view of this.views) view.dirty = true;
   }
 
   /**
@@ -600,49 +667,76 @@ export class KilnEngine {
    * temporal accumulation has not converged yet.
    */
   update(view: ViewParams): boolean {
-    if (this.disposed) return false;
+    return this.updateViews([view])[0]!;
+  }
 
-    mat4.multiply(view.proj, view.view, this.vpScratch);
-    let vpChanged = !this.hasLastVP;
-    if (this.hasLastVP) {
-      for (let i = 0; i < 16; i++) {
-        if (Math.abs(this.vpScratch[i]! - this.lastVP[i]!) > 1e-6) { vpChanged = true; break; }
-      }
-    }
-    this.lastVP.set(this.vpScratch);
-    this.hasLastVP = true;
+  /**
+   * update() for several views: `views[i]` is the camera of view i. Streams what any of
+   * them needs and returns, per view, whether to call render() for it.
+   */
+  updateViews(views: readonly ViewParams[]): boolean[] {
+    if (this.disposed) return views.map(() => false);
+    if (views.length > this.views.length) throw new RangeError(`${views.length} cameras for ${this.views.length} views`);
 
     const now = performance.now();
-    if (vpChanged) {
-      this.lastMoveTime = now;
-      this.dirty = true;
+    const resolved = views.map((view, i) => this.trackView(this.views[i]!, view, now));
+
+    // Views other than 0 follow its display settings and the shared transfer function
+    const primary = this.renderer;
+    for (const view of this.views.slice(1)) {
+      const tfChanged = view.tfVersion !== this.transferFunction.version;
+      if (view.renderer.syncLook(primary) || tfChanged) {
+        view.tfVersion = this.transferFunction.version;
+        view.renderer.resetAccumulation();
+      }
     }
-    const interacting = view.interacting ?? (now - this.lastMoveTime < INTERACTION_HOLD_MS);
-    const resolved: ViewParams = view.interacting === interacting ? view : { ...view, interacting };
+
+    // Always run streaming (may trigger onDirty via resetAccumulation)
+    if (primary.numChannels > 1) this.streamingManager.setVisibleChannels(visibleChannelMask(primary));
+    resolved.forEach((_, i) => this.streamingManager.setRayGuidanceActive(this.views[i]!.renderer.marchesRays, i));
+    this.streamingManager.update(resolved);
+
+    return resolved.map((view, i) => {
+      const v = this.views[i]!;
+      const needsRender = v.dirty || view.interacting === true || !v.renderer.isConverged;
+      if (needsRender) v.dirty = false;
+      return needsRender;
+    });
+  }
+
+  /** Camera tracking of one view: whether it is interacting, and the render scale for that. */
+  private trackView(v: EngineView, view: ViewParams, now: number): ViewParams {
+    mat4.multiply(view.proj, view.view, this.vpScratch);
+    let vpChanged = !v.hasLastVP;
+    if (v.hasLastVP) {
+      for (let i = 0; i < 16; i++) {
+        if (Math.abs(this.vpScratch[i]! - v.lastVP[i]!) > 1e-6) { vpChanged = true; break; }
+      }
+    }
+    v.lastVP.set(this.vpScratch);
+    v.hasLastVP = true;
+
+    if (vpChanged) {
+      v.lastMoveTime = now;
+      v.dirty = true;
+    }
+    const interacting = view.interacting ?? (now - v.lastMoveTime < INTERACTION_HOLD_MS);
 
     // Drop to the interaction scale while the camera moves; restore afterwards
     const targetScale = interacting && this.interactionRenderScale > 0
       ? this.interactionRenderScale
       : this.userRenderScale;
-    if (this.renderer.renderScale !== targetScale) {
-      this.renderer.activateScale(targetScale);
-      this.dirty = true;
+    if (v.renderer.renderScale !== targetScale) {
+      v.renderer.activateScale(targetScale);
+      v.dirty = true;
     }
-
-    // Always run streaming (may trigger onDirty via resetAccumulation)
-    if (this.renderer.numChannels > 1) this.streamingManager.setVisibleChannels(visibleChannelMask(this.renderer));
-    this.streamingManager.setRayGuidanceActive(this.renderer.marchesRays);
-    this.streamingManager.update(resolved);
-
-    const needsRender = this.dirty || interacting || !this.renderer.isConverged;
-    if (needsRender) this.dirty = false;
-    return needsRender;
+    return view.interacting === interacting ? view : { ...view, interacting };
   }
 
-  /** Render the volume for `view` into `colorView` (format = options.outputFormat). */
-  render(colorView: GPUTextureView, view: ViewParams): void {
+  /** Render view `index` (default 0) for camera `view` into `colorView` (format = options.outputFormat). */
+  render(colorView: GPUTextureView, view: ViewParams, index = 0): void {
     if (this.disposed) return;
-    this.renderer.render(colorView, view);
+    this.getRenderer(index).render(colorView, view);
     if (this.firstContentSubmit === null && this.streamingManager.milestones.firstAtlasCommit !== null) {
       this.firstContentSubmit = performance.now();
     }
@@ -668,7 +762,7 @@ export class KilnEngine {
     if (this.disposed) return;
     this.disposed = true;
     this.streamingManager.dispose();
-    this.renderer.dispose();
+    for (const view of this.views) view.renderer.dispose();
     this.transferFunction.dispose();
     this.resources.dispose();
     this.dataProvider.dispose();

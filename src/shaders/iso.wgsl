@@ -17,7 +17,7 @@ fn rayMarchISO(
     // select() is not short-circuiting in WGSL — rand() would run even with jitter off.
     var jitterFrac = 0.0;
     if (uniforms.jitter != 0u) {
-        jitterFrac = rand(rayToSeed(rayDir) + uniforms.frameIndex);
+        jitterFrac = rayJitter(rayDir);
     }
 
     var prevDensity = 0.0;

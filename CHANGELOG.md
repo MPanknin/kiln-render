@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `StreamingManager.getChannelHistogram(channel, bins)`: the value distribution of a channel over the loaded base level.
 - `?bench=1` reports how much of the downloaded chunk payload data (excluding shared shard indexes) came from chunks that only the one-voxel brick border needed.
 - Ray-guided brick selection, on by default: rays mark the brick cells they enter, and bricks no ray reached (behind opaque material, outside the clip box) are not streamed. In DVR views that refine deeply it cut time to converge by 24–41 % and downloads by 32–47 %. `?rayguide=0` turns it off. The stats panel and `?bench=1` report how many bricks it left out.
+- `?softreset=1` (experimental) against woodgrain while bricks refine: a brick commit keeps the accumulated image weighted as four frames instead of restarting from one jittered frame, and jitter is seeded per pixel instead of by ray direction, which parallel rays share.
 - Opt-in, LOD-consistent gradient shading in single-channel DVR, and optional boundary emphasis, where opacity follows the gradient magnitude. Set them with the `shading` and `gradientOpacity` options, the **Shading** and **Boundaries** sliders, or the `shade` and `boundary` URL parameters.
 
 ### Changed

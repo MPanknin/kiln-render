@@ -41,7 +41,7 @@ fn rayMarchMIP(
     // select() is not short-circuiting in WGSL — rand() would run even with jitter off.
     var jitterFrac = 0.0;
     if (uniforms.jitter != 0u) {
-        jitterFrac = rand(rayToSeed(rayDir) + uniforms.frameIndex);
+        jitterFrac = rayJitter(rayDir);
     }
 
     // Single-channel: scalar max. Multi-channel: per-channel max densities.

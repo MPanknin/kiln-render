@@ -60,6 +60,19 @@ ${mipWGSL}
 ${isoWGSL}
 ${lodDebugWGSL}
 
+// The ray's pixel, set by main() for rayJitter()
+var<private> pixelSeed: u32;
+
+// Fraction of a step that offsets the ray's first sample. Mode 2 (?softreset=1) hashes
+// pixel and frame; mode 1 seeds by quantised ray direction, which is identical for
+// parallel rays and repeats along screen lines.
+fn rayJitter(rayDir: vec3f) -> f32 {
+    if (uniforms.jitter == 2u) {
+        return rand(hash(pixelSeed ^ hash(uniforms.frameIndex)));
+    }
+    return rand(rayToSeed(rayDir) + uniforms.frameIndex);
+}
+
 fn rayMarchMode(
     rayOrigin: vec3f, rayDir: vec3f, tStart: f32, tEnd: f32,
     normalizedSize: vec3f, datasetSize: vec3f, renderMode: i32, isoValue: f32,
@@ -107,6 +120,7 @@ fn main(@builtin(global_invocation_id) globalId: vec3u) {
     let screenSize = vec2i(uniforms.screenSize);
 
     if (pixelCoord.x >= screenSize.x || pixelCoord.y >= screenSize.y) { return; }
+    pixelSeed = globalId.x + globalId.y * 65536u;
 
     let ndc = vec2f(
         (f32(pixelCoord.x) + 0.5) / f32(screenSize.x) * 2.0 - 1.0,

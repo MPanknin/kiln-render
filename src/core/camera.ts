@@ -209,7 +209,14 @@ export class Camera {
     canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false });
   }
 
+  /** When false, dragging pans instead of orbiting, e.g. for fixed front, side and top views. */
+  orbitEnabled = true;
+
   private applyOrbit(dx: number, dy: number): void {
+    if (!this.orbitEnabled) {
+      this.applyPan(dx, dy);
+      return;
+    }
     const baseAxis = this.upAxis.replace('-', '');
     const isNegative = this.upAxis.startsWith('-');
     let hSign = baseAxis === 'z' ? 1 : -1;

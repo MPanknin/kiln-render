@@ -111,4 +111,4 @@ function frame() {
 }
 ```
 
-`removeView(index)` drops a view; later views move down one index.
+`removeView(index)` drops a view; later views move down one index. With `KilnViewer`, `viewer.addPane(canvas)` does the wiring: the pane gets its own camera and `mode` and joins the viewer's render loop.

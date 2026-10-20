@@ -24,6 +24,7 @@ import { mountShortcuts, axisSnapShortcut } from '../../shared/shortcuts.js';
 import { mountTopBar } from '../../shared/top-bar.js';
 import { trackEvent, trackDataset, trackRenderMode } from '../../shared/analytics.js';
 import { maybeRunBench } from '../../shared/bench.js';
+import { mountQuadLayout, parsePaneModes } from '../../shared/quad-layout.js';
 import '../../shared/viewer-shell.css';
 import '../../shared/controls/controls.css';
 
@@ -58,6 +59,8 @@ function parseURLParams(): {
   tfPoints?: Array<{ x: number; y: number }>;
   wireframe?: boolean;
   axis?: boolean;
+  quad: boolean;
+  paneModes: ReturnType<typeof parsePaneModes>;
 } {
   const params = new URLSearchParams(window.location.search);
   let cam: [number, number, number] | [number, number, number, number, number, number] | undefined;
@@ -138,6 +141,8 @@ function parseURLParams(): {
     tfPoints,
     wireframe: params.get('wireframe') === '1' ? true : undefined,
     axis: params.get('axis') === '1' ? true : undefined,
+    quad: params.get('layout') === 'quad',
+    paneModes: parsePaneModes(params.get('panes')),
   };
 }
 
@@ -217,6 +222,9 @@ async function main() {
   // Fetch-pattern benchmark — no-op unless ?bench=1 (see examples/shared/bench.ts).
   void maybeRunBench(viewer);
 
+  // ?layout=quad: front, side and top panes around the 3D view
+  const quad = urlParams.quad ? mountQuadLayout(viewer, canvas, urlParams.paneModes, { embed: IS_EMBED }) : null;
+
   // ── UI (skipped in embed mode — rendering + camera interaction only) ───────
 
   if (!IS_EMBED) {
@@ -262,6 +270,11 @@ async function main() {
       }
       if (state.clipMax[0] !== 1 || state.clipMax[1] !== 1 || state.clipMax[2] !== 1) {
         p.set('clipMax', state.clipMax.map(v => v.toFixed(2)).join(','));
+      }
+
+      if (quad) {
+        p.set('layout', 'quad');
+        p.set('panes', quad.modes().join(','));
       }
 
       // Overlays — only emit when non-default (both default to false)

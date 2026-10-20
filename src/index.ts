@@ -3,7 +3,7 @@
 
 // Viewer
 export { KilnViewer } from './viewer.js';
-export type { ViewerOptions, ViewerState } from './viewer.js';
+export type { ViewerOptions, ViewerState, ViewerPane } from './viewer.js';
 
 // Headless engine (bring your own device, camera and frame loop)
 export { KilnEngine } from './engine.js';

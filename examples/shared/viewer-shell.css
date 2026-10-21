@@ -201,6 +201,10 @@ a:focus-visible {
   fill: currentColor;
 }
 
+.toolbar-btn[aria-pressed="true"] {
+  color: var(--accent);
+}
+
 .toolbar-btn.copied {
   background: var(--accent-live);
   color: #fff;

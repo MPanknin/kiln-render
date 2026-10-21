@@ -281,7 +281,8 @@ export class KilnViewer {
     for (const pane of this.panes) pane.context.unconfigure();
   }
 
-  private resize(): void {
+  /** Match every canvas's drawing buffer to its CSS size now; window resizes are followed after 100 ms. */
+  resize(): void {
     this.resizeCanvas(this.canvas, 0);
     this.panes.forEach((pane, i) => this.resizeCanvas(pane.canvas, i + 1));
   }

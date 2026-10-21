@@ -24,7 +24,7 @@ import { mountShortcuts, axisSnapShortcut } from '../../shared/shortcuts.js';
 import { mountTopBar } from '../../shared/top-bar.js';
 import { trackEvent, trackDataset, trackRenderMode } from '../../shared/analytics.js';
 import { maybeRunBench } from '../../shared/bench.js';
-import { mountQuadLayout, parsePaneModes } from '../../shared/quad-layout.js';
+import { mountQuadLayout, mountLayoutButton, parsePaneModes } from '../../shared/quad-layout.js';
 import '../../shared/viewer-shell.css';
 import '../../shared/controls/controls.css';
 
@@ -222,8 +222,8 @@ async function main() {
   // Fetch-pattern benchmark — no-op unless ?bench=1 (see examples/shared/bench.ts).
   void maybeRunBench(viewer);
 
-  // ?layout=quad: front, side and top panes around the 3D view
-  const quad = urlParams.quad ? mountQuadLayout(viewer, canvas, urlParams.paneModes, { embed: IS_EMBED }) : null;
+  // Front, side and top panes around the 3D view: ?layout=quad, the top-bar button or Q
+  const quad = mountQuadLayout(viewer, canvas, { modes: urlParams.paneModes, active: urlParams.quad, embed: IS_EMBED });
 
   // ── UI (skipped in embed mode — rendering + camera interaction only) ───────
 
@@ -236,6 +236,7 @@ async function main() {
     const toast = mountToast();
     const takeScreenshot = setupScreenshotButton(viewer, toast);
     const gizmo = mountOrientationGizmo(viewer.camera);
+    mountLayoutButton(quad);
     mountShortcuts([
       { keys: ['1', '2', '3', '4'], display: '1 – 4', label: 'DVR / MIP / ISO / Slice',
         run: (e) => ui.setBaseMode((['dvr', 'mip', 'iso', 'slice'] as const)[Number(e.key) - 1]!) },
@@ -243,6 +244,7 @@ async function main() {
       axisSnapShortcut((dir) => gizmo.snap(dir)),
       { keys: ['r', 'R'], display: 'R', label: 'Reset view', run: () => gizmo.reset() },
       { keys: ['s', 'S'], display: 'S', label: 'Save screenshot', run: takeScreenshot },
+      { keys: ['q', 'Q'], display: 'Q', label: 'Quad view: front, side, top and 3D', run: () => quad.toggle() },
       { keys: ['d', 'D'], display: 'D', label: 'Diagnostics panel' },
       ...((viewer.metadata.timepointCount ?? 1) > 1 ? timeShortcuts((d) => ui.stepTimepoint(d)) : []),
     ]);
@@ -272,7 +274,7 @@ async function main() {
         p.set('clipMax', state.clipMax.map(v => v.toFixed(2)).join(','));
       }
 
-      if (quad) {
+      if (quad.active) {
         p.set('layout', 'quad');
         p.set('panes', quad.modes().join(','));
       }

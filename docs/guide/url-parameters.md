@@ -24,8 +24,8 @@ The demo viewer reads its state from the URL; **Share** (top right) copies the c
 | `slices` | x,y,z (0–1) | Slice positions (`slice` mode) |
 | `sliceVis` | 0–7 | Visible slice planes as a bitmask (X = 1, Y = 2, Z = 4; default 7) |
 | `wireframe`, `axis` | `1` | Bounding box and axis overlays |
-| `layout` | `quad` | Front, side and top panes around the 3D view (single-channel viewer). The axis panes pan and zoom but don't orbit; the controls set the 3D pane's mode and everything else for all panes |
-| `panes` | modes, e.g. `mip,dvr,slice` | Render modes of the front, side and top panes: `dvr`, `mip`, `iso`, `slice` (default `dvr`) |
+| `layout` | `quad` | Start with front, side and top panes around the 3D view (single-channel viewer; also the grid button in the top bar, or `Q`). The axis panes pan and zoom but don't orbit; the controls set the 3D pane's mode and everything else for all panes |
+| `panes` | modes, e.g. `mip,dvr,slice` | Render modes of the front, side and top panes: `dvr`, `mip`, `iso`, `slice` (default `slice`) |
 
 ```
 ?dataset=https://example.com/scan.ome.zarr&mode=mip&wc=0.2&ww=0.3&tf=coolwarm

@@ -16,8 +16,8 @@ import { LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE } from '../core/config.js';
 import type { DatasetConfig } from '../core/config.js';
 import { writeToCanvas } from '../core/volume.js';
 import type { VolumeCanvas } from '../core/volume.js';
-import { float32ToFloat16Bits, getFloat16ToFloat32Lut, getUint16ToFloat16Lut } from '../utils/float16.js';
-import { createRawHistogram, accumulateRaw, rebinHistogram } from '../core/histogram.js';
+import { float32ToFloat16Bits, getUint16ToFloat16Lut } from '../utils/float16.js';
+import { createRawHistogram, accumulateRaw, rebinHistogram, float16Levels, float16Quantiles } from '../core/histogram.js';
 import type { RawHistogram } from '../core/histogram.js';
 import type { PipelineTimings } from '../data/data-provider.js';
 import { RollingAvg } from '../data/network-tracker.js';
@@ -31,6 +31,21 @@ const RESET_MAX_WAIT_MS = 250;
 // Base-load window starts here and doubles per finished task, so the first
 // bricks own the link; 2 keeps tiny two-brick base levels from serialising.
 const BASE_RAMP_START = 2;
+// Largest finite float16: raw values beyond it are clamped when stored in the atlas
+const FLOAT16_MAX = 65504;
+// Fewer distinct float16 values than this across the display range shows as banding
+const MIN_FLOAT16_LEVELS = 256;
+
+/** Float voxels are stored as float16: say when that clamps values or quantises the range. */
+function warnFloat16Limits(rawMin: number, rawMax: number, range: [number, number]): void {
+  if (rawMin < -FLOAT16_MAX || rawMax > FLOAT16_MAX) {
+    console.warn(`[Kiln] float values reach [${rawMin}, ${rawMax}]; the atlas stores ±${FLOAT16_MAX} at most, so they are clamped`);
+  }
+  const levels = float16Levels(range[0], range[1]);
+  if (levels < MIN_FLOAT16_LEVELS) {
+    console.warn(`[Kiln] float16 storage resolves the data range [${range[0]}, ${range[1]}] in only ${levels} levels`);
+  }
+}
 
 /** Ray guidance of one view: what its rays reached, and whether it marches rays at all. */
 interface RayView {
@@ -459,58 +474,6 @@ export class StreamingManager {
     })).then(() => { if (gen === this.generation) this.onBaseLodLoaded?.(); });
   }
 
-  /**
-   * Derive a percentile-clipped (p0.1 / p99.9) float data range from base-LOD
-   * bricks using a 65536-entry float16 histogram (no per-voxel Math.pow).
-   */
-  private computeFloatPercentileRange(
-    bricks: Uint16Array[],
-    rawMin: number,
-    rawMax: number,
-  ): [number, number] {
-    const range = rawMax - rawMin;
-    if (!(range > 0) || bricks.length === 0) return [rawMin, rawMax];
-
-    const lut = getFloat16ToFloat32Lut();
-
-    const BINS = 65536;
-    const histogram = new Uint32Array(BINS);
-    const invRange = (BINS - 1) / range;
-    let total = 0;
-
-    for (const brick of bricks) {
-      for (let i = 0; i < brick.length; i++) {
-        const v = lut[brick[i]!]!;
-        if (!isFinite(v)) continue;
-        let bin = ((v - rawMin) * invRange) | 0;
-        if (bin < 0) bin = 0;
-        else if (bin >= BINS) bin = BINS - 1;
-        histogram[bin] = (histogram[bin] ?? 0) + 1;
-        total++;
-      }
-    }
-    if (total === 0) return [rawMin, rawMax];
-
-    const loTarget = total * 0.001;
-    const hiTarget = total * 0.999;
-    let lo = rawMin;
-    let hi = rawMax;
-    let count = 0;
-    let loFound = false;
-    for (let b = 0; b < BINS; b++) {
-      count += histogram[b]!;
-      if (!loFound && count > loTarget) {
-        lo = rawMin + (b / BINS) * range;
-        loFound = true;
-      }
-      if (count >= hiTarget) {
-        hi = rawMin + ((b + 1) / BINS) * range;
-        break;
-      }
-    }
-    return lo < hi ? [lo, hi] : [rawMin, rawMax];
-  }
-
   /** Load and pin the coarsest LOD level with bounded concurrency. */
   private async loadBaseLod(): Promise<void> {
     const t0 = performance.now();
@@ -557,7 +520,6 @@ export class StreamingManager {
     let window = Math.min(maxWindow, BASE_RAMP_START);
     console.log(`[Kiln] loadBaseLod: ${bricks.length} bricks × ${loadChannels.length}/${numChannels} channels (window ${window}→${maxWindow})`);
 
-    const allBrickData: (Uint8Array | Uint16Array)[] = [];
     const resolved = new Set<string>(); // bricks that reached resident or empty
     let sumIsEmptyMs = 0, sumFetchMs = 0, sumUploadMs = 0;
 
@@ -663,7 +625,6 @@ export class StreamingManager {
       if (this.milestones.firstBrickDecoded === null) this.milestones.firstBrickDecoded = performance.now();
       accumulateStats(ch, r);
       this.histogramBrick(ch, r.data);
-      if (ch === 0) allBrickData.push(r.data);
       this.brickCache.put(this.cacheKey(ch, key), r.data);
 
       const tUpload = performance.now();
@@ -773,12 +734,14 @@ export class StreamingManager {
     } = {};
 
     if (needsFloatRange && isFinite(floatRangeMin) && isFinite(floatRangeMax) && floatRangeMin < floatRangeMax) {
-      // Percentile-clip (p0.1 / p99.9) using the in-memory base bricks —
-      // absolute per-brick extremes let one hot voxel compress the whole
-      // contrast range. (Falls back to raw extremes if no brick data.)
-      const clipped = allBrickData.length > 0
-        ? this.computeFloatPercentileRange(allBrickData as Uint16Array[], floatRangeMin, floatRangeMax)
-        : ([floatRangeMin, floatRangeMax] as [number, number]);
+      // p0.1 / p99.9 of the stored base level: absolute extremes let one hot voxel
+      // compress the whole contrast range. Falls back to the extremes the atlas can hold.
+      const base = this.baseHistograms[0];
+      const q = base && !base.is8Bit ? float16Quantiles(base.counts, 0.001, 0.999) : null;
+      const clipped: [number, number] = q && q[0] < q[1]
+        ? q
+        : [Math.max(floatRangeMin, -FLOAT16_MAX), Math.min(floatRangeMax, FLOAT16_MAX)];
+      warnFloat16Limits(floatRangeMin, floatRangeMax, clipped);
       derivedRanges.dataRange = clipped;
       this.metadata.dataRange = clipped;
       // Update workers so future brick stats use the real range

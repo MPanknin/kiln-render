@@ -24,7 +24,7 @@ Any URL that doesn't serve a sharded binary `volume.json` is read as OME-Zarr, s
 |--------|--------------|---------------|
 | `uint8` | `r8unorm` | type range |
 | `uint16` | `r16unorm` (bit-exact) where the GPU [supports it](/reference/webgpu), else `r16float` (exact up to 4096, i.e. 12-bit data) | type range |
-| `int16`, `float32` | `r16float` (half precision) | data range: OMERO window, else the 0.1–99.9th percentile of the coarsest level |
+| `int16`, `float32` | `r16float` (half precision; values beyond ±65504 are clamped, NaN is stored as 0) | data range: OMERO window when finite and within ±65504, else the 0.1–99.9th percentile of the coarsest level |
 
 ## Layout tips
 

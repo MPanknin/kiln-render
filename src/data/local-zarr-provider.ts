@@ -294,13 +294,15 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
             let brickVal: number;
             let statVal: number;
             if (isFloat) {
+              // NaN voxels (masked or missing data) would poison every ray through them
+              const value = Number.isNaN(raw) ? 0 : raw;
               const range = floatMax - floatMin;
               const normalizedVal = range > 0
-                ? Math.max(0, Math.min(1, (raw - floatMin) / range))
+                ? Math.max(0, Math.min(1, (value - floatMin) / range))
                 : 0;
               statVal = Math.round(normalizedVal * 65535);
               // Store raw float value as float16 bits — shader normalises using uniforms
-              brickVal = float32ToFloat16Bits(Math.max(-65504, Math.min(65504, raw)));
+              brickVal = float32ToFloat16Bits(Math.max(-65504, Math.min(65504, value)));
               if (isFinite(raw)) {
                 if (raw < rawMinVal) rawMinVal = raw;
                 if (raw > rawMaxVal) rawMaxVal = raw;

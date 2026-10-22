@@ -37,7 +37,7 @@ The stats panel shows throughput (last 10 s), total bytes and request count. Wit
 | Normalised by | type range | type range | data range | data range |
 | Full atlas | 274 MiB | 548 MiB | 548 MiB | 548 MiB |
 
-`float64` is read as `float32`. The data range is the OMERO window when present, else the 0.1–99.9th percentile of the coarsest level. Half precision holds integers up to ±2048 exactly, enough for CT in Hounsfield units.
+`float64` is read as `float32`. The data range is the OMERO window when it is finite and within ±65504, else the 0.1–99.9th percentile of the coarsest level, taken exactly from its half-precision values. Half precision holds integers up to ±2048 exactly, enough for CT in Hounsfield units.
 
 ## Windowing
 

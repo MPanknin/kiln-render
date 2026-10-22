@@ -3,9 +3,9 @@
 | Mode | Algorithm |
 |------|-----------|
 | **DVR** | Front-to-back compositing through the transfer function |
-| **MIP** | Maximum intensity along the ray |
+| **MIP** | Maximum intensity along the ray, shown in the transfer function's colour |
 | **ISO** | First crossing of the threshold, Phong-lit from the camera |
-| **Slice** | Three orthogonal planes sampled from the atlas |
+| **Slice** | Three orthogonal planes sampled from the atlas, opaque in the transfer function's colour |
 | **LOD** | Colour per resolution level, for debugging (**LOD Levels** under Advanced, or `mode=lod`) |
 
 ## DVR

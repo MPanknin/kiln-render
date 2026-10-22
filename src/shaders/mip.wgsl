@@ -117,10 +117,9 @@ fn rayMarchMIP(
         return overlayLabel(vec4f(rgb * peak, peak), label, labelOpacity);
     }
 
-    // Single-channel: windowed TF lookup
+    // Single-channel: the transfer function's colour at the windowed maximum, opaque. Weighting
+    // it by the density squared grey levels and darkened inverted colour maps at both ends.
     let windowedDensity = applyWindow(maxDensity, windowCenter, windowWidth);
     let tfColor = textureSampleLevel(tfTexture, tfSampler, vec2f(windowedDensity, 0.5), 0.0);
-    // Premultiplied output: alpha = windowed max density so the compute
-    // entry point composites the background correctly.
-    return overlayLabel(vec4f(tfColor.rgb * windowedDensity, windowedDensity), label, labelOpacity);
+    return overlayLabel(vec4f(tfColor.rgb, 1.0), label, labelOpacity);
 }

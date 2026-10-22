@@ -99,8 +99,10 @@ fn fs(@location(0) voxelPos: vec3f) -> @location(0) vec4f {
         let rawDensity = sampleAtlas(voxelPos, indirection, lodScale);
         let density = clamp((rawDensity - uniforms.floatMin) / max(uniforms.floatMax - uniforms.floatMin, 0.0001), 0.0, 1.0);
         let windowed = applyWindow(density, uniforms.windowCenter, uniforms.windowWidth);
+        // Opaque: the transfer function's opacity is for volume rendering. As slice alpha it hid
+        // the low values, which an inverted colour map shows brightest.
         let color = textureSampleLevel(tfTexture, tfSampler, vec2f(windowed, 0.5), 0.0);
-        return withLabel(color, voxelPos, indirection, lodScale);
+        return withLabel(vec4f(color.rgb, 1.0), voxelPos, indirection, lodScale);
     }
 }
 

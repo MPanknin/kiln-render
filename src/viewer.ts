@@ -6,7 +6,7 @@
 
 import { KilnEngine, EngineOptions } from './engine.js';
 import type { Renderer, VolumeRenderMode } from './core/renderer.js';
-import { Camera, UpAxis } from './core/camera.js';
+import { Camera, Projection, UpAxis } from './core/camera.js';
 import type { TransferFunction, TFPreset } from './core/transfer-function.js';
 import type { StreamingManager } from './streaming/streaming-manager.js';
 import type { DataProvider, SourceSelection, VolumeMetadata } from './data/data-provider.js';
@@ -17,6 +17,8 @@ export interface ViewerOptions extends EngineOptions {
   upAxis?: UpAxis;
   /** Camera orbit state [rx, ry, dist] or [rx, ry, dist, tx, ty, tz] */
   cam?: [number, number, number] | [number, number, number, number, number, number];
+  /** Camera projection; default perspective */
+  projection?: Projection;
 }
 
 /** Serialisable snapshot of viewer state — used by the share-URL feature */
@@ -36,6 +38,7 @@ export interface ViewerState {
   tfPoints: Array<{ x: number; y: number }>;
   upAxis: UpAxis;
   cam: [number, number, number, number, number, number];
+  projection: Projection;
   clipMin: [number, number, number];
   clipMax: [number, number, number];
   sliceX: number;
@@ -122,6 +125,7 @@ export class KilnViewer {
     const camera = new Camera(canvas);
     if (options.upAxis !== undefined) camera.setUpAxis(options.upAxis);
     if (options.cam !== undefined) camera.setOrbitState(options.cam);
+    if (options.projection !== undefined) camera.projection = options.projection;
 
     const viewer = new KilnViewer(canvas, context, format, engine, camera);
     device.lost.then(() => viewer.dispose());
@@ -178,6 +182,13 @@ export class KilnViewer {
   get renderScale(): number { return this.engine.renderScale; }
   set renderScale(value: number) { this.engine.renderScale = value; }
 
+  /** Projection of the main view and every pane; panes added later start with it. */
+  get projection(): Projection { return this.camera.projection; }
+  set projection(value: Projection) {
+    this.camera.projection = value;
+    for (const pane of this.panes) pane.camera.projection = value;
+  }
+
   /**
    * Show another view of the dataset in `canvas`, e.g. one pane of a multi-view layout. It
    * has its own camera and render mode (starting from the main view's); every other display
@@ -192,6 +203,7 @@ export class KilnViewer {
     context.configure({ device: this.device, format: this.format });
     const camera = new Camera(canvas);
     camera.setUpAxis(this.camera.getUpAxis());
+    camera.projection = this.camera.projection;
     const renderer = () => {
       const index = this.panes.indexOf(state);
       if (this.disposed || index < 0) throw new Error('Pane is no longer attached to the viewer');
@@ -246,6 +258,7 @@ export class KilnViewer {
       tfPoints: this.transferFunction.getOpacityPoints(),
       upAxis: this.camera.getUpAxis(),
       cam: [rx, ry, dist, tx, ty, tz],
+      projection: this.camera.projection,
       clipMin: [
         this.renderer.clipMin[0]!,
         this.renderer.clipMin[1]!,

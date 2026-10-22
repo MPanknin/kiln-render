@@ -9,7 +9,7 @@ import {
   getStoredHandle,
   requestPermission,
 } from 'kiln-render';
-import type { ViewerOptions, DataProvider, UpAxis } from 'kiln-render';
+import type { ViewerOptions, DataProvider, UpAxis, Projection } from 'kiln-render';
 import { MultichannelUI } from './ui/multichannel-ui.js';
 import type { ChannelState } from './ui/multichannel-ui.js';
 import { parseSourceSelection, writeSourceSelection, applySourceSelection, routeSourceSelection } from '../../shared/source-selection.js';
@@ -49,6 +49,7 @@ function parseURLParams(): {
   pyramid?: 'legacy' | 'native';
   mode?: string;
   cam?: [number, number, number] | [number, number, number, number, number, number];
+  projection?: Projection;
   channels?: ChannelState[];
   slice?: SliceParams;
 } {
@@ -87,6 +88,7 @@ function parseURLParams(): {
     pyramid: params.get('pyramid') === 'legacy' ? 'legacy' : params.get('pyramid') === 'native' ? 'native' : undefined,
     mode: params.get('mode') ?? undefined,
     cam,
+    projection: params.get('proj') === 'ortho' ? 'orthographic' : undefined,
     channels,
     slice,
   };
@@ -123,6 +125,7 @@ async function main() {
     ...parseSourceSelection(params),
     upAxis: urlParams.up as UpAxis | undefined,
     cam: urlParams.cam,
+    projection: urlParams.projection,
     renderScale: urlParams.scale,
     pyramid: urlParams.pyramid,
     // Hidden channels in the share URL must not be streamed for the base load
@@ -155,13 +158,14 @@ async function main() {
 
   const toast = mountToast();
   const takeScreenshot = setupScreenshotButton(viewer, toast);
-  const gizmo = mountOrientationGizmo(viewer.camera);
+  const gizmo = mountOrientationGizmo(viewer);
   mountShortcuts([
     { keys: ['1', '2', '3'], display: '1 – 3', label: 'DVR / MIP / Slice',
       run: (e) => ui.setBaseMode((['dvr', 'mip', 'slice'] as const)[Number(e.key) - 1]!) },
     { keys: ['a', 'A'], display: 'A', label: 'Auto contrast (visible channels)', run: () => ui.autoContrast() },
     axisSnapShortcut((dir) => gizmo.snap(dir)),
     { keys: ['r', 'R'], display: 'R', label: 'Reset view', run: () => gizmo.reset() },
+    { keys: ['o', 'O'], display: 'O', label: 'Orthographic / perspective', run: () => gizmo.toggleProjection() },
     { keys: ['s', 'S'], display: 'S', label: 'Save screenshot', run: takeScreenshot },
     { keys: ['d', 'D'], display: 'D', label: 'Diagnostics panel' },
     ...((viewer.metadata.timepointCount ?? 1) > 1 ? timeShortcuts((d) => ui.stepTimepoint(d)) : []),
@@ -178,6 +182,7 @@ async function main() {
     if (urlParams.pyramid) p.set('pyramid', urlParams.pyramid);
     const [rx, ry, dist, tx, ty, tz] = state.cam;
     p.set('cam', `${rx.toFixed(3)},${ry.toFixed(3)},${dist.toFixed(3)},${tx.toFixed(3)},${ty.toFixed(3)},${tz.toFixed(3)}`);
+    if (state.projection === 'orthographic') p.set('proj', 'ortho');
     const channelState = ui.getChannelState();
     if (channelState.length > 0) {
       p.set('channels', channelState.map(ch =>

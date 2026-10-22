@@ -27,6 +27,8 @@ const traverse = (bx, by, bz, lod) => {
 
 `maxPixelError` defaults to 8 pixels (URL parameter `sse`). Between 0.7× and 1× the threshold a brick stays split only if its children are already resident, which stops LOD flicker during gestures. Because the error is measured in pixels, it adapts to screen resolution, field of view and anisotropic voxel spacing.
 
+In an orthographic view a voxel's size on screen doesn't depend on its distance: the error is the voxel size times the view's pixels per unit, so the whole visible depth refines to the same level. Distance still orders the load queue.
+
 While the camera moves, the set is still recomputed so stale requests are cancelled, but new requests wait until the interaction ends.
 
 With several views (`KilnEngine.addView()`) the set is the union over the views: each is traversed with its own camera, a brick that more than one view needs is queued once at its nearest distance, and new requests wait while any view moves.

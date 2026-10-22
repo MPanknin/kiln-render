@@ -5,7 +5,7 @@
 
 import { mat4 } from 'wgpu-matrix';
 import { extractFrustumPlanes, isAABBInFrustum } from '../core/camera.js';
-import type { ViewParams } from '../core/view.js';
+import { isOrthographic, type ViewParams } from '../core/view.js';
 import { upsampleFromAncestor } from './placeholder.js';
 import type { VolumeResources } from '../core/volume-resources.js';
 import type { DataProvider, VolumeMetadata, BrickLoadResult, LodLevel } from '../data/data-provider.js';
@@ -1055,6 +1055,7 @@ export class StreamingManager {
     let viewIndex = 0;
     let cameraPos: [number, number, number] = [0, 0, 0];
     let frustum = extractFrustumPlanes(mat4.identity());
+    let orthographic = false;
 
     // Get LOD range from metadata
     const maxLod = this.maxLod;
@@ -1089,7 +1090,8 @@ export class StreamingManager {
       // At this LOD, each voxel represents 2^lod original voxels
       // The error is the projected size of one voxel at this LOD
       const voxelWorldSize = this.getVoxelWorldSize(lod);
-      const projectedError = (voxelWorldSize / Math.max(dist, 0.001)) * this.projectionFactor;
+      // Orthographic views show every voxel at the same size, near or far
+      const projectedError = voxelWorldSize * this.projectionFactor / (orthographic ? 1 : Math.max(dist, 0.001));
 
       // SSE hysteresis: keep splitting while children exist and error > 70%
       // of maxPixelError, preventing LOD oscillation during gestures.
@@ -1167,7 +1169,11 @@ export class StreamingManager {
 
       // projectionFactor targets full viewport resolution — LOD selection pre-loads
       // fine bricks during interaction; dispatch gating prevents wasted loads.
-      this.projectionFactor = view.height / (2 * Math.tan(view.fovY / 2));
+      // Pixels per volume unit: at unit distance (perspective) or everywhere (orthographic).
+      orthographic = isOrthographic(view.proj);
+      this.projectionFactor = orthographic
+        ? view.proj[5]! * view.height / 2
+        : view.height / (2 * Math.tan(view.fovY / 2));
 
       // Start from coarsest LOD
       const rootLevel = this.levelsByLod[maxLod];

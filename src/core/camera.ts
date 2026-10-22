@@ -4,11 +4,15 @@ import { mat4 } from 'wgpu-matrix';
 import type { ViewParams } from './view.js';
 
 export type UpAxis = 'x' | 'y' | 'z' | '-x' | '-y' | '-z';
+export type Projection = 'perspective' | 'orthographic';
 
 // Orbit distance clamp (normalized units), shared by mouse wheel and touch pinch
 // so the two paths can't drift — mobile must zoom in as close as desktop.
 const MIN_DISTANCE = 0.1;
 const MAX_DISTANCE = 10;
+
+// Orthographic near plane, behind the eye: zooming in never clips the volume
+const ORTHO_NEAR = -10;
 
 export class Camera {
   position: Float32Array;
@@ -47,6 +51,22 @@ export class Camera {
 
   get version(): number {
     return this.version_;
+  }
+
+  private projection_: Projection = 'perspective';
+
+  /**
+   * Perspective (default) or orthographic. Orthographic keeps the perspective view's framing
+   * at the target, so switching keeps the volume's size; zooming then changes the view height.
+   */
+  get projection(): Projection {
+    return this.projection_;
+  }
+
+  set projection(value: Projection) {
+    if (value === this.projection_) return;
+    this.projection_ = value;
+    this.version_++;
   }
 
   constructor(canvas: HTMLCanvasElement) {
@@ -381,7 +401,12 @@ export class Camera {
   }
 
   getProjectionMatrix(aspect: number): Float32Array {
-    return mat4.perspective(this.fovY, aspect, 0.01, 100, this.projScratch) as Float32Array;
+    if (this.projection_ === 'perspective') {
+      return mat4.perspective(this.fovY, aspect, 0.01, 100, this.projScratch) as Float32Array;
+    }
+    // Half the height the perspective view shows at the target
+    const h = this.distance * Math.tan(this.fovY / 2);
+    return mat4.ortho(-h * aspect, h * aspect, -h, h, ORTHO_NEAR, 100, this.projScratch) as Float32Array;
   }
 
   /** Snapshot for the engine: matrices, position and interaction state for a viewport. */

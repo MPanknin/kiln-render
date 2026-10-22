@@ -10,9 +10,12 @@ export interface ViewParams {
   position: ArrayLike<number>;
   /** View matrix (world → camera). */
   view: Float32Array | number[];
-  /** Projection matrix. Either GL-style (-1..1) or WebGPU-style (0..1) depth works. */
+  /**
+   * Projection matrix, perspective or orthographic. Either GL-style (-1..1) or WebGPU-style
+   * (0..1) depth works.
+   */
   proj: Float32Array | number[];
-  /** Vertical field of view in radians; drives screen-space-error LOD selection. */
+  /** Vertical field of view in radians; drives screen-space-error LOD selection for perspective projections. */
   fovY: number;
   /** Viewport size in device pixels. */
   width: number;
@@ -22,4 +25,9 @@ export interface ViewParams {
    * engine infers it from view-projection changes.
    */
   interacting?: boolean;
+}
+
+/** Whether `proj` is orthographic: its last row is (0, 0, 0, 1), so there is no perspective divide. */
+export function isOrthographic(proj: ArrayLike<number>): boolean {
+  return proj[11] === 0 && proj[15] === 1;
 }

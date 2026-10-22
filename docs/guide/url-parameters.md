@@ -17,6 +17,7 @@ The demo viewer reads its state from the URL; **Share** (top right) copies the c
 | `tfpts` | x,y pairs, e.g. `0,0,0.5,0.8,1,1` | Transfer function opacity points |
 | `up` | `x`, `y`, `z`, `-x`, `-y`, `-z` | Camera up axis |
 | `cam` | `rx,ry,dist,tx,ty,tz` | Camera rotation, distance and target |
+| `proj` | `ortho` | Orthographic projection for every view, quad panes included (default perspective; also the grid button under the orientation gizmo, or `O`) |
 | `scale` | 0.25–1 | Render resolution scale |
 | `sse` | pixels | LOD screen-space error threshold (default 8; lower = sharper, more data) |
 | `pyramid` | `native`, `legacy` | Level model. Default: native, falling back to legacy if the levels don't fit; setting it disables the fallback |

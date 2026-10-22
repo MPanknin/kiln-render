@@ -53,6 +53,8 @@ describe('OMERO windows of float data', () => {
     expect(usableFloatWindow({ start: -1, end: 2, min: -3, max: 3 })).toBe(true);
     expect(usableFloatWindow({ start: 0, end: 1, min: -3.4e38, max: 3.4e38 })).toBe(false);
     expect(usableFloatWindow({ start: 0, end: 1, min: 3, max: -3 })).toBe(false);
+    expect(usableFloatWindow({ start: 2, end: -1, min: -3, max: 3 })).toBe(false);
+    expect(usableFloatWindow({ start: 1, end: 1, min: -3, max: 3 })).toBe(false);
     expect(usableFloatWindow({ start: NaN, end: 1, min: 0, max: 1 })).toBe(false);
   });
 });
@@ -111,7 +113,13 @@ describe('float bricks', () => {
 });
 
 describe('derived float range', () => {
-  it('is the p0.1 / p99.9 of the stored base level, not its extremes', async () => {
+  it.each([
+    { name: 'outlier quantiles', rawMin: -3, rawMax: 1e30, stored: null, clamped: true },
+    { name: 'positive saturation', rawMin: 100000, rawMax: 200000, stored: 65504, clamped: true },
+    { name: 'negative saturation', rawMin: -200000, rawMax: -100000, stored: -65504, clamped: true },
+    { name: 'constant negative data', rawMin: -2, rawMax: -2, stored: -2, clamped: false },
+    { name: 'constant zero data', rawMin: 0, rawMax: 0, stored: 0, clamped: false },
+  ])('derives an ordered storable range for $name', async ({ rawMin, rawMax, stored, clamped }) => {
     const meta: VolumeMetadata = {
       name: 'f', dimensions: [64, 64, 64], brickSize: 64, physicalBrickSize: 66, maxLod: 0, bitDepth: 16,
       numChannels: 1, isFloat: true, dataRange: [0, 1],
@@ -120,7 +128,8 @@ describe('derived float range', () => {
     const data = new Uint16Array(66 ** 3);
     for (let i = 0; i < data.length; i++) data[i] = float32ToFloat16Bits(-3 + (6 * i) / data.length);
     data[0] = float32ToFloat16Bits(60000); // one hot voxel
-    const brick: BrickLoadResult = { data, min: 0, max: 65535, avg: 0, rawMin: -3, rawMax: 1e30 };
+    if (stored !== null) data.fill(float32ToFloat16Bits(stored));
+    const brick: BrickLoadResult = { data, min: 0, max: 65535, avg: 0, rawMin, rawMax };
     const provider = {
       initialize: vi.fn(), getMetadata: () => meta, getBrickGrid: () => [1, 1, 1],
       loadBrick: vi.fn(async () => brick), isBrickEmpty: vi.fn(async () => false), getBrickStats: vi.fn(async () => null),
@@ -142,10 +151,19 @@ describe('derived float range', () => {
     await vi.waitFor(() => expect(sm.baseLodLoaded).toBe(true));
 
     const [lo, hi] = meta.dataRange!;
-    expect(lo).toBeCloseTo(-2.99, 2);
-    expect(hi).toBeCloseTo(2.99, 2);
+    expect(lo).toBeLessThan(hi);
+    expect(lo).toBeGreaterThanOrEqual(-65504);
+    expect(hi).toBeLessThanOrEqual(65504);
+    if (stored === null) {
+      expect(lo).toBeCloseTo(-2.99, 2);
+      expect(hi).toBeCloseTo(2.99, 2);
+    } else {
+      expect(lo).toBeLessThanOrEqual(stored);
+      expect(hi).toBeGreaterThanOrEqual(stored);
+    }
     expect(provider.setFloatRange).toHaveBeenCalledWith(lo, hi);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('clamped')); // raw max 1e30
+    if (clamped) expect(warn).toHaveBeenCalledWith(expect.stringContaining('clamped'));
+    sm.dispose();
     warn.mockRestore();
   });
 });

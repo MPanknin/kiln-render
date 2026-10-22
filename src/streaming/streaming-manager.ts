@@ -733,14 +733,23 @@ export class StreamingManager {
       channelRanges?: Array<{ min: number; max: number }>;
     } = {};
 
-    if (needsFloatRange && isFinite(floatRangeMin) && isFinite(floatRangeMax) && floatRangeMin < floatRangeMax) {
-      // p0.1 / p99.9 of the stored base level: absolute extremes let one hot voxel
+    if (needsFloatRange && isFinite(floatRangeMin) && isFinite(floatRangeMax) && floatRangeMin <= floatRangeMax) {
+      // p0.1 / p99.9 of physical base-brick samples (including halos and padding).
+      // Absolute extremes let one hot voxel
       // compress the whole contrast range. Falls back to the extremes the atlas can hold.
       const base = this.baseHistograms[0];
       const q = base && !base.is8Bit ? float16Quantiles(base.counts, 0.001, 0.999) : null;
-      const clipped: [number, number] = q && q[0] < q[1]
+      const clamp = (v: number) => Math.max(-FLOAT16_MAX, Math.min(FLOAT16_MAX, v));
+      let clipped: [number, number] = q && q[0] < q[1]
         ? q
-        : [Math.max(floatRangeMin, -FLOAT16_MAX), Math.min(floatRangeMax, FLOAT16_MAX)];
+        : [clamp(floatRangeMin), clamp(floatRangeMax)];
+      if (clipped[0] === clipped[1]) {
+        // Constant data or saturation can collapse both endpoints. Keep the display
+        // range ordered and inside float16 limits, including at either extreme.
+        const value = clipped[0];
+        const padding = Math.max(1, Math.abs(value) * 0.001);
+        clipped = [clamp(value - padding), clamp(value + padding)];
+      }
       warnFloat16Limits(floatRangeMin, floatRangeMax, clipped);
       derivedRanges.dataRange = clipped;
       this.metadata.dataRange = clipped;

@@ -26,8 +26,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 - Single-channel MIP and slices show the transfer function's colour as is. MIP weighted it by the density, which squared grey levels and turned inverted colour maps dark at both ends; slices took the transfer function's opacity as their alpha, which hid the lowest values (the brightest under an inverted map) and showed the background instead.
-- The float data range is the exact 0.1–99.9th percentile of the stored coarsest level. A value beyond the half-precision range (e.g. 1e30) used to widen the histogram bins until the range covered nearly everything. A warning names values clamped at ±65504 and ranges that half precision resolves in fewer than 256 levels.
-- Float OMERO windows that aren't finite, ordered or within ±65504 (e.g. ±3.4e38) are ignored and the range is derived from the data instead.
+- The float data range is the exact 0.1–99.9th percentile of the stored physical base-brick samples, including duplicated halos and boundary padding. A value beyond the half-precision range (e.g. 1e30) used to widen the histogram bins until the range covered nearly everything. A warning names values clamped at ±65504 and ranges that half precision resolves in fewer than 256 levels.
+- Constant or fully saturated float data gets an ordered display range within ±65504.
+- Float OMERO windows that aren't finite, have unordered data or display endpoints, or lie outside ±65504 (e.g. ±3.4e38) are ignored and the range is derived from the data instead.
 - NaN voxels are stored as 0 instead of NaN, which poisoned every ray through them.
 - Brick statistics computed against the provisional float range are dropped once the real range is known, so they no longer mark bricks as empty on a later reload.
 - Quad panes follow changes to the up axis, including their labels and when reopening the layout. Removed pane handles cannot change the main view or remove a replacement pane that reuses their canvas.

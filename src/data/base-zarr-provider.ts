@@ -74,7 +74,7 @@ export interface LodParams {
  */
 export function usableFloatWindow(w: OmeroWindow): boolean {
   const values = [w.start, w.end, w.min, w.max];
-  return values.every(v => typeof v === 'number' && Math.abs(v) <= 65504) && w.min < w.max;
+  return values.every(v => typeof v === 'number' && Math.abs(v) <= 65504) && w.min < w.max && w.start < w.end;
 }
 
 /** OMERO colours are "RRGGBB" hex strings; returns 0–1 RGB or undefined if malformed. */

@@ -44,6 +44,10 @@ fn rayMarchMIP(
         jitterFrac = rand(raySeed + uniforms.frameIndex);
     }
 
+    // Front-most label along the ray, drawn over the projection
+    let labelOpacity = uniforms.labelOpacity;
+    var label = vec4f(0.0);
+
     // Single-channel: scalar max. Multi-channel: per-channel max densities.
     var maxDensity = 0.0;
     var chMaxDensity: array<f32, 4>;
@@ -67,12 +71,16 @@ fn rayMarchMIP(
             let steps = ceil((t - tSample) / brick.stepSize);
             tSample += steps * brick.stepSize;
         }
+        let brickLabels = labelOpacity > 0.0 && label.a == 0.0 && labelSlotReady(brick.indirection);
 
         for (var i = 0u; i < brick.numSteps; i++) {
             if (tSample > brick.tEnd) { break; }
 
             let pos = rayOrigin + rayDir * tSample;
             let voxel = normalizedToVoxel(pos, normalizedSize, datasetSize);
+            if (brickLabels && label.a == 0.0) {
+                label = labelColorAt(brick.atlasOffset + voxel * brick.atlasScale);
+            }
 
             if (numCh > 1u) {
                 for (var vi = 0u; vi < numVisible; vi++) {
@@ -106,7 +114,7 @@ fn rayMarchMIP(
             peak = max(peak, chMaxDensity[ch]);
         }
         if (peak > 0.0) { rgb /= peak; }
-        return vec4f(rgb * peak, peak);
+        return overlayLabel(vec4f(rgb * peak, peak), label, labelOpacity);
     }
 
     // Single-channel: windowed TF lookup
@@ -114,5 +122,5 @@ fn rayMarchMIP(
     let tfColor = textureSampleLevel(tfTexture, tfSampler, vec2f(windowedDensity, 0.5), 0.0);
     // Premultiplied output: alpha = windowed max density so the compute
     // entry point composites the background correctly.
-    return vec4f(tfColor.rgb * windowedDensity, windowedDensity);
+    return overlayLabel(vec4f(tfColor.rgb * windowedDensity, windowedDensity), label, labelOpacity);
 }

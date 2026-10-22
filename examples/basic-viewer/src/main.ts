@@ -53,6 +53,8 @@ function parseURLParams(): {
   pyramid?: 'legacy' | 'native';
   cam?: [number, number, number] | [number, number, number, number, number, number];
   projection?: Projection;
+  labels?: string;
+  labelOpacity?: number;
   clipMin?: [number, number, number];
   clipMax?: [number, number, number];
   slices?: [number, number, number];
@@ -136,6 +138,8 @@ function parseURLParams(): {
     pyramid: params.get('pyramid') === 'legacy' ? 'legacy' : params.get('pyramid') === 'native' ? 'native' : undefined,
     cam,
     projection: params.get('proj') === 'ortho' ? 'orthographic' : undefined,
+    labels: params.get('labels') || undefined,
+    labelOpacity: params.has('labelOpacity') ? Number(params.get('labelOpacity')) : undefined,
     clipMin,
     clipMax,
     slices,
@@ -193,6 +197,8 @@ async function main() {
     upAxis: urlParams.up as UpAxis | undefined,
     cam: urlParams.cam,
     projection: urlParams.projection,
+    labels: urlParams.labels,
+    labelOpacity: urlParams.labelOpacity,
     renderScale: urlParams.scale,
     maxPixelError: urlParams.sse,
     pyramid: urlParams.pyramid,
@@ -272,6 +278,10 @@ async function main() {
       const [rx, ry, dist, tx, ty, tz] = state.cam;
       p.set('cam', `${rx.toFixed(3)},${ry.toFixed(3)},${dist.toFixed(3)},${tx.toFixed(3)},${ty.toFixed(3)},${tz.toFixed(3)}`);
       if (state.projection === 'orthographic') p.set('proj', 'ortho');
+      if (state.labels) {
+        p.set('labels', state.labels);
+        p.set('labelOpacity', state.labelOpacity.toFixed(2));
+      }
 
       if (state.clipMin[0] !== 0 || state.clipMin[1] !== 0 || state.clipMin[2] !== 0) {
         p.set('clipMin', state.clipMin.map(v => v.toFixed(2)).join(','));

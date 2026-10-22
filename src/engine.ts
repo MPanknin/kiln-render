@@ -24,6 +24,8 @@ import type { TargetFormat } from './data/brick-convert.js';
 import { initializeWithPyramidFallback } from './data/pyramid-fallback.js';
 import { UINT16_FLOAT16_OFFSET } from './utils/float16.js';
 import { isFlagDisabled } from './core/feature-flags.js';
+import { LabelLayer } from './streaming/label-layer.js';
+import { buildLabelColorTable, matchLabelLevels } from './data/labels.js';
 
 export interface EngineOptions {
   /** Zero-based OME-Zarr source channels, in display order (one to four). */
@@ -85,6 +87,13 @@ export interface EngineOptions {
   /** Initial per-channel visibility (multichannel): hidden channels start with alpha 0 and are
    *  not streamed until shown. Overrides OMERO `active`. */
   visibleChannels?: boolean[];
+  /**
+   * Label image drawn over the volume: a name from labelNames (the image's OME-Zarr `labels`
+   * group) or the URL of an OME-Zarr label image with the same dimensions. See setLabels().
+   */
+  labels?: string;
+  /** Opacity of label colours over the image (0–1, default 0.5) */
+  labelOpacity?: number;
 }
 
 /** How long after the last view change the camera still counts as interacting (ms). */
@@ -196,6 +205,16 @@ export class KilnEngine {
 
   private readonly gpu: GpuSetup;
   private readonly setupMilestones: SetupMilestones;
+
+  /** Label images in the dataset's OME-Zarr `labels` group, found when the engine was created. */
+  readonly labelNames: readonly string[];
+  // Label image shown (see setLabels): its provider, the levels it covers, its colours and the
+  // layer streaming it into the current atlas (recreated with the atlas)
+  private labelSource: string | null = null;
+  private labelProvider: DataProvider | null = null;
+  private labelLevels: boolean[] = [];
+  private labelColorTable: Uint8Array | null = null;
+  private labelLayer: LabelLayer | null = null;
   private firstContentSubmit: number | null = null;
   private firstContentFrame: number | null = null;
 
@@ -209,8 +228,10 @@ export class KilnEngine {
     config: DatasetConfig,
     gpu: GpuSetup,
     setupMilestones: SetupMilestones,
+    labelNames: readonly string[],
   ) {
     this.setupMilestones = setupMilestones;
+    this.labelNames = labelNames;
     this.device = device;
     this.views = [new EngineView(renderer)];
     this._resources = resources;
@@ -280,6 +301,8 @@ export class KilnEngine {
     // The level model must reach the provider before workers and brick loads exist.
     // Native unless requested otherwise, falling back to legacy if native rejects the levels.
     const { metadata, pyramid } = await initializeWithPyramidFallback(dataProvider, options.pyramid);
+    // Label discovery is a metadata read or two; it overlaps the GPU setup below
+    const labelNames = dataProvider.listLabels?.().catch(() => []) ?? Promise.resolve([]);
     milestones.metadataReady = performance.now();
     if ((metadata.pyramidPolicy ?? 'legacy') !== pyramid) {
       throw new Error(`Data provider uses pyramid "${metadata.pyramidPolicy ?? 'legacy'}" but the engine requested "${pyramid}"`);
@@ -404,9 +427,15 @@ export class KilnEngine {
       });
     }
 
+    if (options.labelOpacity !== undefined) renderer.labelOpacity = options.labelOpacity;
+
     const engine = new KilnEngine(
-      device, renderer, resources, transferFunction, dataProvider, metadata, config, gpu, milestones,
+      device, renderer, resources, transferFunction, dataProvider, metadata, config, gpu, milestones, await labelNames,
     );
+    // Streaming has started; this only adds the label image's metadata reads
+    if (options.labels !== undefined) {
+      await engine.setLabels(options.labels).catch(e => console.warn(`[Kiln] labels "${options.labels}" not shown:`, e));
+    }
 
     if (options.maxPixelError !== undefined) {
       engine.streamingManager.maxPixelError = options.maxPixelError;
@@ -540,6 +569,7 @@ export class KilnEngine {
     if (!stale && numChannels === this.renderer.numChannels) return;
 
     this.config.emptyBrickThreshold = emptyThresholdFor(this.metadata);
+    const labelsStale = timepoint !== beforeTimepoint && this.selectLabelTimepoint();
     if (numChannels !== this.renderer.numChannels) {
       this.rebuildGpu(changedChannels);
     } else {
@@ -550,6 +580,7 @@ export class KilnEngine {
       }
       this._streamingManager.setVisibleChannels(visibleChannelMask(this.renderer));
       this._streamingManager.reload(stale);
+      if (labelsStale) this.labelLayer?.reload();
     }
     this.renderer.resetAccumulation();
     this.markDirty();
@@ -560,6 +591,8 @@ export class KilnEngine {
     KilnEngine.assertBaseFits(this.metadata, this.metadata.numChannels, this.gpu); // before tearing anything down
     const old = this.renderer;
     const { maxPixelError } = this._streamingManager;
+    this.labelLayer?.dispose();
+    this.labelLayer = null;
     this._streamingManager.dispose();
     for (const view of this.views) view.renderer.dispose();
     this._resources.dispose();
@@ -602,6 +635,74 @@ export class KilnEngine {
 
     this._streamingManager = this.attachStreaming(resources);
     this._streamingManager.maxPixelError = maxPixelError;
+    this.attachLabels();
+  }
+
+  /** Label image shown: a name from labelNames, a URL, or null. */
+  get labels(): string | null { return this.labelSource; }
+
+  /**
+   * Show a label image over the volume: a name from labelNames or the URL of an OME-Zarr label
+   * image with the image's dimensions; null hides labels. Label bricks stream alongside the
+   * image bricks into a label atlas with the VRAM of one 16-bit channel. Rejects (and shows
+   * no labels) when the label image can't be opened or doesn't match the image.
+   */
+  async setLabels(source: string | null): Promise<void> {
+    if (this.disposed || source === this.labelSource) return;
+    this.detachLabels();
+    this.labelProvider?.dispose();
+    this.labelProvider = null;
+    this.labelSource = source;
+    if (source === null) return;
+    if (!this.dataProvider.openLabels) throw new Error('This data provider does not support labels');
+
+    const provider = this.dataProvider.openLabels(source);
+    try {
+      provider.setPyramidPolicy?.(this.metadata.pyramidPolicy ?? 'legacy');
+      const labels = await provider.initialize();
+      const levels = matchLabelLevels(this.metadata, labels);
+      if (this.disposed || this.labelSource !== source) {
+        provider.dispose();
+        return;
+      }
+      this.labelProvider = provider;
+      this.labelLevels = levels;
+      this.labelColorTable = buildLabelColorTable(labels.labelColors);
+      this.selectLabelTimepoint();
+      this.attachLabels();
+    } catch (e) {
+      provider.dispose();
+      if (this.labelSource === source) this.labelSource = null;
+      throw e;
+    }
+  }
+
+  /** Label atlas, colours and streaming layer for the current atlas; every view rebinds. */
+  private attachLabels(): void {
+    if (!this.labelProvider || !this.labelColorTable) return;
+    this._resources.enableLabels();
+    this._resources.writeLabelColors(this.labelColorTable);
+    this.labelLayer = new LabelLayer(
+      this._resources, this.labelProvider, this.labelLevels, () => this._streamingManager.notifyContentChanged(),
+    );
+    for (const view of this.views) view.renderer.rebind();
+  }
+
+  private detachLabels(): void {
+    this.labelLayer?.dispose();
+    this.labelLayer = null;
+    if (!this._resources.hasLabels) return;
+    this._resources.disableLabels();
+    for (const view of this.views) view.renderer.rebind();
+  }
+
+  /** Time-varying labels follow the image's timepoint; returns whether they changed. */
+  private selectLabelTimepoint(): boolean {
+    const labels = this.labelProvider?.getMetadata();
+    const timepoint = this.metadata.timepoint ?? 0;
+    if (!labels || (labels.timepointCount ?? 1) <= timepoint || labels.timepoint === timepoint) return false;
+    this.labelProvider!.setSourceSelection?.({ timepoint });
+    return true;
   }
 
   /** User-intended render scale (the interaction override is not reflected here). */
@@ -761,6 +862,8 @@ export class KilnEngine {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.labelLayer?.dispose();
+    this.labelProvider?.dispose();
     this.streamingManager.dispose();
     for (const view of this.views) view.renderer.dispose();
     this.transferFunction.dispose();

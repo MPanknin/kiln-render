@@ -77,7 +77,13 @@ fn rayMarchISO(
                 if (length(gradient) * floatInvRange >= 0.001) {
                     let normal = -normalize(gradient);
                     let tfColor = textureSampleLevel(tfTexture, tfSampler, vec2f(isoValue, 0.5), 0.0);
-                    return vec4f(phongLighting(normal, -rayDir, tfColor.rgb), 1.0);
+                    // Label just inside the surface tints it
+                    var label = vec4f(0.0);
+                    if (uniforms.labelOpacity > 0.0 && labelSlotReady(brick.indirection)) {
+                        label = labelColorAt(brick.atlasOffset + voxel * brick.atlasScale);
+                    }
+                    let surface = mix(tfColor.rgb, label.rgb, uniforms.labelOpacity * label.a);
+                    return vec4f(phongLighting(normal, -rayDir, surface), 1.0);
                 }
             }
 

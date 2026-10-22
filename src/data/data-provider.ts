@@ -4,6 +4,7 @@
  */
 
 import type { PyramidLevel, PyramidPolicy } from '../core/pyramid.js';
+import type { LabelColor } from './labels.js';
 
 /** Immutable source selection. Indices are zero-based; channel order defines GPU slots. */
 export interface SourceSelection {
@@ -115,6 +116,8 @@ export interface VolumeMetadata {
   dtype?: string;
   /** Compression codec used by the zarr array (e.g. 'zstd', 'blosc/lz4', 'gzip', 'none') */
   compression?: string;
+  /** Label images only: colours from `image-label` metadata. */
+  labelColors?: LabelColor[];
 }
 
 /**
@@ -225,6 +228,15 @@ export interface DataProvider {
    * Only relevant for float zarr datasets with worker pools.
    */
   setFloatRange?(min: number, max: number): Promise<void>;
+
+  /** Names of the label images in the image's OME-Zarr `labels` group. Omit when unsupported. */
+  listLabels?(): Promise<string[]>;
+
+  /**
+   * An uninitialised provider for a label image: a name from listLabels() or the URL of an
+   * OME-Zarr label image. It loads bricks of label IDs (see labelId) as Uint16Array.
+   */
+  openLabels?(source: string): DataProvider;
 
   /**
    * Clean up resources (workers, caches, etc.)

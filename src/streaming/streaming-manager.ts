@@ -1659,8 +1659,8 @@ export class StreamingManager {
     return this.contentVersionCounter;
   }
 
-  /** Record a content commit and schedule the accumulation reset that displays it. */
-  private notifyContentChanged(): void {
+  /** Record a content commit (also label bricks) and schedule the accumulation reset that displays it. */
+  notifyContentChanged(): void {
     this.contentVersionCounter++;
     this.scheduleAccumulationReset();
   }

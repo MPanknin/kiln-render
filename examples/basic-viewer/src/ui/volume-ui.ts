@@ -31,6 +31,7 @@ import { toRawValue, formatRawValue, isIntegerDtype, type ValueSpace } from '../
 import { mountColorbar, type Colorbar } from '../../../shared/colorbar.js';
 import { createTimeSlider, sourceChannelOptions } from '../../../shared/source-controls.js';
 import type { ApplySelection, TimeSlider } from '../../../shared/source-controls.js';
+import { mountLabelControls } from '../../../shared/label-controls.js';
 
 /** Only 'dvr' | 'mip' | 'iso' | 'slice' are selectable via the Mode segmented control — 'lod'/'slice-lod' are debug visualizations, relocated to the "LOD Levels" Advanced toggle (applied on top of the base mode). */
 type BaseRenderMode = 'dvr' | 'mip' | 'iso' | 'slice';
@@ -255,6 +256,8 @@ export class VolumeUI {
     this.modeSwap = createSwapRegion();
     body.appendChild(this.modeSwap.el);
     this.buildModeOptionsWidgets();
+
+    mountLabelControls(this.viewer, body);
 
     // --- Scene section (mode-independent, collapsible, open by default) ---
     const { el: sceneEl, body: sceneSection } = createCollapsible('Scene', true);

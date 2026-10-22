@@ -89,6 +89,7 @@ export class ZarrWorkerPool {
     isFloat32?: boolean,
     floatRange?: [number, number],
     arrayMetadata?: ArrayMetadata<DataType>[],
+    labels = false,
   ): Promise<void> {
     this.is16bit = is16bit;
     this.lodParams = lodParams;
@@ -181,6 +182,7 @@ export class ZarrWorkerPool {
           floatMin: floatRange?.[0],
           floatMax: floatRange?.[1],
           arrayMetadata,
+          labels,
           // ?p4=1 — read here (main thread), forwarded since a worker
           // can't read the page URL itself. See docs/audits/kiln-render - fetch_patterns.md.
           refcountedAborts: isFlagEnabled('p4'),

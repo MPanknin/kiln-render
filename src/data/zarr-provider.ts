@@ -14,6 +14,7 @@ import { UnsupportedDatasetError } from './data-provider.js';
 import { extractMultiscales } from './zarr-validator.js';
 import { v2ToV3ArrayMetadata, compressionLabel } from './zarr-v2-metadata.js';
 import { provisionalDataRange } from './value-types.js';
+import { parseLabelNames } from './labels.js';
 import type { ZarrV2ArrayJson } from './zarr-v2-metadata.js';
 
 /** Everything initialize() needs, opened in two round trips (see openV2Fast). */
@@ -24,21 +25,45 @@ interface FastOpen {
   arrayPaths: string[];
   arrayMetadata: ArrayMetadata<DataType>[];
   compression: string | undefined;
+  subGroupPath: string;
 }
+
+/** Label images stream alongside the image, so they get a smaller worker pool. */
+const LABEL_WORKERS = 4;
 
 /**
  * DataProvider implementation for OME-Zarr (NGFF v0.5) volumes over HTTP
  */
 export class ZarrDataProvider extends BaseZarrProvider {
   private url: string;
+  /** URL of the image group (the bioformats2raw "0" sub-group when there is one), set by initialize() */
+  private groupUrl: string;
 
   /** Worker pool for off-main-thread brick loading */
   private workerPool: ZarrWorkerPool | null = null;
   private targetFormat?: 'r8unorm' | 'r16unorm' | 'r16float';
 
-  constructor(url: string) {
+  /** `labels`: a label image, loaded as 16-bit label IDs by a smaller worker pool. */
+  constructor(url: string, { labels = false }: { labels?: boolean } = {}) {
     super();
     this.url = url.replace(/\/$/, '');
+    this.groupUrl = this.url;
+    this.labelMode = labels;
+  }
+
+  async listLabels(): Promise<string[]> {
+    const store = new TolerantFetchStore(this.groupUrl);
+    const read = async (key: string) => {
+      const bytes = await store.get(key as AbsolutePath).catch(() => undefined);
+      try { return bytes ? JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown> : null; } catch { return null; }
+    };
+    const [v3, v2] = await Promise.all([read('/labels/zarr.json'), read('/labels/.zattrs')]);
+    return parseLabelNames((v3?.['attributes'] as Record<string, unknown> | undefined) ?? v2 ?? {});
+  }
+
+  openLabels(source: string): ZarrDataProvider {
+    const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(source) ? source : `${this.groupUrl}/labels/${source}`;
+    return new ZarrDataProvider(url, { labels: true });
   }
 
   /**
@@ -80,7 +105,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
 
     const arrayMetadata = zarrays.map(z => v2ToV3ArrayMetadata(z!));
     const arrays = arrayPaths.map((p, i) => new ZarrArray(store, `/${p}` as AbsolutePath, arrayMetadata[i]!));
-    return { attrs, ms, arrays, arrayPaths, arrayMetadata, compression: compressionLabel(zarrays[0]!.compressor) };
+    return { attrs, ms, arrays, arrayPaths, arrayMetadata, compression: compressionLabel(zarrays[0]!.compressor), subGroupPath };
   }
 
   async initialize(): Promise<VolumeMetadata> {
@@ -98,6 +123,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
 
     if (fast) {
       ({ attrs, arrays, arrayPaths, arrayMetadata, compression } = fast);
+      if (fast.subGroupPath) this.groupUrl = `${this.url}/0`;
     } else {
       const rootGroup = await open(root(store), { kind: 'group' });
 
@@ -116,6 +142,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
             attrs = subAttrs;
             ms = subMs;
             subGroupPath = '0/';
+            this.groupUrl = `${this.url}/0`;
           }
         } catch {
           // sub-group doesn't exist
@@ -157,7 +184,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
     this.metadata = metadata;
 
     // Initialize worker pool — all heavy lifting happens there
-    this.workerPool = new ZarrWorkerPool();
+    this.workerPool = this.labelMode ? new ZarrWorkerPool(LABEL_WORKERS) : new ZarrWorkerPool();
     await this.workerPool.init(
       this.url,
       arrayPaths,
@@ -169,6 +196,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
       metadata.isFloat ?? false,
       metadata.dataRange,
       arrayMetadata,
+      this.labelMode,
     );
 
     return this.metadata;

@@ -20,6 +20,7 @@ const LOOK_SCALARS = [
   'useIndirection', 'showWireframe', 'densityScale', 'shading', 'gradientOpacity', 'showAxis',
   'enableJitter', 'enableTAA', 'isoValue', 'windowCenter', 'windowWidth', 'floatMin', 'floatMax',
   'texelScale', 'texelBias', 'sliceX', 'sliceY', 'sliceZ', 'showSliceX', 'showSliceY', 'showSliceZ',
+  'labelOpacity',
 ] as const;
 const LOOK_ARRAYS = ['clipMin', 'clipMax', 'channelColors', 'channelWindowCenter', 'channelWindowWidth'] as const;
 
@@ -115,6 +116,9 @@ export class Renderer {
 
   // Render scale for compute shader (0.25–1.0, lower = faster but blurrier)
   renderScale = 0.5;
+
+  // Opacity of label colours over the image (0–1); labels show only once the engine has them
+  labelOpacity = 0.5;
 
   // Overlay pipelines (rasterized wireframe, axis, slice)
   private wireframePipeline: GPURenderPipeline;
@@ -492,6 +496,17 @@ export class Renderer {
     this.recreateVolumeBindGroups();
   }
 
+  /** Labels are drawn only while the atlas has them; the shader skips them at opacity 0. */
+  private get effectiveLabelOpacity(): number {
+    return this.resources.hasLabels ? this.labelOpacity : 0;
+  }
+
+  /** Rebind the atlas textures, e.g. after the label atlas was allocated or freed. */
+  rebind(): void {
+    this.recreateVolumeBindGroups();
+    this.resetAccumulation();
+  }
+
   private recreateVolumeBindGroups(): void {
     if (!this.tfTexture) return;
 
@@ -507,6 +522,7 @@ export class Renderer {
         { binding: 8, resource: this.resources.atlasView(1) },
         { binding: 9, resource: this.resources.atlasView(2) },
         { binding: 10, resource: this.resources.atlasView(3) },
+        ...this.labelBindings(),
       ],
     });
 
@@ -630,6 +646,7 @@ export class Renderer {
         { binding: 9, resource: this.resources.atlasView(2) },
         { binding: 10, resource: this.resources.atlasView(3) },
         { binding: 11, resource: { buffer: this.rayVisitedBuffer } },
+        ...this.labelBindings(),
       ],
     });
 
@@ -681,6 +698,14 @@ export class Renderer {
     ];
   }
 
+  private labelBindings(): GPUBindGroupEntry[] {
+    return [
+      { binding: 12, resource: this.resources.labelAtlas.createView() },
+      { binding: 13, resource: { buffer: this.resources.labelSlots } },
+      { binding: 14, resource: this.resources.labelColors.createView() },
+    ];
+  }
+
   private updateSliceUniforms(vp: Float32Array): void {
     const o = SLICE_UNIFORMS.offsets;
     const d = this.sliceUniformScratch;
@@ -700,6 +725,7 @@ export class Renderer {
     dv.setUint32(o.sliceZEnabled, this.showSliceZ ? 1 : 0, true);
     dv.setUint32(o.numChannels, this.numChannels, true);
     dv.setUint32(o.lodDebug, this.volumeRenderMode === 'slice-lod' ? 1 : 0, true);
+    d[o.labelOpacity / 4] = this.effectiveLabelOpacity;
     d.set(this.channelColors, o.channelColors / 4);
     d.set(this.channelWindowCenter, o.channelWindowCenter / 4);
     d.set(this.channelWindowWidth, o.channelWindowWidth / 4);
@@ -783,6 +809,7 @@ export class Renderer {
     d[o.shading / 4] = this.shading;
     d[o.gradientOpacity / 4] = this.gradientOpacity;
     dv.setUint32(o.orthographic, isOrthographic(view.proj) ? 1 : 0, true);
+    d[o.labelOpacity / 4] = this.effectiveLabelOpacity;
     this.device.queue.writeBuffer(this.computeUniformBuffer, 0, d as Float32Array<ArrayBuffer>);
 
     const encoder = this.device.createCommandEncoder();

@@ -29,6 +29,9 @@ export class IndirectionTable {
   // GPU texture: 3D texture where each texel is the atlas offset for that brick
   texture: GPUTexture;
 
+  /** Called whenever setBrick() maps a brick to an atlas slot (the label layer follows it). */
+  onBrickMapped?: (lod: number, bx: number, by: number, bz: number, slotX: number, slotY: number, slotZ: number) => void;
+
   // Dataset grid dimensions for indexing
   private gridX: number;
   private gridY: number;
@@ -68,6 +71,7 @@ export class IndirectionTable {
     atlasX: number, atlasY: number, atlasZ: number,
     lod: number = 0
   ) {
+    this.onBrickMapped?.(lod, virtualX, virtualY, virtualZ, atlasX, atlasY, atlasZ);
     // LOD-0 cells this brick covers, per axis (2^exponent), and its base cell
     const span = this.config.levelSpanCells(lod);
     const baseX = virtualX * span[0];

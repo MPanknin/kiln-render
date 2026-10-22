@@ -93,12 +93,21 @@ fn fs(@location(0) voxelPos: vec3f) -> @location(0) vec4f {
             rgb += chColor.rgb * intensity * chColor.a;
             peak = max(peak, intensity * step(0.001, chColor.a));
         }
-        return vec4f(min(rgb, vec3f(1.0)), step(0.001, peak));
+        return withLabel(vec4f(min(rgb, vec3f(1.0)), step(0.001, peak)), voxelPos, indirection, lodScale);
     } else {
         // Single channel: TF-based with windowing and float normalisation
         let rawDensity = sampleAtlas(voxelPos, indirection, lodScale);
         let density = clamp((rawDensity - uniforms.floatMin) / max(uniforms.floatMax - uniforms.floatMin, 0.0001), 0.0, 1.0);
         let windowed = applyWindow(density, uniforms.windowCenter, uniforms.windowWidth);
-        return textureSampleLevel(tfTexture, tfSampler, vec2f(windowed, 0.5), 0.0);
+        let color = textureSampleLevel(tfTexture, tfSampler, vec2f(windowed, 0.5), 0.0);
+        return withLabel(color, voxelPos, indirection, lodScale);
     }
+}
+
+// Blend the label at this voxel over a slice colour (straight alpha, blended over the scene)
+fn withLabel(color: vec4f, voxelPos: vec3f, indirection: vec4u, lodScale: vec3f) -> vec4f {
+    if (uniforms.labelOpacity <= 0.0) { return color; }
+    let label = labelColorAtVoxel(voxelPos, indirection, lodScale);
+    let w = uniforms.labelOpacity * label.a;
+    return vec4f(mix(color.rgb, label.rgb, w), max(color.a, w));
 }

@@ -94,10 +94,11 @@ export const COMPUTE_UNIFORMS = defineUniformStruct([
   { name: 'shading',         type: 'f32' },
   { name: 'gradientOpacity', type: 'f32' },
   { name: 'orthographic',    type: 'u32' },
+  { name: 'labelOpacity',    type: 'f32' },
 ]);
 
 // ---------------------------------------------------------------------------
-// Slice planes uniforms (432 bytes)
+// Slice planes uniforms (448 bytes)
 // ---------------------------------------------------------------------------
 export const SLICE_UNIFORMS = defineUniformStruct([
   { name: 'mvp',             type: 'mat4x4f' },
@@ -117,4 +118,5 @@ export const SLICE_UNIFORMS = defineUniformStruct([
   { name: 'channelWindowCenter', type: 'vec4f' },
   { name: 'channelWindowWidth',  type: 'vec4f' },
   { name: 'lodScales',       type: `array<vec4f, ${MAX_LOD_LEVELS}>` },
+  { name: 'labelOpacity',    type: 'f32' },
 ]);

@@ -20,6 +20,7 @@ import axisWGSL from './axis.wgsl?raw';
 import blitWGSL from './blit.wgsl?raw';
 import accumulateWGSL from './accumulate.wgsl?raw';
 import slicePlanesWGSL from './slice-planes.wgsl?raw';
+import labelsWGSL from './labels.wgsl?raw';
 
 // Inject rendering constants into shader source. Atlas size is per-viewer (the
 // atlas may be budget-shrunk), so it's passed in rather than read from CONFIG.
@@ -41,6 +42,9 @@ const sharedBindings = /* wgsl */ `
 @group(0) @binding(8) var volumeTexture1: texture_3d<f32>;
 @group(0) @binding(9) var volumeTexture2: texture_3d<f32>;
 @group(0) @binding(10) var volumeTexture3: texture_3d<f32>;
+@group(0) @binding(12) var labelAtlas: texture_3d<u32>;
+@group(0) @binding(13) var<storage, read> labelSlots: array<u32>;
+@group(0) @binding(14) var labelColors: texture_2d<f32>;
 `;
 
 // Assemble the common shader code for a given atlas size
@@ -48,6 +52,7 @@ function buildSharedCode(atlasSize: number): string {
   return [
     injectConfig(commonWGSL, atlasSize),
     samplingWGSL,
+    labelsWGSL,
     compositingWGSL,
     raymarchingWGSL,
   ].join('\n');
@@ -172,6 +177,7 @@ export function buildSlicePlanesShader(atlasSize: number = CONFIG.ATLAS_SIZE): s
     sharedBindings,
     injectConfig(commonWGSL, atlasSize),
     samplingWGSL,
+    labelsWGSL,
     slicePlanesWGSL,
   ].join('\n');
 }

@@ -49,6 +49,9 @@ export interface ViewerState {
   showSliceZ: boolean;
   showWireframe: boolean;
   showAxis: boolean;
+  /** Label image shown (see KilnEngine.setLabels) and its opacity */
+  labels: string | null;
+  labelOpacity: number;
 }
 
 /** Another view of the viewer's dataset in its own canvas, e.g. one pane of a multi-view layout. */
@@ -277,6 +280,8 @@ export class KilnViewer {
       showSliceZ: this.renderer.showSliceZ,
       showWireframe: this.renderer.showWireframe,
       showAxis: this.renderer.showAxis,
+      labels: this.engine.labels,
+      labelOpacity: this.renderer.labelOpacity,
     };
   }
 

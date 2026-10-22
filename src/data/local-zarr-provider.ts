@@ -14,10 +14,16 @@ import { UnsupportedDatasetError } from './data-provider.js';
 import { provisionalDataRange } from './value-types.js';
 import { extractMultiscales } from './zarr-validator.js';
 import { RollingAvg } from './network-tracker.js';
+import { labelId, parseLabelNames } from './labels.js';
+import { ZarrDataProvider } from './zarr-provider.js';
 import { clampedLutEntry, computeBrickChunkFootprint, chunkCoords, chunkLayout } from './chunk-math.js';
 
 export class LocalZarrDataProvider extends BaseZarrProvider {
   private dirHandle: FileSystemDirectoryHandle;
+  /** Sub-directories of dirHandle that hold the image, resolved by initialize() */
+  private readonly path: string[];
+  /** Image group: dirHandle, or its bioformats2raw "0" sub-group */
+  private groupHandle: FileSystemDirectoryHandle;
   private arrays: ZarrArray<DataType, any>[] = [];
   private targetFormat: TargetFormat = 'r16float';
 
@@ -25,9 +31,34 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
   private fetchAvg = new RollingAvg();
   private assemblyAvg = new RollingAvg();
 
-  constructor(dirHandle: FileSystemDirectoryHandle) {
+  /** `labels`: a label image at `path` below dirHandle, assembled as 16-bit label IDs. */
+  constructor(dirHandle: FileSystemDirectoryHandle, { labels = false, path = [] }: { labels?: boolean; path?: string[] } = {}) {
     super();
     this.dirHandle = dirHandle;
+    this.groupHandle = dirHandle;
+    this.path = path;
+    this.labelMode = labels;
+    if (labels) this.targetFormat = 'r16unorm';
+  }
+
+  async listLabels(): Promise<string[]> {
+    const store = new FileSystemStore(this.groupHandle);
+    for (const key of ['/labels/zarr.json', '/labels/.zattrs']) {
+      const bytes = await store.get(key as never).catch(() => undefined);
+      if (!bytes) continue;
+      try {
+        const json = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+        return parseLabelNames((json['attributes'] as Record<string, unknown> | undefined) ?? json);
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  }
+
+  openLabels(source: string): ZarrDataProvider | LocalZarrDataProvider {
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(source)) return new ZarrDataProvider(source, { labels: true });
+    return new LocalZarrDataProvider(this.groupHandle, { labels: true, path: ['labels', source] });
   }
 
   // r16float: convert uint16 → float16 bit pattern. r8unorm: downsample to 8-bit. r16unorm: raw.
@@ -38,6 +69,8 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
   async initialize(): Promise<VolumeMetadata> {
     if (this.metadata) return this.metadata;
 
+    for (const name of this.path) this.dirHandle = await this.dirHandle.getDirectoryHandle(name);
+    this.groupHandle = this.dirHandle;
     const store = new FileSystemStore(this.dirHandle);
     const rootGroup = await open(root(store), { kind: 'group' });
 
@@ -56,6 +89,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
           attrs = subAttrs;
           ms = subMs;
           subGroupPath = '0/';
+          this.groupHandle = await this.dirHandle.getDirectoryHandle('0');
         }
       } catch {
         // sub-group doesn't exist
@@ -218,6 +252,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
     const is16bit = this.metadata!.bitDepth === 16;
     const isFloat = this.metadata!.isFloat ?? false;
     const downsampleTo8 = is16bit && !isFloat && this.targetFormat === 'r8unorm';
+    const labelMode = this.labelMode;
     const floatMin = this.metadata!.dataRange?.[0] ?? 0;
     const floatMax = this.metadata!.dataRange?.[1] ?? 1;
     const brick = (is16bit && !downsampleTo8)
@@ -270,6 +305,10 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
                 if (raw < rawMinVal) rawMinVal = raw;
                 if (raw > rawMaxVal) rawMaxVal = raw;
               }
+            } else if (labelMode) {
+              // int64 label arrays decode to bigint
+              brickVal = labelId(raw as number | bigint);
+              statVal = brickVal;
             } else if (downsampleTo8) {
               brickVal = raw >> 8;
               statVal = raw;

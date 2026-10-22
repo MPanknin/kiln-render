@@ -31,6 +31,7 @@ describe('COMPUTE_UNIFORMS layout', () => {
       shading: 464,
       gradientOpacity: 468,
       orthographic: 472,
+      labelOpacity: 476,
     });
   });
 
@@ -43,7 +44,7 @@ describe('COMPUTE_UNIFORMS layout', () => {
 
 describe('SLICE_UNIFORMS layout', () => {
   it('has the expected total size (multiple of 16)', () => {
-    expect(SLICE_UNIFORMS.size).toBe(432);
+    expect(SLICE_UNIFORMS.size).toBe(448);
     expect(SLICE_UNIFORMS.size % 16).toBe(0);
   });
 
@@ -57,6 +58,7 @@ describe('SLICE_UNIFORMS layout', () => {
       channelWindowCenter: 208,
       channelWindowWidth: 224,
       lodScales: 240,
+      labelOpacity: 432,
     });
   });
 });

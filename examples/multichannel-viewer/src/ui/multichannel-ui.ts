@@ -28,6 +28,7 @@ import { percentileWindow, windowDomain, AUTO_CONTRAST_BINS } from "../../../sha
 import { toRawValue, formatRawValue, isIntegerDtype, type ValueSpace } from "../../../shared/data-values.js";
 import { createTimeSlider, createChannelPicker, withSlotSource, firstUnusedSource } from "../../../shared/source-controls.js";
 import type { ApplySelection, TimeSlider } from "../../../shared/source-controls.js";
+import { mountLabelControls } from "../../../shared/label-controls.js";
 
 /** Only 'dvr' | 'mip' | 'slice' are selectable via the Mode segmented control — 'slice-lod' is a debug visualization, relocated to the "LOD Levels" Advanced toggle (applied on top of the base mode). */
 type BaseRenderMode = "dvr" | "mip" | "slice";
@@ -290,6 +291,7 @@ export class MultichannelUI {
     body.appendChild(this.modeSwap.el);
     this.buildChannelRack();
     this.buildSliceRows();
+    mountLabelControls(this.viewer, body);
 
     // --- Scene section (collapsible, open by default) ---
     const { el: sceneEl, body: sceneSection } = createCollapsible(

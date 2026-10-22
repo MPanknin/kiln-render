@@ -54,6 +54,7 @@ fn rayMarchDVR(
     // voxel axes → world axes, so normals stay right on anisotropic voxels
     let voxelsPerUnit = datasetSize / normalizedSize;
     let lightDir = -rayDir;
+    let labelOpacity = uniforms.labelOpacity;
 
     // compute jitter fraction once for the whole ray
     // select() is not short-circuiting in WGSL — rand() would run even with jitter off.
@@ -80,6 +81,7 @@ fn rayMarchDVR(
         }
 
         let extinctionScale = brick.stepSize * uniforms.densityScale * maxDim * 0.5 * LOG2E;
+        let brickLabels = labelOpacity > 0.0 && labelSlotReady(brick.indirection);
 
         if (tSample < 0.0) {
             // First valid brick: start the sampling comb with jitter
@@ -114,16 +116,29 @@ fn rayMarchDVR(
                     weightedColor += density * chColor.rgb * chColor.a;
                     maxDensity = max(maxDensity, density);
                 }
+                if (brickLabels) {
+                    let label = labelColorAt(brick.atlasOffset + voxel * brick.atlasScale);
+                    if (label.a > 0.0) {
+                        // As colour + opacity, labelled like the single-channel sample below
+                        let visible = maxDensity > 0.01;
+                        let rgb = mix(select(vec3f(0.0), weightedColor / maxDensity, visible), label.rgb,
+                                      select(1.0, labelOpacity, visible));
+                        maxDensity = max(select(0.0, maxDensity, visible), labelOpacity * label.a);
+                        weightedColor = rgb * maxDensity;
+                    }
+                }
                 composeSampleAdditive(weightedColor, maxDensity, extinctionScale, &color, &alpha);
             } else {
                 // Single channel: TF-based DVR with windowing and float normalisation
                 let rawDensity = sampleAtlasAffine(voxel, brick.atlasOffset, brick.atlasScale);
                 let density = clamp((rawDensity - uniforms.floatMin) * floatInvRange, 0.0, 1.0);
                 let windowed = applyWindow(density, windowCenter, windowWidth);
+                var rgb = vec3f(0.0);
+                var opacity = 0.0;
                 if (windowed > 0.01) {
                     let tf = textureSampleLevel(tfTexture, tfSampler, vec2f(windowed, 0.5), 0.0);
-                    var rgb = tf.rgb;
-                    var opacity = tf.a;
+                    rgb = tf.rgb;
+                    opacity = tf.a;
                     // Boundary emphasis can only lower opacity, so with it on every sample
                     // needs a gradient; shading alone skips samples that barely contribute.
                     if (useGradient && (gradientOpacity > 0.0
@@ -136,6 +151,16 @@ fn rayMarchDVR(
                             rgb = mix(rgb, shadeTwoSided(n, lightDir, rgb), shading * edge);
                         }
                     }
+                }
+                if (brickLabels) {
+                    let label = labelColorAt(brick.atlasOffset + voxel * brick.atlasScale);
+                    if (label.a > 0.0) {
+                        // Labelled voxels take the label colour (tinting visible samples) and at least its opacity
+                        rgb = mix(rgb, label.rgb, select(labelOpacity, 1.0, opacity == 0.0));
+                        opacity = max(opacity, labelOpacity * label.a);
+                    }
+                }
+                if (opacity > 0.0) {
                     let sampleAlpha = 1.0 - exp2(-opacity * extinctionScale);
                     color += rgb * sampleAlpha * (1.0 - alpha);
                     alpha += sampleAlpha * (1.0 - alpha);

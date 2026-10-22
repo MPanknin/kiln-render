@@ -50,6 +50,8 @@ function parseURLParams(): {
   mode?: string;
   cam?: [number, number, number] | [number, number, number, number, number, number];
   projection?: Projection;
+  labels?: string;
+  labelOpacity?: number;
   channels?: ChannelState[];
   slice?: SliceParams;
 } {
@@ -89,6 +91,8 @@ function parseURLParams(): {
     mode: params.get('mode') ?? undefined,
     cam,
     projection: params.get('proj') === 'ortho' ? 'orthographic' : undefined,
+    labels: params.get('labels') || undefined,
+    labelOpacity: params.has('labelOpacity') ? Number(params.get('labelOpacity')) : undefined,
     channels,
     slice,
   };
@@ -126,6 +130,8 @@ async function main() {
     upAxis: urlParams.up as UpAxis | undefined,
     cam: urlParams.cam,
     projection: urlParams.projection,
+    labels: urlParams.labels,
+    labelOpacity: urlParams.labelOpacity,
     renderScale: urlParams.scale,
     pyramid: urlParams.pyramid,
     // Hidden channels in the share URL must not be streamed for the base load
@@ -183,6 +189,10 @@ async function main() {
     const [rx, ry, dist, tx, ty, tz] = state.cam;
     p.set('cam', `${rx.toFixed(3)},${ry.toFixed(3)},${dist.toFixed(3)},${tx.toFixed(3)},${ty.toFixed(3)},${tz.toFixed(3)}`);
     if (state.projection === 'orthographic') p.set('proj', 'ortho');
+    if (state.labels) {
+      p.set('labels', state.labels);
+      p.set('labelOpacity', state.labelOpacity.toFixed(2));
+    }
     const channelState = ui.getChannelState();
     if (channelState.length > 0) {
       p.set('channels', channelState.map(ch =>

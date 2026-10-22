@@ -7,6 +7,7 @@ import { open, root } from 'zarrita';
 import { TolerantFetchStore } from './tolerant-fetch-store.js';
 import { FileSystemStore } from './filesystem-store.js';
 import { SUPPORTED_DTYPES } from './value-types.js';
+import { isLabelDtype } from './labels.js';
 import { ZYX } from './chunk-math.js';
 import type { SpatialOrder } from './chunk-math.js';
 
@@ -85,6 +86,7 @@ export function validateZarrSupport(
   ms: MultiscalesEntry,
   firstArrayShape: number[],
   dtype: string,
+  labels = false,
 ): string[] {
   const reasons: string[] = [];
   const axes = normalizeAxes(ms.axes);
@@ -94,7 +96,9 @@ export function validateZarrSupport(
     console.warn(`[Kiln] OME-NGFF version "${ms.version}" detected — parsing best-effort`);
   }
 
-  if (!SUPPORTED_DTYPES.includes(dtype)) {
+  if (labels) {
+    if (!isLabelDtype(dtype)) reasons.push(`Label data type "${dtype}" is not supported (integers or floats)`);
+  } else if (!SUPPORTED_DTYPES.includes(dtype)) {
     reasons.push(`Data type "${dtype}" is not supported (only uint8, uint16, int16, or float32)`);
   } else if (dtype === 'float64') {
     console.warn('[Kiln] float64 detected — will be read as float32 (precision loss possible)');

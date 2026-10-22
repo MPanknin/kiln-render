@@ -12,6 +12,7 @@ import { TolerantFetchStore } from './tolerant-fetch-store.js';
 import { float32ToFloat16Bits, getUint16ToFloat16Lut } from '../utils/float16.js';
 import { SharedFetchRegistry } from './shared-fetch.js';
 import { computeBrickChunkFootprint, computeBrickCoreChunkRange, clampedLutEntry, chunkCoords, chunkLayout } from './chunk-math.js';
+import { labelId } from './labels.js';
 
 // Static codec imports — zarrita's dynamic imports fail in Vite dev workers.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -64,6 +65,8 @@ export interface ZarrWorkerRequest {
   targetFormat?: 'r8unorm' | 'r16unorm' | 'r16float';
   /** Whether source data is float32/float64 */
   isFloat32?: boolean;
+  /** For 'init': a label image, assembled as 16-bit label IDs (see labelId) */
+  labels?: boolean;
   /**
    * Feature flag ?p4=1. OFF → the original in-flight dedup (control): a
    * shared fetch runs under the FIRST caller's signal, so cancelling that
@@ -136,6 +139,7 @@ let isFloat32 = false;
 let floatMin = 0;
 let floatMax = 1;
 let refcountedAborts = false; // ?p4=1
+let labels = false;
 
 // Per-worker chunk cache (LRU, bounded by byte count to prevent OOM)
 interface DecodedChunk { data: ArrayLike<number>; shape: number[]; stride: number[] }
@@ -200,7 +204,7 @@ function estimateBytes(data: ArrayLike<number>): number {
   if (data instanceof Uint8Array || data instanceof Int8Array) return data.length;
   if (data instanceof Uint16Array || data instanceof Int16Array) return data.length * 2;
   if (data instanceof Float32Array || data instanceof Uint32Array || data instanceof Int32Array) return data.length * 4;
-  if (data instanceof Float64Array) return data.length * 8;
+  if (data instanceof Float64Array || data instanceof BigInt64Array || data instanceof BigUint64Array) return data.length * 8;
   return data.length * (is16bit ? 2 : 1); // fallback estimate
 }
 
@@ -259,6 +263,7 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
         is16bit = event.data.is16bit ?? false;
         targetFormat = event.data.targetFormat ?? 'r16unorm';
         isFloat32 = event.data.isFloat32 ?? false;
+        labels = event.data.labels ?? false;
         refcountedAborts = event.data.refcountedAborts ?? false;
         floatMin = event.data.floatMin ?? 0;
         floatMax = event.data.floatMax ?? 1;
@@ -533,7 +538,7 @@ async function assembleBrick(
 
   // uint16 → r16float bricks write float16 bits directly via the encode LUT,
   // in the same pass as the scatter — avoids a second full-brick conversion pass.
-  const writeFloat16 = is16bit && targetFormat === 'r16float' && !isFloat32;
+  const writeFloat16 = is16bit && targetFormat === 'r16float' && !isFloat32 && !labels;
   const u16ToF16Lut = writeFloat16 ? getUint16ToFloat16Lut() : null;
   // Voxels of missing chunks read as 0, whose stored form here is not all-zero bits.
   if (u16ToF16Lut) brick.fill(u16ToF16Lut[0]!);
@@ -583,6 +588,10 @@ async function assembleBrick(
               if (raw < rawMinVal) rawMinVal = raw;
               if (raw > rawMaxVal) rawMaxVal = raw;
             }
+          } else if (labels) {
+            // int64 label arrays decode to bigint
+            brickVal = labelId(raw as number | bigint);
+            statVal = brickVal;
           } else if (u16ToF16Lut) {
             // Stats stay in raw uint16 space; only the stored voxel is float16-encoded.
             brickVal = u16ToF16Lut[raw]!;

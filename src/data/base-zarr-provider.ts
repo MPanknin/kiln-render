@@ -23,6 +23,7 @@ import { extractMultiscales, normalizeAxes, spatialOrder, validateZarrSupport } 
 import { estimateBrickChunkFanout, computeBrickChunkFootprint, pickXyz } from './chunk-math.js';
 import type { SpatialOrder } from './chunk-math.js';
 import { buildPyramid } from '../core/pyramid.js';
+import { parseLabelColors } from './labels.js';
 import type { Vec3, PyramidPolicy } from '../core/pyramid.js';
 
 interface OmeTransform { type: string; scale?: number[]; translation?: number[] }
@@ -115,6 +116,8 @@ export abstract class BaseZarrProvider implements DataProvider {
   protected metadata: VolumeMetadata | null = null;
   protected brickStatsCache = new Map<string, BrickStats>();
   protected pyramidPolicy: PyramidPolicy = 'native';
+  /** Label image: any integer or float type, assembled as 16-bit label IDs (see labelId). */
+  protected labelMode = false;
   /** Per-LOD chunk geometry from parseOmeMetadata(); subclasses assign it in initialize(). */
   protected lodParams: LodParams[] = [];
   private networkTracker = new NetworkTracker();
@@ -307,7 +310,7 @@ export abstract class BaseZarrProvider implements DataProvider {
 
     // Safety-net validation (catches direct ?dataset= URL loads that bypassed dialog pre-check)
     const dtype = arrays[0]!.dtype;
-    const validationReasons = validateZarrSupport(ms, arrays[0]!.shape, String(dtype));
+    const validationReasons = validateZarrSupport(ms, arrays[0]!.shape, String(dtype), this.labelMode);
     if (validationReasons.length > 0) throw new UnsupportedDatasetError(validationReasons);
 
     // Kiln works in [x, y, z]; Zarr vectors end in z, y, x, or in x, y, z for webKnossos
@@ -316,7 +319,7 @@ export abstract class BaseZarrProvider implements DataProvider {
 
     // Storage mapping for the source dtype (bit depth, unorm vs raw-value path)
     const dtypeStr = String(dtype);
-    const valueType = valueTypeFor(dtypeStr);
+    const valueType = this.labelMode ? { bitDepth: 16 as const, isFloat: false } : valueTypeFor(dtypeStr);
     if (!valueType) throw new UnsupportedDatasetError([`Data type "${dtypeStr}" is not supported`]); // unreachable after validation
     const { bitDepth, isFloat } = valueType;
 
@@ -443,8 +446,10 @@ export abstract class BaseZarrProvider implements DataProvider {
       timepoint,
       isFloat,
       dtype: dtypeStr,
+      labelColors: this.labelMode ? parseLabelColors(attrs) : undefined,
     };
     this.applySourceSelection(metadata, lodParams, this.selection);
+    if (this.labelMode) return { metadata, lodParams };
 
     // Fanout diagnostic: worst-case chunks per brick footprint and channel, per LOD.
     // The re-chunking hint only helps when a chunk axis is thinner than a brick.

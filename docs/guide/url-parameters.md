@@ -17,6 +17,8 @@ The demo viewer reads its state from the URL; **Share** (top right) copies the c
 | `tfpts` | x,y pairs, e.g. `0,0,0.5,0.8,1,1` | Transfer function opacity points |
 | `up` | `x`, `y`, `z`, `-x`, `-y`, `-z` | Camera up axis |
 | `cam` | `rx,ry,dist,tx,ty,tz` | Camera rotation, distance and target |
+| `labels` | name or URL | Label image drawn over the volume: a name from the dataset's `labels` group or an OME-Zarr URL (see [Labels](/rendering/labels)) |
+| `labelOpacity` | 0–1 | How strongly label colours cover the image (default 0.5) |
 | `proj` | `ortho` | Orthographic projection for every view, quad panes included (default perspective; also the grid button under the orientation gizmo, or `O`) |
 | `scale` | 0.25–1 | Render resolution scale |
 | `sse` | pixels | LOD screen-space error threshold (default 8; lower = sharper, more data) |

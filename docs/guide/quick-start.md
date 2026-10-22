@@ -47,6 +47,8 @@ const viewer = await KilnViewer.create(canvas, url, {
   upAxis: '-y',
   cam: [0.07, 3.63, 3.93, 0.10, 0.00, -0.06], // rx, ry, dist, tx, ty, tz
   projection: 'perspective',    // or 'orthographic'; viewer.projection switches all views later
+  labels: 'cells',              // label image from the dataset's labels group, or a URL
+  labelOpacity: 0.5,            // 0–1
   clipMin: [0, 0, 0],           // 0–1
   clipMax: [1, 1, 1],
   sliceX: 0.5, sliceY: 0.5, sliceZ: 0.5,

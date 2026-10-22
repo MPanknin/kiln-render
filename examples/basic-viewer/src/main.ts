@@ -229,6 +229,7 @@ async function main() {
 
   if (!IS_EMBED) {
     const ui = new VolumeUI(viewer);
+    ui.onUpAxisChanged = () => quad.syncUpAxis();
     viewer.onBeforeFrame = () => ui.recordFrame();
     viewer.onChannelWindowsChanged = () => ui.refreshValueLabels();
     ui.syncFromState();

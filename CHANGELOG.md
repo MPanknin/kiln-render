@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `StreamingManager.setBaseLodLoadedCallback` no longer passes brick data to the callback, and also fires when a channel shown later has filled in.
 
 ### Fixed
+- Quad panes follow changes to the up axis, including their labels and when reopening the layout. Removed pane handles cannot change the main view or remove a replacement pane that reuses their canvas.
 - Ray-guided streaming keeps a brick visible for the same number of frames with TAA on or off. With TAA off, each readback covers one frame, which shrank the window fourfold.
 - Ray-guided streaming flushes visibility when rendering goes idle, including with TAA disabled and when a previous GPU readback is still pending, so newly exposed bricks can refine without another camera movement.
 - `int16` and `float32` values are rounded to the nearest half float. They were truncated, and values below 2^-14 were flushed to zero.

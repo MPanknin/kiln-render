@@ -112,3 +112,5 @@ function frame() {
 ```
 
 `removeView(index)` drops a view; later views move down one index. With `KilnViewer`, `viewer.addPane(canvas)` does the wiring: the pane gets its own camera and `mode` and joins the viewer's render loop.
+
+Use a separate canvas for each pane. `viewer.removePane(pane)` detaches that exact handle; calling it again is harmless, even if the canvas has since been reused for a new pane. Reading or setting a detached pane's `mode` throws, as it does after the viewer is disposed.

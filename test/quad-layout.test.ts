@@ -48,6 +48,59 @@ describe('axis panes', () => {
 describe('KilnViewer panes', () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  function setupPanes() {
+    const renderers = [{ volumeRenderMode: 'dvr', resetAccumulation: vi.fn() }];
+    const viewer: any = Object.create(KilnViewer.prototype);
+    Object.assign(viewer, {
+      disposed: false, panes: [], canvas: canvasStub().canvas,
+      camera: new Camera(canvasStub().canvas), format: 'bgra8unorm',
+      resizeObserver: { observe: vi.fn(), unobserve: vi.fn(), disconnect: vi.fn() },
+      context: { unconfigure: vi.fn() },
+      engine: {
+        device: { limits: { maxTextureDimension2D: 8192 } },
+        addView: () => renderers.push({ volumeRenderMode: 'dvr', resetAccumulation: vi.fn() }) - 1,
+        removeView: (i: number) => renderers.splice(i, 1),
+        getRenderer: (i: number) => renderers[i], setSize: vi.fn(), dispose: vi.fn(),
+      },
+    });
+    const newCanvas = () => Object.assign(canvasStub().canvas, {
+      clientWidth: 100, clientHeight: 100,
+      getContext: () => ({ configure: vi.fn(), unconfigure: vi.fn() }),
+    });
+    return { viewer: viewer as KilnViewer, renderers, newCanvas };
+  }
+
+  it('invalidates removed handles without affecting the main view or surviving panes', () => {
+    const { viewer, renderers, newCanvas } = setupPanes();
+    const first = viewer.addPane(newCanvas());
+    const second = viewer.addPane(newCanvas());
+    viewer.removePane(first);
+    expect(() => first.mode).toThrow('no longer attached');
+    expect(() => { first.mode = 'iso'; }).toThrow('no longer attached');
+    second.mode = 'mip';
+    expect(renderers.map(r => r.volumeRenderMode)).toEqual(['dvr', 'mip']);
+    expect(renderers[1]!.resetAccumulation).toHaveBeenCalledOnce();
+
+    const replacement = viewer.addPane(first.canvas);
+    viewer.removePane(first); // A stale handle must not remove a new pane using the same canvas.
+    replacement.mode = 'slice';
+    expect(renderers.map(r => r.volumeRenderMode)).toEqual(['dvr', 'mip', 'slice']);
+  });
+
+  it('rejects duplicate canvases and handles used after disposal', () => {
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const { viewer, renderers, newCanvas } = setupPanes();
+    const pane = viewer.addPane(newCanvas());
+    expect(() => viewer.addPane(pane.canvas)).toThrow('already belongs');
+    expect(() => viewer.addPane((viewer as any).canvas)).toThrow('already belongs');
+    expect(renderers).toHaveLength(2);
+    viewer.dispose();
+    expect(() => pane.mode).toThrow('no longer attached');
+    expect(() => { pane.mode = 'iso'; }).toThrow('no longer attached');
+    expect(() => viewer.addPane(newCanvas())).toThrow('disposed');
+    expect(renderers[0]!.volumeRenderMode).toBe('dvr');
+  });
+
   it('updates every pane in one call and renders only those that need it', () => {
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
     const viewer: any = Object.create(KilnViewer.prototype);
@@ -87,7 +140,8 @@ class El {
   insertBefore(el: El, ref: El) { el.parentNode?.removeChild(el); this.children.splice(this.children.indexOf(ref), 0, el); el.parentNode = this; }
   remove() { this.parentNode?.removeChild(this); }
   replaceChildren() { for (const c of [...this.children]) this.removeChild(c); }
-  setAttribute() {}
+  attributes: Record<string, string> = {};
+  setAttribute(name: string, value: string) { this.attributes[name] = value; }
   addEventListener(type: string, fn: () => void) { this.listeners[type] = fn; }
   add() {}
   blur() {}
@@ -106,15 +160,18 @@ describe('quad layout switching', () => {
     body.append(canvas);
     const panes: any[] = [];
     const viewer: any = {
-      camera: { getUpAxis: () => 'y' },
+      camera: new Camera(canvasStub().canvas),
       addPane: vi.fn(() => {
-        const pane = { mode: 'dvr', camera: { lookFrom: vi.fn(), setOrbitState: vi.fn(), getOrbitState: () => [0.1, 0.2, 2, 0, 0, 0], orbitEnabled: true } };
+        const camera = new Camera(canvasStub().canvas);
+        camera.setUpAxis(viewer.camera.getUpAxis());
+        const pane = { mode: 'dvr', camera };
         panes.push(pane);
         return pane;
       }),
       removePane: vi.fn(),
       resize: vi.fn(),
     };
+    viewer.camera.setUpAxis('y');
     const layout = mountQuadLayout(viewer, canvas as unknown as HTMLCanvasElement, { active });
     return { body, canvas, viewer, panes, layout };
   }
@@ -136,9 +193,10 @@ describe('quad layout switching', () => {
 
   it('removes the panes for the single view and restores their mode and camera', () => {
     const { body, canvas, viewer, panes, layout } = setup(true);
-    const firstSelect = canvas.parentNode!.parentNode!.children[0]!.children[1]!.children[0]!;
+    const firstSelect = canvas.parentNode!.parentNode!.children[0]!.children[1]!.children[1]!;
     firstSelect.value = 'mip';
     firstSelect.listeners.change!();
+    panes[0].camera.setOrbitState([0.1, 0.2, 2, 0.1, 0.2, 0.3]);
     layout.toggle();
     expect(viewer.removePane).toHaveBeenCalledTimes(3);
     expect(canvas.parentNode).toBe(body);
@@ -146,7 +204,47 @@ describe('quad layout switching', () => {
     layout.toggle();
     const restored = panes.slice(3);
     expect(restored.map(p => p.mode)).toEqual(['mip', 'slice', 'slice']);
-    expect(restored[0].camera.setOrbitState).toHaveBeenCalledWith([0.1, 0.2, 2, 0, 0, 0]);
+    expect(restored[0].camera.getOrbitState()).toEqual([0.1, 0.2, 2, 0.1, 0.2, 0.3]);
     expect(layout.modes()).toEqual(['mip', 'slice', 'slice']);
+  });
+
+  it.each(['x', '-x', 'y', '-y', 'z', '-z'] as const)('updates directions and labels for up=%s before opening and while visible', up => {
+    const { viewer, panes, canvas, layout } = setup();
+    viewer.camera.setUpAxis(up);
+    layout.toggle(); // No callback is needed when the layout is hidden.
+    const check = (axis: typeof up, current: typeof panes) => {
+      axisViews(axis).forEach(({ name, dir }, i) => {
+        const expected = new Camera(canvasStub().canvas);
+        expected.setUpAxis(axis);
+        expected.lookFrom(dir);
+        expect(current[i].camera.getUpAxis()).toBe(axis);
+        expect(current[i].camera.getOrbitState()).toEqual(expected.getOrbitState());
+        const bar = canvas.parentNode!.parentNode!.children[i]!.children[1]!;
+        expect(bar.children[0]!.textContent).toBe(name);
+        expect(bar.children[1]!.attributes['aria-label']).toBe(`${name} render mode`);
+      });
+    };
+    check(up, panes);
+    const next = up === 'z' ? '-y' : 'z';
+    viewer.camera.setUpAxis(next);
+    layout.syncUpAxis();
+    check(next, panes);
+    expect(viewer.addPane).toHaveBeenCalledTimes(3); // Reorient existing views without rebuilding GPU resources.
+  });
+
+  it('drops stale orbit angles when the up axis changes while hidden and keeps pane modes', () => {
+    const { viewer, panes, canvas, layout } = setup(true);
+    const select = canvas.parentNode!.parentNode!.children[0]!.children[1]!.children[1]!;
+    select.value = 'iso';
+    select.listeners.change!();
+    panes[2].camera.setOrbitState([0.1, 0.2, 2, 0.3, 0.4, 0.5]);
+    layout.toggle();
+    viewer.camera.setUpAxis('-z');
+    layout.toggle();
+    const expected = new Camera(canvasStub().canvas);
+    expected.setUpAxis('-z');
+    expected.lookFrom([0, 0, -1]);
+    expect(panes[5].camera.getOrbitState()).toEqual(expected.getOrbitState());
+    expect(layout.modes()).toEqual(['iso', 'slice', 'slice']);
   });
 });

@@ -52,15 +52,13 @@ export interface ViewerState {
 export interface ViewerPane {
   readonly canvas: HTMLCanvasElement;
   readonly camera: Camera;
-  /** This pane's render mode; every other display setting follows the main view. */
+  /** This pane's render mode; every other display setting follows the main view. Throws after removal or viewer disposal. */
   mode: VolumeRenderMode;
 }
 
 /** A pane's canvas, its WebGPU context and camera; pane i is engine view i + 1. */
-interface PaneState {
-  canvas: HTMLCanvasElement;
+interface PaneState extends ViewerPane {
   context: GPUCanvasContext;
-  camera: Camera;
 }
 
 export class KilnViewer {
@@ -186,19 +184,22 @@ export class KilnViewer {
    * setting follows the main view. All panes share one render loop and one stream.
    */
   addPane(canvas: HTMLCanvasElement): ViewerPane {
+    if (this.disposed) throw new Error('Cannot add a pane to a disposed viewer');
+    if (canvas === this.canvas || this.panes.some(p => p.canvas === canvas)) {
+      throw new Error('Canvas already belongs to this viewer');
+    }
     const context = canvas.getContext('webgpu')!;
     context.configure({ device: this.device, format: this.format });
     const camera = new Camera(canvas);
     camera.setUpAxis(this.camera.getUpAxis());
-    const state: PaneState = { canvas, context, camera };
-    const view = this.engine.addView();
-    this.panes.push(state);
-    this.resizeObserver.observe(canvas);
-    this.resizeCanvas(canvas, view, true);
-
-    const renderer = () => this.engine.getRenderer(this.panes.indexOf(state) + 1);
-    return {
+    const renderer = () => {
+      const index = this.panes.indexOf(state);
+      if (this.disposed || index < 0) throw new Error('Pane is no longer attached to the viewer');
+      return this.engine.getRenderer(index + 1);
+    };
+    const state: PaneState = {
       canvas,
+      context,
       camera,
       get mode() { return renderer().volumeRenderMode; },
       set mode(value: VolumeRenderMode) {
@@ -206,11 +207,17 @@ export class KilnViewer {
         renderer().resetAccumulation();
       },
     };
+    const view = this.engine.addView();
+    this.panes.push(state);
+    this.resizeObserver.observe(canvas);
+    this.resizeCanvas(canvas, view, true);
+    return state;
   }
 
   /** Stop rendering a pane added with addPane(); its canvas stays in the page. */
   removePane(pane: ViewerPane): void {
-    const i = this.panes.findIndex(p => p.canvas === pane.canvas);
+    if (this.disposed) return;
+    const i = this.panes.indexOf(pane as PaneState);
     if (i < 0) return;
     const [state] = this.panes.splice(i, 1);
     this.engine.removeView(i + 1);

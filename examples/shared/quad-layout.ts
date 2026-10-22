@@ -40,6 +40,8 @@ export interface QuadLayout {
   toggle(): void;
   /** Modes of the front, side and top panes. */
   modes(): PaneMode[];
+  /** Reorient axis panes after the main camera's up axis changes. */
+  syncUpAxis(): void;
   /** Called after every switch. */
   onChange?: (active: boolean) => void;
 }
@@ -54,10 +56,29 @@ export function mountQuadLayout(
   grid.className = embed ? 'quad-layout quad-layout-embed' : 'quad-layout';
 
   // Pane state that outlives the panes, so a round trip through the single view keeps it
-  const saved = axisViews(viewer.camera.getUpAxis()).map(({ name, dir }, i) => ({
+  let upAxis = viewer.camera.getUpAxis();
+  const saved = axisViews(upAxis).map(({ name, dir }, i) => ({
     name, dir, mode: modes[i] ?? DEFAULT_MODE, orbit: null as OrbitState | null,
   }));
   let panes: ViewerPane[] = [];
+  let labels: HTMLElement[] = [];
+  let selects: HTMLSelectElement[] = [];
+
+  const syncUpAxis = () => {
+    const next = viewer.camera.getUpAxis();
+    if (next === upAxis) return;
+    upAxis = next;
+    axisViews(next).forEach(({ name, dir }, i) => {
+      Object.assign(saved[i]!, { name, dir, orbit: null });
+      const pane = panes[i];
+      if (pane) {
+        pane.camera.setUpAxis(next);
+        pane.camera.lookFrom(dir);
+        labels[i]!.textContent = name;
+        selects[i]!.setAttribute('aria-label', `${name} render mode`);
+      }
+    });
+  };
 
   const cell = (paneCanvas: HTMLCanvasElement, name: string): HTMLElement => {
     const el = document.createElement('div');
@@ -71,10 +92,15 @@ export function mountQuadLayout(
   };
 
   const show = () => {
+    syncUpAxis();
     canvas.replaceWith(grid);
     panes = saved.map(s => {
       const paneCanvas = document.createElement('canvas');
-      const bar = cell(paneCanvas, s.name);
+      const bar = cell(paneCanvas, '');
+      const label = document.createElement('span');
+      label.textContent = s.name;
+      bar.append(label);
+      labels.push(label);
       const pane = viewer.addPane(paneCanvas);
       if (s.orbit) pane.camera.setOrbitState(s.orbit);
       else pane.camera.lookFrom(s.dir);
@@ -82,6 +108,7 @@ export function mountQuadLayout(
       pane.mode = s.mode;
 
       const select = document.createElement('select');
+      selects.push(select);
       select.setAttribute('aria-label', `${s.name} render mode`);
       for (const mode of PANE_MODES) select.add(new Option(MODE_LABELS[mode], mode));
       select.value = s.mode;
@@ -104,6 +131,8 @@ export function mountQuadLayout(
       viewer.removePane(pane);
     });
     panes = [];
+    labels = [];
+    selects = [];
     grid.parentNode?.insertBefore(canvas, grid); // the 3D view takes the whole viewport again
     grid.remove();
     grid.replaceChildren();
@@ -121,6 +150,7 @@ export function mountQuadLayout(
     },
     toggle() { layout.setActive(!layout.active); },
     modes: () => saved.map(s => s.mode),
+    syncUpAxis,
   };
   if (active) show();
   return layout;

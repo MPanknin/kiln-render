@@ -103,6 +103,8 @@ export class VolumeUI {
   private timeSlider: TimeSlider | null = null;
   /** Set by the app: applies a source selection in place or opens the other viewer. */
   applySelection?: ApplySelection;
+  /** Set by the app to reorient the quad layout's axis panes. */
+  onUpAxisChanged?: () => void;
 
   constructor(viewer: KilnViewer) {
     this.viewer = viewer;
@@ -267,6 +269,7 @@ export class VolumeUI {
       value: this.params.upAxis,
       onChange: (v) => {
         this.camera.setUpAxis(v as UpAxis);
+        this.onUpAxisChanged?.();
         this.renderer.resetAccumulation();
       },
     });

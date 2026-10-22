@@ -27,6 +27,8 @@ The demo viewer reads its state from the URL; **Share** (top right) copies the c
 | `layout` | `quad` | Start with front, side and top panes around the 3D view (single-channel viewer; also the grid button in the top bar, or `Q`). The axis panes pan and zoom but don't orbit; the controls set the 3D pane's mode and everything else for all panes |
 | `panes` | modes, e.g. `mip,dvr,slice` | Render modes of the front, side and top panes: `dvr`, `mip`, `iso`, `slice` (default `slice`) |
 
+Changing **Up Axis** reorients and recenters the axis panes and updates their labels, including when you next open a hidden quad layout. Their render modes are kept; saved camera poses are restored only while the up axis is unchanged.
+
 ```
 ?dataset=https://example.com/scan.ome.zarr&mode=mip&wc=0.2&ww=0.3&tf=coolwarm
 ```

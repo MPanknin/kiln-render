@@ -64,15 +64,15 @@
   "devDependencies": {
     "fflate": "^0.8.3",
     "typescript": "^5.7.2",
-    "vite": "^6.4.3",
+    "vite": "^6.4.4",
     "vitepress": "^1.6.4",
-    "vitest": "^4.1.11",
+    "vitest": "^4.1.12",
     "vue": "^3.5.42",
     "wgpu-matrix": "^3.4.0",
     "zarrita": "^0.6.1"
   },
   "overrides": {
-    "vite": "^6.4.3",
+    "vite": "^6.4.4",
     "source-map-js": "^1.2.2",
     "vue": "^3.5.42"
   },

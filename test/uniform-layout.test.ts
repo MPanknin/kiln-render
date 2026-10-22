@@ -30,6 +30,7 @@ describe('COMPUTE_UNIFORMS layout', () => {
       lodScales: 272,
       shading: 464,
       gradientOpacity: 468,
+      orthographic: 472,
     });
   });
 

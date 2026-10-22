@@ -11,7 +11,7 @@ import {
   getStoredHandle,
   requestPermission,
 } from 'kiln-render';
-import type { ViewerOptions, DataProvider, TFPreset, UpAxis } from 'kiln-render';
+import type { ViewerOptions, DataProvider, TFPreset, UpAxis, Projection } from 'kiln-render';
 import { VolumeUI } from './ui/volume-ui.js';
 import { parseSourceSelection, writeSourceSelection, applySourceSelection, routeSourceSelection } from '../../shared/source-selection.js';
 import { timeShortcuts } from '../../shared/source-controls.js';
@@ -52,6 +52,7 @@ function parseURLParams(): {
   scale?: number;
   pyramid?: 'legacy' | 'native';
   cam?: [number, number, number] | [number, number, number, number, number, number];
+  projection?: Projection;
   clipMin?: [number, number, number];
   clipMax?: [number, number, number];
   slices?: [number, number, number];
@@ -134,6 +135,7 @@ function parseURLParams(): {
     scale: params.has('scale') ? Number(params.get('scale')) : undefined,
     pyramid: params.get('pyramid') === 'legacy' ? 'legacy' : params.get('pyramid') === 'native' ? 'native' : undefined,
     cam,
+    projection: params.get('proj') === 'ortho' ? 'orthographic' : undefined,
     clipMin,
     clipMax,
     slices,
@@ -190,6 +192,7 @@ async function main() {
     tfPoints: urlParams.tfPoints,
     upAxis: urlParams.up as UpAxis | undefined,
     cam: urlParams.cam,
+    projection: urlParams.projection,
     renderScale: urlParams.scale,
     maxPixelError: urlParams.sse,
     pyramid: urlParams.pyramid,
@@ -236,7 +239,7 @@ async function main() {
 
     const toast = mountToast();
     const takeScreenshot = setupScreenshotButton(viewer, toast);
-    const gizmo = mountOrientationGizmo(viewer.camera);
+    const gizmo = mountOrientationGizmo(viewer);
     mountLayoutButton(quad);
     mountShortcuts([
       { keys: ['1', '2', '3', '4'], display: '1 – 4', label: 'DVR / MIP / ISO / Slice',
@@ -244,6 +247,7 @@ async function main() {
       { keys: ['a', 'A'], display: 'A', label: 'Auto contrast', run: () => ui.autoContrast() },
       axisSnapShortcut((dir) => gizmo.snap(dir)),
       { keys: ['r', 'R'], display: 'R', label: 'Reset view', run: () => gizmo.reset() },
+      { keys: ['o', 'O'], display: 'O', label: 'Orthographic / perspective', run: () => gizmo.toggleProjection() },
       { keys: ['s', 'S'], display: 'S', label: 'Save screenshot', run: takeScreenshot },
       { keys: ['q', 'Q'], display: 'Q', label: 'Quad view: front, side, top and 3D', run: () => quad.toggle() },
       { keys: ['d', 'D'], display: 'D', label: 'Diagnostics panel' },
@@ -267,6 +271,7 @@ async function main() {
       p.set('scale', state.renderScale.toFixed(2));
       const [rx, ry, dist, tx, ty, tz] = state.cam;
       p.set('cam', `${rx.toFixed(3)},${ry.toFixed(3)},${dist.toFixed(3)},${tx.toFixed(3)},${ty.toFixed(3)},${tz.toFixed(3)}`);
+      if (state.projection === 'orthographic') p.set('proj', 'ortho');
 
       if (state.clipMin[0] !== 0 || state.clipMin[1] !== 0 || state.clipMin[2] !== 0) {
         p.set('clipMin', state.clipMin.map(v => v.toFixed(2)).join(','));

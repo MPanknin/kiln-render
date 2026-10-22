@@ -3,7 +3,7 @@
  */
 
 import { mat4 } from 'wgpu-matrix';
-import type { ViewParams } from './view.js';
+import { isOrthographic, type ViewParams } from './view.js';
 import { createBox, createAxis } from '../utils/geometry.js';
 import { TransferFunction } from './transfer-function.js';
 import { VolumeResources } from './volume-resources.js';
@@ -782,6 +782,7 @@ export class Renderer {
     d.set(this.channelWindowWidth, o.channelWindowWidth / 4);
     d[o.shading / 4] = this.shading;
     d[o.gradientOpacity / 4] = this.gradientOpacity;
+    dv.setUint32(o.orthographic, isOrthographic(view.proj) ? 1 : 0, true);
     this.device.queue.writeBuffer(this.computeUniformBuffer, 0, d as Float32Array<ArrayBuffer>);
 
     const encoder = this.device.createCommandEncoder();

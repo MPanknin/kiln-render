@@ -46,6 +46,7 @@ const viewer = await KilnViewer.create(canvas, url, {
   tfPoints: [{ x: 0, y: 0 }, { x: 1, y: 1 }], // opacity points, override the preset's
   upAxis: '-y',
   cam: [0.07, 3.63, 3.93, 0.10, 0.00, -0.06], // rx, ry, dist, tx, ty, tz
+  projection: 'perspective',    // or 'orthographic'; viewer.projection switches all views later
   clipMin: [0, 0, 0],           // 0–1
   clipMax: [1, 1, 1],
   sliceX: 0.5, sliceY: 0.5, sliceZ: 0.5,
@@ -92,7 +93,7 @@ function frame() {
 requestAnimationFrame(frame);
 ```
 
-`update()` advances streaming and returns `true` when a frame is needed. `engine.dispose()` frees the engine's resources; the device stays yours.
+`update()` advances streaming and returns `true` when a frame is needed. `engine.dispose()` frees the engine's resources; the device stays yours. `proj` may be perspective or orthographic; the engine tells them apart from the matrix.
 
 ### Several views
 

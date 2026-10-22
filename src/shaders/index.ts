@@ -55,6 +55,9 @@ function buildSharedCode(atlasSize: number): string {
 
 // Mode dispatch function (calls appropriate render mode)
 const modeDispatch = /* wgsl */ `
+// Seeds the ray's jitter; set in main()
+var<private> raySeed: u32;
+
 ${dvrWGSL}
 ${mipWGSL}
 ${isoWGSL}
@@ -118,8 +121,11 @@ fn main(@builtin(global_invocation_id) globalId: vec3u) {
     let near = nearPoint.xyz / nearPoint.w;
     let far = farPoint.xyz / farPoint.w;
 
-    let rayOrigin = uniforms.cameraPos;
+    // Orthographic rays are parallel, one per pixel, starting on the near plane
+    let rayOrigin = select(uniforms.cameraPos, near, uniforms.orthographic != 0u);
     let rayDir = normalize(far - near);
+    // Orthographic rays share one direction, so their jitter is seeded from the pixel instead
+    raySeed = select(rayToSeed(rayDir), hash(globalId.x + globalId.y * 65536u), uniforms.orthographic != 0u);
 
     let halfSize = uniforms.normalizedSize * 0.5;
     let hit = intersectBox(rayOrigin, rayDir, -halfSize, halfSize);

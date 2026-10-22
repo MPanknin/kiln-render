@@ -11,7 +11,7 @@ fn rayMarchLOD(
     // select() is not short-circuiting in WGSL — rand() would run even with jitter off.
     var jitterFrac = 0.0;
     if (uniforms.jitter != 0u) {
-        jitterFrac = rand(rayToSeed(rayDir) + uniforms.frameIndex);
+        jitterFrac = rand(raySeed + uniforms.frameIndex);
     }
 
     // precompute float normalisation (maps stored texels to [0, 1] for every atlas format)

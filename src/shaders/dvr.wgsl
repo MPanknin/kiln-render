@@ -59,7 +59,7 @@ fn rayMarchDVR(
     // select() is not short-circuiting in WGSL — rand() would run even with jitter off.
     var jitterFrac = 0.0;
     if (uniforms.jitter != 0u) {
-        jitterFrac = rand(rayToSeed(rayDir) + uniforms.frameIndex);
+        jitterFrac = rand(raySeed + uniforms.frameIndex);
     }
 
     var color = vec3f(0.0);

@@ -93,6 +93,7 @@ export const COMPUTE_UNIFORMS = defineUniformStruct([
   { name: 'lodScales',       type: `array<vec4f, ${MAX_LOD_LEVELS}>` },
   { name: 'shading',         type: 'f32' },
   { name: 'gradientOpacity', type: 'f32' },
+  { name: 'orthographic',    type: 'u32' },
 ]);
 
 // ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@
  *  - getVoxelWorldSize scales 2^lod (real private method)
  *  - closer camera selects finer LODs; distant camera stays coarse (monotonic)
  *  - hysteresis band: a brick only splits when finer children are already resident
+ *  - orthographic views: one level for the whole visible depth, set by the view height
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mat4 } from 'wgpu-matrix';
@@ -72,6 +73,11 @@ function stubView(pos: [number, number, number]): ViewParams {
     proj: mat4.perspective(fovY, width / height, 0.01, 100) as Float32Array,
     fovY, width, height,
   };
+}
+
+// Orthographic view of the same viewport, 2h volume units high
+function orthoView(pos: [number, number, number], h: number): ViewParams {
+  return { ...stubView(pos), proj: mat4.ortho(-h * 4 / 3, h * 4 / 3, -h, h, -10, 100) as Float32Array };
 }
 
 // Construct an SM, wait for the constructor's base-LOD load, then wipe the
@@ -157,5 +163,27 @@ describe('SSE — hysteresis band', () => {
       .loadedBricks.set('lod2:0/0/0', { slot: { x: 0, y: 0, z: 0 }, slotIndex: 0 });
     withChild.forceUpdate(stubView([0, 0, DIST]));
     expect(Math.min(...desiredLods(withChild))).toBeLessThan(3); // resident child → splits
+  });
+});
+
+describe('SSE — orthographic views', () => {
+  async function desiredAt(view: ViewParams): Promise<string[]> {
+    const sm = await freshSM();
+    sm.forceUpdate(view);
+    return [...(sm as unknown as { desiredKeys: Set<string> }).desiredKeys].sort();
+  }
+  const lods = (keys: string[]) => new Set(keys.map(k => Number(/^lod(\d+):/.exec(k)![1])));
+
+  it('refines the whole visible depth to one level', async () => {
+    // 1000 px per unit: LOD 3 voxels are 15.6 px (split), LOD 2 voxels 7.8 px (kept)
+    expect(lods(await desiredAt(orthoView([0, 0, 2], 0.3)))).toEqual(new Set([2]));
+  });
+
+  it('ignores the distance to the camera', async () => {
+    expect(await desiredAt(orthoView([0, 0, 1.5], 0.3))).toEqual(await desiredAt(orthoView([0, 0, 8], 0.3)));
+  });
+
+  it('refines further as the view height shrinks', async () => {
+    expect(lods(await desiredAt(orthoView([0, 0, 2], 0.1)))).toEqual(new Set([0]));
   });
 });

@@ -12,7 +12,7 @@ import { Renderer, VolumeRenderMode } from './core/renderer.js';
 import { VolumeResources } from './core/volume-resources.js';
 import { TransferFunction, TFPreset } from './core/transfer-function.js';
 import { StreamingManager } from './streaming/streaming-manager.js';
-import { DatasetConfig, computeAtlasGrid, emptyBrickThresholdFor, normalizeWindow } from './core/config.js';
+import { DatasetConfig, LABEL_BYTES_PER_VOXEL, computeAtlasGrid, emptyBrickThresholdFor, normalizeWindow } from './core/config.js';
 import { detectBest16BitFormat } from './core/volume.js';
 import type { ViewParams } from './core/view.js';
 import type { DataProvider, SourceSelection, VolumeMetadata } from './data/data-provider.js';
@@ -172,6 +172,8 @@ interface GpuSetup {
   atlasBudgetBytes?: number;
   /** Ray-guided brick selection; on by default, `?rayguide=0` turns it off */
   rayGuided: boolean;
+  /** The atlas budget includes the label atlas; set once labels are requested */
+  labels: boolean;
 }
 
 export class KilnEngine {
@@ -211,6 +213,8 @@ export class KilnEngine {
   // Label image shown (see setLabels): its provider, the levels it covers, its colours and the
   // layer streaming it into the current atlas (recreated with the atlas)
   private labelSource: string | null = null;
+  /** Counts setLabels() calls; a call whose number is no longer current was superseded */
+  private labelRequest = 0;
   private labelProvider: DataProvider | null = null;
   private labelLevels: boolean[] = [];
   private labelColorTable: Uint8Array | null = null;
@@ -345,7 +349,16 @@ export class KilnEngine {
     const gpu: GpuSetup = {
       outputFormat: format, textureFormat, bitDepth: effectiveBitDepth, atlasBudgetBytes: options.atlasBudgetBytes,
       rayGuided: !isFlagDisabled('rayguide'),
+      labels: false,
     };
+    // Labels requested up front get their share of the budget now instead of a rebuild in
+    // setLabels(); if the coarsest level wouldn't fit beside them, setLabels() reports it.
+    if (options.labels !== undefined) {
+      try {
+        KilnEngine.assertBaseFits(metadata, metadata.numChannels, { ...gpu, labels: true });
+        gpu.labels = true;
+      } catch { /* atlas without labels */ }
+    }
     const { resources, renderer } = KilnEngine.buildGpu(device, metadata, config, gpu);
     milestones.gpuReady = performance.now();
 
@@ -446,11 +459,16 @@ export class KilnEngine {
     return engine;
   }
 
+  /** Atlas grid for `numChannels` within the budget, which includes the label atlas when labels are on. */
+  private static atlasGrid(numChannels: number, gpu: GpuSetup) {
+    const bytesPerVoxel = gpu.textureFormat === 'r8unorm' ? 1 : 2;
+    return computeAtlasGrid(numChannels, bytesPerVoxel, gpu.atlasBudgetBytes, gpu.labels ? LABEL_BYTES_PER_VOXEL : 0);
+  }
+
   /** Every base brick is pinned, so the coarsest level must fit the atlas for `numChannels`,
    *  plus one working slot when finer levels exist; otherwise loading leaves permanent holes. */
   private static assertBaseFits(metadata: VolumeMetadata, numChannels: number, gpu: GpuSetup): void {
-    const bytesPerVoxel = gpu.textureFormat === 'r8unorm' ? 1 : 2;
-    const slots = computeAtlasGrid(numChannels, bytesPerVoxel, gpu.atlasBudgetBytes).gridSize ** 3;
+    const slots = KilnEngine.atlasGrid(numChannels, gpu).gridSize ** 3;
     const base = metadata.levels.find(level => level.lod === metadata.maxLod);
     const baseBricks = base ? base.brickGrid[0] * base.brickGrid[1] * base.brickGrid[2] : 0;
     const workingSlots = metadata.maxLod > 0 ? 1 : 0;
@@ -458,6 +476,7 @@ export class KilnEngine {
       throw new UnsupportedDatasetError([
         `The coarsest level needs ${baseBricks} pinned bricks, but the atlas has ${slots} slots` +
         (numChannels > 1 ? ` at ${numChannels} channels` : '') +
+        (gpu.labels ? ' with labels' : '') +
         (workingSlots ? ' and needs a free slot for refinement' : '') +
         '. Add a coarser pyramid level or increase atlas capacity.',
       ]);
@@ -470,9 +489,10 @@ export class KilnEngine {
     // budget — a fixed 660³ × 4 channels (~2.3 GB) OOMs mobile GPUs at startup.
     KilnEngine.assertBaseFits(metadata, metadata.numChannels, gpu);
     const bytesPerVoxel = gpu.textureFormat === 'r8unorm' ? 1 : 2;
-    const { gridSize, atlasSize } = computeAtlasGrid(metadata.numChannels, bytesPerVoxel, gpu.atlasBudgetBytes);
+    const { gridSize, atlasSize } = KilnEngine.atlasGrid(metadata.numChannels, gpu);
     const atlasVramMB = Math.round((metadata.numChannels * atlasSize ** 3 * bytesPerVoxel) / 1e6);
-    console.log(`[Kiln] atlas grid ${gridSize}³ (${atlasSize}³ voxels) × ${metadata.numChannels} channel(s) ≈ ${atlasVramMB} MB VRAM`);
+    console.log(`[Kiln] atlas grid ${gridSize}³ (${atlasSize}³ voxels) × ${metadata.numChannels} channel(s) ≈ ${atlasVramMB} MB VRAM` +
+      (gpu.labels ? ', sized to fit a label atlas' : ''));
 
     const resources = new VolumeResources(device, gpu.bitDepth, gpu.textureFormat, config, metadata.numChannels, gridSize);
     const renderer = KilnEngine.buildRenderer(device, metadata, config, gpu, resources);
@@ -643,12 +663,15 @@ export class KilnEngine {
 
   /**
    * Show a label image over the volume: a name from labelNames or the URL of an OME-Zarr label
-   * image with the image's dimensions; null hides labels. Label bricks stream alongside the
-   * image bricks into a label atlas with the VRAM of one 16-bit channel. Rejects (and shows
-   * no labels) when the label image can't be opened or doesn't match the image.
+   * image placed exactly like the image (see matchLabelLevels); null hides labels. Label bricks
+   * stream alongside the image bricks into a label atlas with the VRAM of one 16-bit channel,
+   * which the atlas budget makes room for (the first time, this may rebuild a smaller atlas).
+   * Rejects (and shows no labels) when the label image can't be opened, doesn't match the
+   * image, or the coarsest level no longer fits the atlas beside it.
    */
   async setLabels(source: string | null): Promise<void> {
     if (this.disposed || source === this.labelSource) return;
+    const request = ++this.labelRequest;
     this.detachLabels();
     this.labelProvider?.dispose();
     this.labelProvider = null;
@@ -660,21 +683,37 @@ export class KilnEngine {
     try {
       provider.setPyramidPolicy?.(this.metadata.pyramidPolicy ?? 'legacy');
       const labels = await provider.initialize();
-      const levels = matchLabelLevels(this.metadata, labels);
-      if (this.disposed || this.labelSource !== source) {
+      if (this.disposed || request !== this.labelRequest) {
         provider.dispose();
         return;
       }
+      const levels = matchLabelLevels(this.metadata, labels);
+      const rebuild = this.planLabelAtlas();
       this.labelProvider = provider;
       this.labelLevels = levels;
       this.labelColorTable = buildLabelColorTable(labels.labelColors);
       this.selectLabelTimepoint();
-      this.attachLabels();
+      if (rebuild) this.rebuildGpu(0); // attaches the labels to the new atlas
+      else this.attachLabels();
     } catch (e) {
+      if (this.labelProvider === provider) this.labelProvider = null;
       provider.dispose();
-      if (this.labelSource === source) this.labelSource = null;
+      if (request === this.labelRequest) this.labelSource = null;
       throw e;
     }
+  }
+
+  /**
+   * Count the label atlas in the atlas budget from now on; returns whether the current atlas
+   * is too large for that and must be rebuilt. Throws, changing nothing, when the coarsest
+   * level would no longer fit.
+   */
+  private planLabelAtlas(): boolean {
+    if (this.gpu.labels) return false;
+    const { numChannels } = this.metadata;
+    KilnEngine.assertBaseFits(this.metadata, numChannels, { ...this.gpu, labels: true });
+    this.gpu.labels = true;
+    return KilnEngine.atlasGrid(numChannels, this.gpu).gridSize < this._resources.gridSize;
   }
 
   /** Label atlas, colours and streaming layer for the current atlas; every view rebinds. */
@@ -682,13 +721,16 @@ export class KilnEngine {
     if (!this.labelProvider || !this.labelColorTable) return;
     this._resources.enableLabels();
     this._resources.writeLabelColors(this.labelColorTable);
-    this.labelLayer = new LabelLayer(
+    const layer = new LabelLayer(
       this._resources, this.labelProvider, this.labelLevels, () => this._streamingManager.notifyContentChanged(),
     );
+    this.labelLayer = layer;
+    this._streamingManager.setLabelCheck((lod, bx, by, bz) => layer.hasLabels(lod, bx, by, bz));
     for (const view of this.views) view.renderer.rebind();
   }
 
   private detachLabels(): void {
+    this._streamingManager.setLabelCheck(null);
     this.labelLayer?.dispose();
     this.labelLayer = null;
     if (!this._resources.hasLabels) return;
@@ -696,11 +738,14 @@ export class KilnEngine {
     for (const view of this.views) view.renderer.rebind();
   }
 
-  /** Time-varying labels follow the image's timepoint; returns whether they changed. */
+  /**
+   * Time-varying labels follow the image's timepoint (matchLabelLevels ensures they have every
+   * one); static labels show at every timepoint. Returns whether the labels changed.
+   */
   private selectLabelTimepoint(): boolean {
     const labels = this.labelProvider?.getMetadata();
     const timepoint = this.metadata.timepoint ?? 0;
-    if (!labels || (labels.timepointCount ?? 1) <= timepoint || labels.timepoint === timepoint) return false;
+    if (!labels || (labels.timepointCount ?? 1) <= 1 || labels.timepoint === timepoint) return false;
     this.labelProvider!.setSourceSelection?.({ timepoint });
     return true;
   }

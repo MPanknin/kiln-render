@@ -19,6 +19,12 @@ describe('adaptive atlas sizing', () => {
     // total VRAM under the default budget
     expect(4 * g.atlasSize ** 3 * 2).toBeLessThanOrEqual(1_400_000_000);
   });
+  it('counts the label atlas in the budget', () => {
+    expect(computeAtlasGrid(1, 2, undefined, 2).gridSize).toBe(10); // one channel and labels still fit
+    const g = computeAtlasGrid(2, 2, undefined, 2);
+    expect(g.gridSize).toBe(9); // two channels and labels at 660³ would need ~1.72 GB
+    expect((2 * 2 + 2) * g.atlasSize ** 3).toBeLessThanOrEqual(1_400_000_000);
+  });
   it('never exceeds the max grid and respects an explicit budget', () => {
     expect(computeAtlasGrid(1, 2, 100).gridSize).toBe(6); // clamped to MIN
     expect(computeAtlasGrid(1, 2, 1e12).gridSize).toBe(GRID_SIZE); // clamped to MAX

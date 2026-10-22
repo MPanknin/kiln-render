@@ -25,7 +25,7 @@ A coarse brick writes its slot into every cell it covers; in a 2:1 pyramid a LOD
 
 ## 3. Atlas
 
-One 3D texture per channel, divided into 66³ slots: up to 660³ (10 × 10 × 10 slots), chosen at startup by `computeAtlasGrid()` so that `channels × size³ × bytes per voxel` fits the budget (`atlasBudgetBytes`, default ~1.3 GiB).
+One 3D texture per channel, divided into 66³ slots: up to 660³ (10 × 10 × 10 slots), chosen at startup by `computeAtlasGrid()` so that `channels × size³ × bytes per voxel`, plus a 2-byte label atlas while labels are shown, fits the budget (`atlasBudgetBytes`, default ~1.3 GiB).
 
 ![The atlas as a 10 × 10 × 10 grid of 66³ slots](../diagrams/atlas-layout.svg)
 

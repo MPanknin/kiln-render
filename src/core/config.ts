@@ -26,18 +26,21 @@ export const DEFAULT_ATLAS_BUDGET_BYTES = 1_400_000_000;
 // LOD plus a working set.
 export const MIN_GRID_SIZE = 6;
 
+/** Bytes per voxel of the label atlas (r16uint), when a label image is shown. */
+export const LABEL_BYTES_PER_VOXEL = 2;
+
 /**
- * Largest atlas grid (slots/axis) whose VRAM (numChannels × atlasSize³ ×
- * bytesPerVoxel) fits budgetBytes, clamped to [MIN_GRID_SIZE, GRID_SIZE].
+ * Largest atlas grid (slots/axis) whose VRAM (atlasSize³ × (numChannels ×
+ * bytesPerVoxel + labelBytesPerVoxel)) fits budgetBytes, clamped to [MIN_GRID_SIZE, GRID_SIZE].
  */
 export function computeAtlasGrid(
   numChannels: number,
   bytesPerVoxel: number,
   budgetBytes: number = DEFAULT_ATLAS_BUDGET_BYTES,
+  labelBytesPerVoxel = 0,
 ): { gridSize: number; atlasSize: number } {
-  const bytesPerChannel = budgetBytes / Math.max(1, numChannels);
-  const voxelsPerChannel = bytesPerChannel / Math.max(1, bytesPerVoxel);
-  const rawGrid = Math.floor(Math.cbrt(voxelsPerChannel) / PHYSICAL_BRICK_SIZE);
+  const voxels = budgetBytes / (Math.max(1, numChannels) * Math.max(1, bytesPerVoxel) + labelBytesPerVoxel);
+  const rawGrid = Math.floor(Math.cbrt(voxels) / PHYSICAL_BRICK_SIZE);
   const gridSize = Math.max(MIN_GRID_SIZE, Math.min(GRID_SIZE, rawGrid));
   return { gridSize, atlasSize: gridSize * PHYSICAL_BRICK_SIZE };
 }

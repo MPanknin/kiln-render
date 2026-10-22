@@ -54,6 +54,15 @@ const meta = (sizes: number[]): VolumeMetadata => ({
   name: 'v', dimensions: [sizes[0]!, sizes[0]!, sizes[0]!], brickSize: 64, physicalBrickSize: 66,
   maxLod: sizes.length - 1, bitDepth: 16, numChannels: 1, levels: sizes.map((n, lod) => level(lod, n)),
 });
+/** `meta` with a multiscale pyramid: level spacing doubles, origins as given per level. */
+const placed = (sizes: number[], spacing: number, origins: number[] = sizes.map(() => 0)): VolumeMetadata => ({
+  ...meta(sizes),
+  pyramid: sizes.map((n, lod) => ({
+    lod, dims: [n, n, n], exponent: [lod, lod, lod],
+    spacing: [spacing * 2 ** lod, spacing * 2 ** lod, spacing * 2 ** lod], origin: [origins[lod]!, origins[lod]!, origins[lod]!],
+  })),
+});
+const timed = (m: VolumeMetadata, timepointCount: number, timepoint = 0): VolumeMetadata => ({ ...m, timepointCount, timepoint });
 
 describe('label levels', () => {
   it('cover the image levels with the same dimensions', () => {
@@ -63,6 +72,22 @@ describe('label levels', () => {
 
   it('reject labels of another size', () => {
     expect(() => matchLabelLevels(meta([128, 64]), meta([100, 50]))).toThrow(UnsupportedDatasetError);
+  });
+
+  it('need the same voxel spacing and origin where both images have transforms', () => {
+    expect(matchLabelLevels(placed([128, 64], 21.6), placed([128, 64], 21.600001))).toEqual([true, true]);
+    expect(() => matchLabelLevels(placed([128, 64], 21.6), placed([128, 64], 10.8))).toThrow(/placed differently/);
+    expect(() => matchLabelLevels(placed([128, 64], 1), placed([128, 64], 1, [5, 5]))).toThrow(/placed differently/);
+    // a coarser level placed differently is not covered
+    expect(matchLabelLevels(placed([128, 64], 1, [0, 0.5]), placed([128, 64], 1))).toEqual([true, false]);
+    // without transforms on one side, dimensions decide
+    expect(matchLabelLevels(placed([128, 64], 21.6), meta([128, 64]))).toEqual([true, true]);
+  });
+
+  it('need the image’s timepoints when they vary over time', () => {
+    expect(matchLabelLevels(timed(meta([128]), 5), timed(meta([128]), 5))).toEqual([true]);
+    expect(matchLabelLevels(timed(meta([128]), 5), meta([128]))).toEqual([true]); // static labels
+    expect(() => matchLabelLevels(timed(meta([128]), 5), timed(meta([128]), 3))).toThrow(/3 timepoints, the image 5/);
   });
 });
 
@@ -170,6 +195,27 @@ describe('label layer', () => {
     new LabelLayer(t.resources, t.provider, t.levels, t.onCommit).dispose();
     expect(t.resources.indirection.onBrickMapped).toBeUndefined();
   });
+
+  it('tells whether a brick has labels, reading each brick once', async () => {
+    const t = setup([true, false]);
+    (t.provider as any).getMetadata = () => ({ timepoint: 0 });
+    const layer = new LabelLayer(t.resources, t.provider, t.levels, t.onCommit);
+    expect(await layer.hasLabels(1, 0, 0, 0)).toBe(false); // level not covered: not read
+    expect(t.loads).toHaveLength(0);
+
+    const first = layer.hasLabels(0, 0, 0, 0);
+    const again = layer.hasLabels(0, 0, 0, 0);
+    t.loads[0]!.done.resolve({ ...t.brick(), max: 7 });
+    expect([await first, await again]).toEqual([true, true]);
+    expect(t.loads).toHaveLength(1);
+
+    const empty = layer.hasLabels(0, 1, 0, 0);
+    t.loads[1]!.done.resolve(t.brick());
+    expect(await empty).toBe(false);
+
+    (t.provider.loadBrick as any).mockRejectedValueOnce(new Error('offline'));
+    expect(await layer.hasLabels(0, 2, 0, 0)).toBe(true); // unknown counts as labelled
+  });
 });
 
 describe('engine label images', () => {
@@ -177,18 +223,21 @@ describe('engine label images', () => {
     const e: any = Object.create(KilnEngine.prototype);
     const labelProvider = { initialize: vi.fn(() => Promise.resolve(labels)), getMetadata: () => labels, dispose: vi.fn() };
     Object.assign(e, {
-      disposed: false, labelSource: null, labelProvider: null, labelLayer: null, labelColorTable: null, labelLevels: [],
+      disposed: false, labelSource: null, labelRequest: 0, labelProvider: null, labelLayer: null, labelColorTable: null, labelLevels: [],
       metadata: meta([128, 64]),
+      gpu: { textureFormat: 'r16float', labels: false },
       dataProvider: { openLabels: vi.fn(() => labelProvider) },
       _resources: {
+        gridSize: 10,
         hasLabels: false,
         enableLabels: vi.fn(function (this: any) { this.hasLabels = true; }),
         disableLabels: vi.fn(function (this: any) { this.hasLabels = false; }),
         writeLabelColors: vi.fn(),
         allocator: new AtlasAllocator(2), indirection: {},
       },
-      _streamingManager: { notifyContentChanged: vi.fn() },
+      _streamingManager: { notifyContentChanged: vi.fn(), setLabelCheck: vi.fn() },
       views: [{ renderer: { rebind: vi.fn() } }],
+      rebuildGpu: vi.fn(function (this: any) { this.attachLabels(); }),
     });
     return { e, labelProvider };
   }
@@ -199,9 +248,75 @@ describe('engine label images', () => {
     expect(e.labels).toBe('cells');
     expect(e._resources.hasLabels).toBe(true);
     expect(e.views[0].renderer.rebind).toHaveBeenCalled();
+    expect(e._streamingManager.setLabelCheck).toHaveBeenLastCalledWith(expect.any(Function));
     await e.setLabels(null);
     expect(e.labels).toBeNull();
     expect(e._resources.hasLabels).toBe(false);
+    expect(e._streamingManager.setLabelCheck).toHaveBeenLastCalledWith(null);
+  });
+
+  it('keeps only the latest request when a label image is chosen again while opening', async () => {
+    const { e } = engine(meta([128, 64]));
+    const opening: Array<{ open: (m: VolumeMetadata) => void; dispose: ReturnType<typeof vi.fn> }> = [];
+    e.dataProvider.openLabels = vi.fn(() => {
+      const provider = {
+        initialize: () => new Promise<VolumeMetadata>(open => { provider.open = open; }),
+        getMetadata: () => meta([128, 64]), dispose: vi.fn(), open: (_: VolumeMetadata) => {},
+      };
+      opening.push(provider as any);
+      return provider;
+    });
+    const a = e.setLabels('a');
+    const b = e.setLabels('b');
+    const latest = e.setLabels('a');
+    opening[0]!.open(meta([128, 64])); // the first "a" arrives after the second was requested
+    await a;
+    expect(e._resources.enableLabels).not.toHaveBeenCalled();
+    opening[2]!.open(meta([128, 64]));
+    opening[1]!.open(meta([128, 64]));
+    await Promise.all([b, latest]);
+    expect(e.labels).toBe('a');
+    expect(e.labelProvider).toBe(opening[2]);
+    expect(e._resources.enableLabels).toHaveBeenCalledOnce();
+    expect(opening[0]!.dispose).toHaveBeenCalled();
+    expect(opening[1]!.dispose).toHaveBeenCalled();
+    expect(opening[2]!.dispose).not.toHaveBeenCalled();
+  });
+
+  it('makes room for the label atlas in the atlas budget', async () => {
+    const one = engine(meta([128, 64])).e;
+    await one.setLabels('cells');
+    expect(one.gpu.labels).toBe(true);
+    expect(one.rebuildGpu).not.toHaveBeenCalled(); // one 16-bit channel and labels fit the full atlas
+
+    const two = engine(meta([128, 64])).e;
+    two.metadata = { ...meta([128, 64]), numChannels: 2 };
+    await two.setLabels('cells');
+    expect(two.rebuildGpu).toHaveBeenCalledOnce(); // two channels and labels need a smaller atlas
+    expect(two._resources.hasLabels).toBe(true);
+  });
+
+  it('rejects labels when the coarsest level would no longer fit the atlas', async () => {
+    const { e, labelProvider } = engine(meta([128, 64]));
+    const base = { ...level(1, 64), brickGrid: [7, 7, 6] as [number, number, number] }; // 294 pinned bricks
+    e.metadata = { ...meta([128, 64]), levels: [level(0, 128), base] };
+    e.gpu.atlasBudgetBytes = 2e8; // 7³ slots without labels, 6³ with them
+    await expect(e.setLabels('cells')).rejects.toThrow(/with labels/);
+    expect(e.labels).toBeNull();
+    expect(e.gpu.labels).toBe(false);
+    expect(e._resources.hasLabels).toBe(false);
+    expect(labelProvider.dispose).toHaveBeenCalled();
+  });
+
+  it('shows static labels at every timepoint and moves time-varying ones along', () => {
+    const { e } = engine(meta([128]));
+    e.metadata = timed(meta([128]), 5, 3);
+    const setSourceSelection = vi.fn();
+    e.labelProvider = { getMetadata: () => meta([128]), setSourceSelection };
+    expect(e.selectLabelTimepoint()).toBe(false);
+    e.labelProvider = { getMetadata: () => timed(meta([128]), 5, 0), setSourceSelection };
+    expect(e.selectLabelTimepoint()).toBe(true);
+    expect(setSourceSelection).toHaveBeenCalledWith({ timepoint: 3 });
   });
 
   it('shows nothing for labels of another size', async () => {

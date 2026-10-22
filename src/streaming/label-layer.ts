@@ -30,6 +30,8 @@ export class LabelLayer {
   private readonly slots: Array<SlotLabels | undefined>;
   /** Pending loads by slot, oldest first; remapping a slot replaces its job. */
   private readonly queue = new Map<number, LabelJob>();
+  /** hasLabels() answers by timepoint and brick */
+  private readonly labelled = new Map<string, Promise<boolean>>();
   private inFlight = 0;
   private disposed = false;
 
@@ -59,6 +61,22 @@ export class LabelLayer {
     }
     this.queue.clear();
     this.loadResident();
+  }
+
+  /**
+   * Whether the label brick at this address holds any label. The image streaming asks for
+   * bricks the image leaves empty: those still load when labelled, so the labels have a slot.
+   * An unreadable label brick counts as labelled.
+   */
+  hasLabels(lod: number, bx: number, by: number, bz: number): Promise<boolean> {
+    if (this.disposed || !this.levels[lod]) return Promise.resolve(false);
+    const key = `${this.provider.getMetadata().timepoint ?? 0}/${lod}/${bx}/${by}/${bz}`;
+    let result = this.labelled.get(key);
+    if (!result) {
+      result = this.provider.loadBrick(lod, bx, by, bz, 0).then(r => !r || r.max > 0, () => true);
+      this.labelled.set(key, result);
+    }
+    return result;
   }
 
   dispose(): void {

@@ -5,6 +5,7 @@
 
 import { UnsupportedDatasetError } from './data-provider.js';
 import type { VolumeMetadata } from './data-provider.js';
+import type { PyramidLevel } from '../core/pyramid.js';
 
 /** A colour from `image-label.colors`: the label value and its 0–255 RGBA. */
 export interface LabelColor {
@@ -80,19 +81,46 @@ export function buildLabelColorTable(colors: readonly LabelColor[] = []): Uint8A
   return table;
 }
 
+/** Spacing and origin agree to within 0.1 % of a voxel on every axis. */
+function samePlacement(a: PyramidLevel, b: PyramidLevel): boolean {
+  return [0, 1, 2].every(i => {
+    const tolerance = 1e-3 * Math.max(Math.abs(a.spacing[i]!), Math.abs(b.spacing[i]!));
+    return Math.abs(a.spacing[i]! - b.spacing[i]!) <= tolerance && Math.abs(a.origin[i]! - b.origin[i]!) <= tolerance;
+  });
+}
+
+const vec = (v: readonly number[]) => `(${v.map(x => +x.toPrecision(6)).join(', ')})`;
+
 /**
- * Which image levels the label image covers voxel for voxel. Labels are only shown where the
- * level matches; a mismatch at the finest level means the labels belong to another image.
+ * Which image levels the label image covers voxel for voxel: same dimensions and, where both
+ * have valid multiscale transforms, the same voxel spacing and origin. Labels are only shown
+ * where the level matches; a mismatch at the finest level means the labels belong to another
+ * image. Time-varying labels need the image's timepoints; static labels apply to all of them.
  */
 export function matchLabelLevels(image: VolumeMetadata, labels: VolumeMetadata): boolean[] {
+  const placement = (lod: number) => {
+    const a = image.pyramid?.find(l => l.lod === lod);
+    const b = labels.pyramid?.find(l => l.lod === lod);
+    return !a || !b || samePlacement(a, b);
+  };
   const levels = image.levels.map(level => {
     const match = labels.levels.find(l => l.lod === level.lod);
-    return !!match && match.dimensions.every((d, i) => d === level.dimensions[i]);
+    return !!match && match.dimensions.every((d, i) => d === level.dimensions[i]) && placement(level.lod);
   });
   if (!levels[0]) {
-    throw new UnsupportedDatasetError([
-      `Labels are ${labels.dimensions.join(' × ')} voxels, the image ${image.dimensions.join(' × ')}`,
+    const a = image.pyramid?.find(l => l.lod === 0);
+    const b = labels.pyramid?.find(l => l.lod === 0);
+    const sameSize = labels.dimensions.every((d, i) => d === image.dimensions[i]);
+    throw new UnsupportedDatasetError([sameSize && a && b
+      ? `Labels are placed differently: voxel size ${vec(b.spacing)}, origin ${vec(b.origin)}; ` +
+        `the image ${vec(a.spacing)}, ${vec(a.origin)}`
+      : `Labels are ${labels.dimensions.join(' × ')} voxels, the image ${image.dimensions.join(' × ')}`,
     ]);
+  }
+  const labelTimepoints = labels.timepointCount ?? 1;
+  const imageTimepoints = image.timepointCount ?? 1;
+  if (labelTimepoints > 1 && labelTimepoints !== imageTimepoints) {
+    throw new UnsupportedDatasetError([`Labels have ${labelTimepoints} timepoints, the image ${imageTimepoints}`]);
   }
   return levels;
 }

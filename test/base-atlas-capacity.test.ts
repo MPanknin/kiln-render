@@ -46,7 +46,7 @@ describe('base atlas capacity on a channel-count change', () => {
     engine.metadata = { sourceChannels: [0, 1], numChannels: 2, sourceChannelCount: 4, timepoint: 0, maxLod: 1,
       levels: [{ lod: 1, brickGrid, brickCount: 0 }] };
     engine.gpu = { textureFormat: 'r16float', outputFormat: 'bgra8unorm', bitDepth: 16 };
-    engine._renderer = { numChannels: 2, dispose: vi.fn() };
+    engine.views = [{ renderer: { numChannels: 2, dispose: vi.fn() } }];
     engine.dataProvider = { setSourceSelection: vi.fn() };
     engine.rebuildGpu = vi.fn();
     return engine;
@@ -58,7 +58,7 @@ describe('base atlas capacity on a channel-count change', () => {
     expect(() => engine.setSourceSelection({})).toThrow(UnsupportedDatasetError); // default: first four
     expect(engine.dataProvider.setSourceSelection).not.toHaveBeenCalled();
     expect(engine.rebuildGpu).not.toHaveBeenCalled();
-    expect(engine._renderer.dispose).not.toHaveBeenCalled();
+    expect(engine.renderer.dispose).not.toHaveBeenCalled();
   });
 
   it('lets a base that fits the new atlas through', () => {

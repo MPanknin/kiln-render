@@ -16,6 +16,8 @@ export class TransferFunction {
   private colorData: Uint8Array;  // RGB only, no alpha
   private opacityPoints: OpacityPoint[];
   preset: TFPreset = 'grayscale';
+  /** Bumped whenever the texture is rewritten, so other views can tell the look changed. */
+  version = 0;
 
   private histogram: Uint32Array | null = null;
 
@@ -215,6 +217,7 @@ export class TransferFunction {
   }
 
   private updateTexture(): void {
+    this.version++;
     const data = new Uint8Array(this.size * 4);
 
     for (let i = 0; i < this.size; i++) {

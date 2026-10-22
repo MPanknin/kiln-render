@@ -48,6 +48,19 @@ export interface ViewerState {
   showAxis: boolean;
 }
 
+/** Another view of the viewer's dataset in its own canvas, e.g. one pane of a multi-view layout. */
+export interface ViewerPane {
+  readonly canvas: HTMLCanvasElement;
+  readonly camera: Camera;
+  /** This pane's render mode; every other display setting follows the main view. Throws after removal or viewer disposal. */
+  mode: VolumeRenderMode;
+}
+
+/** A pane's canvas, its WebGPU context and camera; pane i is engine view i + 1. */
+interface PaneState extends ViewerPane {
+  context: GPUCanvasContext;
+}
+
 export class KilnViewer {
   readonly engine: KilnEngine;
   readonly camera: Camera;
@@ -60,6 +73,8 @@ export class KilnViewer {
 
   private readonly context: GPUCanvasContext;
   private readonly canvas: HTMLCanvasElement;
+  private readonly format: GPUTextureFormat;
+  private readonly panes: PaneState[] = [];
   private readonly resizeObserver: ResizeObserver;
   private rafHandle = 0;
   private resizeTimer = 0;
@@ -68,11 +83,13 @@ export class KilnViewer {
   private constructor(
     canvas: HTMLCanvasElement,
     context: GPUCanvasContext,
+    format: GPUTextureFormat,
     engine: KilnEngine,
     camera: Camera,
   ) {
     this.canvas = canvas;
     this.context = context;
+    this.format = format;
     this.engine = engine;
     this.camera = camera;
 
@@ -106,7 +123,7 @@ export class KilnViewer {
     if (options.upAxis !== undefined) camera.setUpAxis(options.upAxis);
     if (options.cam !== undefined) camera.setOrbitState(options.cam);
 
-    const viewer = new KilnViewer(canvas, context, engine, camera);
+    const viewer = new KilnViewer(canvas, context, format, engine, camera);
     device.lost.then(() => viewer.dispose());
     return viewer;
   }
@@ -160,6 +177,53 @@ export class KilnViewer {
 
   get renderScale(): number { return this.engine.renderScale; }
   set renderScale(value: number) { this.engine.renderScale = value; }
+
+  /**
+   * Show another view of the dataset in `canvas`, e.g. one pane of a multi-view layout. It
+   * has its own camera and render mode (starting from the main view's); every other display
+   * setting follows the main view. All panes share one render loop and one stream.
+   */
+  addPane(canvas: HTMLCanvasElement): ViewerPane {
+    if (this.disposed) throw new Error('Cannot add a pane to a disposed viewer');
+    if (canvas === this.canvas || this.panes.some(p => p.canvas === canvas)) {
+      throw new Error('Canvas already belongs to this viewer');
+    }
+    const context = canvas.getContext('webgpu')!;
+    context.configure({ device: this.device, format: this.format });
+    const camera = new Camera(canvas);
+    camera.setUpAxis(this.camera.getUpAxis());
+    const renderer = () => {
+      const index = this.panes.indexOf(state);
+      if (this.disposed || index < 0) throw new Error('Pane is no longer attached to the viewer');
+      return this.engine.getRenderer(index + 1);
+    };
+    const state: PaneState = {
+      canvas,
+      context,
+      camera,
+      get mode() { return renderer().volumeRenderMode; },
+      set mode(value: VolumeRenderMode) {
+        renderer().volumeRenderMode = value;
+        renderer().resetAccumulation();
+      },
+    };
+    const view = this.engine.addView();
+    this.panes.push(state);
+    this.resizeObserver.observe(canvas);
+    this.resizeCanvas(canvas, view, true);
+    return state;
+  }
+
+  /** Stop rendering a pane added with addPane(); its canvas stays in the page. */
+  removePane(pane: ViewerPane): void {
+    if (this.disposed) return;
+    const i = this.panes.indexOf(pane as PaneState);
+    if (i < 0) return;
+    const [state] = this.panes.splice(i, 1);
+    this.engine.removeView(i + 1);
+    this.resizeObserver.unobserve(state!.canvas);
+    state!.context.unconfigure();
+  }
 
   /** Switch source channels/timepoint in place (see KilnEngine.setSourceSelection); the camera stays. */
   setSourceSelection(selection: SourceSelection): void { this.engine.setSourceSelection(selection); }
@@ -221,16 +285,23 @@ export class KilnViewer {
     this.resizeObserver.disconnect();
     this.engine.dispose();
     this.context.unconfigure();
+    for (const pane of this.panes) pane.context.unconfigure();
   }
 
-  private resize(): void {
+  /** Match every canvas's drawing buffer to its CSS size now; window resizes are followed after 100 ms. */
+  resize(): void {
+    this.resizeCanvas(this.canvas, 0);
+    this.panes.forEach((pane, i) => this.resizeCanvas(pane.canvas, i + 1));
+  }
+
+  private resizeCanvas(canvas: HTMLCanvasElement, view: number, force = false): void {
     const maxDim = this.device.limits.maxTextureDimension2D;
-    const width = Math.max(1, Math.min(this.canvas.clientWidth, maxDim));
-    const height = Math.max(1, Math.min(this.canvas.clientHeight, maxDim));
-    if (this.canvas.width !== width || this.canvas.height !== height) {
-      this.canvas.width = width;
-      this.canvas.height = height;
-      this.engine.setSize(width, height);
+    const width = Math.max(1, Math.min(canvas.clientWidth, maxDim));
+    const height = Math.max(1, Math.min(canvas.clientHeight, maxDim));
+    if (force || canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+      this.engine.setSize(width, height, view);
     }
   }
 
@@ -238,13 +309,16 @@ export class KilnViewer {
     if (this.disposed) return;
     this.engine.noteAnimationFrame();
 
-    const view = this.camera.getViewParams(this.canvas.width, this.canvas.height);
-
-    if (this.engine.update(view)) {
-      this.onBeforeFrame?.();
-      const colorView = this.context.getCurrentTexture().createView();
-      this.engine.render(colorView, view);
-    }
+    const views = [
+      this.camera.getViewParams(this.canvas.width, this.canvas.height),
+      ...this.panes.map(pane => pane.camera.getViewParams(pane.canvas.width, pane.canvas.height)),
+    ];
+    const draw = this.engine.updateViews(views);
+    if (draw.some(Boolean)) this.onBeforeFrame?.();
+    if (draw[0]) this.engine.render(this.context.getCurrentTexture().createView(), views[0]!);
+    this.panes.forEach((pane, i) => {
+      if (draw[i + 1]) this.engine.render(pane.context.getCurrentTexture().createView(), views[i + 1]!, i + 1);
+    });
 
     this.rafHandle = requestAnimationFrame(() => this.frame());
   }

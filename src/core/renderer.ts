@@ -11,6 +11,8 @@ import { wireframeShader, axisShader, buildComputeShader, blitShader, accumulate
 import { COMPUTE_UNIFORMS, SLICE_UNIFORMS, MAX_LOD_LEVELS } from '../shaders/uniform-layout.js';
 import type { DatasetConfig } from './config.js';
 import { RayVisibility } from '../streaming/ray-visibility.js';
+import { PICK_BYTES } from '../labels/label-gpu.js';
+import type { LabelGpu } from '../labels/label-gpu.js';
 
 // Batch ray visibility while rendering continues; always flush the final frame before going idle.
 const RAY_READBACK_INTERVAL = 4;
@@ -132,6 +134,18 @@ export class Renderer {
 
   // Compute-based pipeline
   private computePipeline: GPUComputePipeline;
+  // Label pick: one invocation that looks up every shown layer at the picked voxel
+  private pickPipeline: GPUComputePipeline;
+  private pickBindGroup: GPUBindGroup | null = null;
+  private readonly pickReadback: GPUBuffer;
+  private pickPending: { x: number; y: number; resolve: (record: ArrayBuffer | null) => void } | null = null;
+  private pickBusy = false;
+  /** LabelGpu.version the bind groups were built with */
+  private labelVersion = -1;
+  // Camera of the last rendered frame, to pick on slice planes
+  private readonly lastCameraPos = new Float32Array(3);
+  private lastOrthographic = false;
+  private hasRendered = false;
   private blitPipeline: GPURenderPipeline;
   private computeUniformBuffer: GPUBuffer;
 
@@ -217,12 +231,15 @@ export class Renderer {
     format: GPUTextureFormat,
     resources: VolumeResources,
     config: DatasetConfig,
+    /** Label layers drawn over the volume (shared by every view) */
+    private readonly labels: LabelGpu,
     /** Mark the brick cells rays enter and read them back for ray-guided streaming */
     readonly rayGuided = false,
   ) {
     this.device = device;
     this.config = config;
     this.resources = resources;
+    this.pickReadback = device.createBuffer({ size: PICK_BYTES, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
 
     // One word (unused) switches marking off in the shader; enabled, word 0 stays unused too
     const rayWords = rayGuided ? 1 + RayVisibility.wordCount(config.datasetGrid) : 1;
@@ -395,6 +412,10 @@ export class Renderer {
       layout: 'auto',
       compute: { module: computeModule, entryPoint: 'main' },
     });
+    this.pickPipeline = device.createComputePipeline({
+      layout: 'auto',
+      compute: { module: computeModule, entryPoint: 'pickLabels' },
+    });
 
     // Blit pipeline (fullscreen quad to display compute output)
     const blitModule = device.createShaderModule({ code: blitShader });
@@ -523,6 +544,7 @@ export class Renderer {
 
   private recreateVolumeBindGroups(): void {
     if (!this.tfTexture) return;
+    this.labelVersion = this.labels.version;
 
     this.sliceBindGroup = this.device.createBindGroup({
       layout: this.slicePipeline.getBindGroupLayout(0),
@@ -536,6 +558,17 @@ export class Renderer {
         { binding: 8, resource: this.resources.atlasView(1) },
         { binding: 9, resource: this.resources.atlasView(2) },
         { binding: 10, resource: this.resources.atlasView(3) },
+        ...this.labelBindings(),
+      ],
+    });
+
+    this.pickBindGroup = this.device.createBindGroup({
+      layout: this.pickPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.computeUniformBuffer } },
+        { binding: 6, resource: this.resources.indirection.texture.createView() },
+        ...this.labelBindings(),
+        { binding: 16, resource: { buffer: this.labels.pick } },
       ],
     });
 
@@ -637,9 +670,11 @@ export class Renderer {
     const buffers = [
       this.sliceUniformBuffer, this.computeUniformBuffer, this.accumUniformBuffer, this.vertexBuffer,
       this.wireframeIndexBuffer, this.wireframeUniformBuffer, this.axisVertexBuffer, this.axisUniformBuffer,
-      this.rayVisitedBuffer, ...(this.rayReadback ? [this.rayReadback] : []),
+      this.rayVisitedBuffer, ...(this.rayReadback ? [this.rayReadback] : []), this.pickReadback,
     ];
     for (const buffer of buffers) buffer.destroy();
+    this.pickPending?.resolve(null);
+    this.pickPending = null;
   }
 
   private rebuildScaleSetBindGroups(set: ScaleSet): void {
@@ -659,6 +694,8 @@ export class Renderer {
         { binding: 9, resource: this.resources.atlasView(2) },
         { binding: 10, resource: this.resources.atlasView(3) },
         { binding: 11, resource: { buffer: this.rayVisitedBuffer } },
+        ...this.labelBindings(),
+        { binding: 16, resource: { buffer: this.labels.pick } },
       ],
     });
 
@@ -710,6 +747,105 @@ export class Renderer {
     ];
   }
 
+  /** Pool, entries, palette and styles of the label layers. */
+  private labelBindings(): GPUBindGroupEntry[] {
+    return [
+      { binding: 12, resource: this.labels.pool.createView() },
+      { binding: 13, resource: { buffer: this.labels.entries } },
+      { binding: 14, resource: { buffer: this.labels.palette } },
+      { binding: 15, resource: { buffer: this.labels.params } },
+    ];
+  }
+
+  /**
+   * The label record (see LabelGpu.pick) at pixel (x, y) of this view, in output pixels: the
+   * front-most drawn label along the ray in volume modes (taken by the next render, so the caller
+   * marks the view dirty), the slice plane under the pixel in slice mode. Resolves null when
+   * superseded by a newer pick.
+   */
+  pick(x: number, y: number): Promise<ArrayBuffer | null> {
+    this.pickPending?.resolve(null);
+    return new Promise(resolve => {
+      this.pickPending = { x, y, resolve };
+      if (this.isSliceMode) this.pickSlices();
+    });
+  }
+
+  /** Slice mode: intersect the pixel's ray with the shown planes on the CPU, then look labels up. */
+  private pickSlices(): void {
+    const pick = this.pickPending;
+    if (!pick || this.pickBusy || !this.hasRendered || !this.pickBindGroup) return;
+    this.pickPending = null;
+    const hit = new Float32Array(4);
+    const voxel = this.slicePlaneVoxel(pick.x, pick.y);
+    if (voxel) hit.set([...voxel, 1]);
+    this.device.queue.writeBuffer(this.labels.pick, 0, hit);
+    const encoder = this.device.createCommandEncoder();
+    this.encodePick(encoder);
+    this.device.queue.submit([encoder.finish()]);
+    this.readPick(pick.resolve);
+  }
+
+  /** Finest-level voxel where the pixel's ray first meets a shown slice plane, or null. */
+  private slicePlaneVoxel(x: number, y: number): [number, number, number] | null {
+    const inv = this.invVPScratch;
+    const ndcX = (x + 0.5) / this.screenWidth * 2 - 1;
+    const ndcY = 1 - (y + 0.5) / this.screenHeight * 2;
+    const unproject = (z: number) => {
+      const v = [0, 1, 2, 3].map(r => inv[r]! * ndcX + inv[4 + r]! * ndcY + inv[8 + r]! * z + inv[12 + r]!);
+      return [v[0]! / v[3]!, v[1]! / v[3]!, v[2]! / v[3]!];
+    };
+    const near = unproject(-1);
+    const far = unproject(1);
+    // Like the ray march: orthographic rays start on the near plane, perspective ones at the camera
+    const origin = this.lastOrthographic ? near : [...this.lastCameraPos];
+    const dir = far.map((f, i) => f - near[i]!);
+    const ns = this.config.normalizedSize;
+    const planes = [
+      this.showSliceX ? this.sliceX : null, this.showSliceY ? this.sliceY : null, this.showSliceZ ? this.sliceZ : null,
+    ];
+    let best: number[] | null = null;
+    let bestT = Infinity;
+    planes.forEach((position, axis) => {
+      if (position === null || Math.abs(dir[axis]!) < 1e-12) return;
+      const t = ((position - 0.5) * ns[axis]! - origin[axis]!) / dir[axis]!;
+      if (!(t > 0) || t >= bestT) return;
+      const p = origin.map((o, i) => o + dir[i]! * t);
+      if (p.some((v, i) => i !== axis && Math.abs(v) > ns[i]! / 2)) return;
+      p[axis] = (position - 0.5) * ns[axis]!;
+      best = p;
+      bestT = t;
+    });
+    if (!best) return null;
+    const dims = this.config.dimensions;
+    return (best as number[]).map((v, i) => Math.min(dims[i]! - 1e-3, Math.max(0, (v / ns[i]! + 0.5) * dims[i]!))) as [number, number, number];
+  }
+
+  private encodePick(encoder: GPUCommandEncoder): void {
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(this.pickPipeline);
+    pass.setBindGroup(0, this.pickBindGroup!);
+    pass.dispatchWorkgroups(1);
+    pass.end();
+    encoder.copyBufferToBuffer(this.labels.pick, 0, this.pickReadback, 0, PICK_BYTES);
+  }
+
+  private readPick(resolve: (record: ArrayBuffer | null) => void): void {
+    this.pickBusy = true;
+    this.pickReadback.mapAsync(GPUMapMode.READ).then(() => {
+      const record = this.pickReadback.getMappedRange().slice(0);
+      this.pickReadback.unmap();
+      this.pickBusy = false;
+      resolve(record);
+      // A pick that arrived while this one was read back
+      if (this.pickPending && this.isSliceMode) this.pickSlices();
+      else if (this.pickPending) this.markDirty();
+    }, () => {
+      this.pickBusy = false;
+      resolve(null);
+    });
+  }
+
   private updateSliceUniforms(vp: Float32Array): void {
     const o = SLICE_UNIFORMS.offsets;
     const d = this.sliceUniformScratch;
@@ -737,10 +873,15 @@ export class Renderer {
 
   render(colorView: GPUTextureView, view: ViewParams) {
     if (this.disposed) return;
+    if (this.labels.version !== this.labelVersion) this.recreateVolumeBindGroups();
     mat4.multiply(view.proj, view.view, this.vpScratch);
 
     this.renderCompute(colorView, view, this.vpScratch);
 
+    this.lastCameraPos.set(Array.from(view.position).slice(0, 3));
+    this.lastOrthographic = isOrthographic(view.proj);
+    this.hasRendered = true;
+    if (this.isSliceMode && this.pickPending) this.pickSlices();
     this.frameIndex++;
   }
 
@@ -812,6 +953,10 @@ export class Renderer {
     d[o.shading / 4] = this.shading;
     d[o.gradientOpacity / 4] = this.gradientOpacity;
     dv.setUint32(o.orthographic, isOrthographic(view.proj) ? 1 : 0, true);
+    // A pending pick rides along with this frame's ray march (output pixels → render-scale pixels)
+    const pick = !this.isSliceMode && !this.pickBusy && this.pickBindGroup ? this.pickPending : null;
+    d[o.pickPixel / 4] = pick ? Math.floor(pick.x * this.active.width / this.screenWidth) : -1;
+    d[o.pickPixel / 4 + 1] = pick ? Math.floor(pick.y * this.active.height / this.screenHeight) : -1;
     this.device.queue.writeBuffer(this.computeUniformBuffer, 0, d as Float32Array<ArrayBuffer>);
 
     const encoder = this.device.createCommandEncoder();
@@ -820,12 +965,14 @@ export class Renderer {
     const workgroupsY = Math.ceil(this.active.height / 8);
 
     if (!this.isSliceMode) {
+      if (pick) encoder.clearBuffer(this.labels.pick);
       // Normal volume compute path
       const computePass = encoder.beginComputePass();
       computePass.setPipeline(this.computePipeline);
       computePass.setBindGroup(0, this.active.computeBindGroup);
       computePass.dispatchWorkgroups(workgroupsX, workgroupsY, 1);
       computePass.end();
+      if (pick) this.encodePick(encoder);
 
       // Temporal accumulation pass
       if (this.enableTAA) {
@@ -926,6 +1073,10 @@ export class Renderer {
 
     this.device.queue.submit([encoder.finish()]);
     if (readRayVisits) this.readRayVisits();
+    if (pick) {
+      this.pickPending = null;
+      this.readPick(pick.resolve);
+    }
   }
 
   /** Copy collected visits only when the staging buffer is available. */

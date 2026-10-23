@@ -50,10 +50,17 @@ fn rayMarchMIP(
     var t = tStart;
     var tSample = -1.0;
 
+    // Label surfaces, composited front to back and drawn over the projection
+    var lm: LabelMarch;
+    let labelCount = labelParams.layerCount;
+    var labels = vec4f(0.0);
+    let voxelsPerUnit = datasetSize / normalizedSize;
+
     for (var brickIter = 0u; brickIter < MAX_BRICK_TRAVERSALS; brickIter++) {
         if (t >= tEnd) { break; }
 
         let brick = setupBrick(rayOrigin, rayDir, invDir, t, tEnd, normalizedSize, datasetSize);
+        if (labelCount > 0u) { labelMarchBrick(&lm, brick.valid, brick.indirection); }
 
         if (!brick.valid) {
             // scale-sensitive epsilon
@@ -73,6 +80,11 @@ fn rayMarchMIP(
 
             let pos = rayOrigin + rayDir * tSample;
             let voxel = normalizedToVoxel(pos, normalizedSize, datasetSize);
+
+            if (labelCount > 0u && labels.a < EARLY_EXIT_ALPHA) {
+                let surface = labelMarchSample(&lm, voxel, rayDir * brick.stepSize * voxelsPerUnit, brick.cell, voxelsPerUnit, -rayDir, true, true);
+                labels += surface * (1.0 - labels.a);
+            }
 
             if (numCh > 1u) {
                 for (var vi = 0u; vi < numVisible; vi++) {
@@ -106,11 +118,16 @@ fn rayMarchMIP(
             peak = max(peak, chMaxDensity[ch]);
         }
         if (peak > 0.0) { rgb /= peak; }
-        return vec4f(rgb * peak, peak);
+        return labelsOver(labels, vec4f(rgb * peak, peak));
     }
 
     // Single-channel: opaque transfer-function colour at the windowed maximum
     let windowedDensity = applyWindow(maxDensity, windowCenter, windowWidth);
     let tfColor = textureSampleLevel(tfTexture, tfSampler, vec2f(windowedDensity, 0.5), 0.0);
-    return vec4f(tfColor.rgb, 1.0);
+    return labelsOver(labels, vec4f(tfColor.rgb, 1.0));
+}
+
+// Premultiplied labels over a premultiplied projection
+fn labelsOver(labels: vec4f, image: vec4f) -> vec4f {
+    return labels + image * (1.0 - labels.a);
 }

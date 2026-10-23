@@ -23,6 +23,7 @@ bun run dev:site           # docs site
 - `src/core/`: renderer, camera, transfer function, indirection, config, feature flags
 - `src/streaming/`: brick selection and scheduling, atlas allocator, brick cache
 - `src/data/`: Zarr providers, chunk workers, decompression
+- `src/labels/`: label layers: residency per atlas slot, the palettized label pool, colours, picking (WGSL in `shaders/labels.wgsl`, `label-march.wgsl`; label reading in `src/data/label-*.ts`)
 - `src/shaders/`: WGSL, assembled in `index.ts`; uniform layout in `uniform-layout.ts`
 - `examples/`: the basic and multichannel viewers (UI, URL parameters), served at kilnrender.com/app/
 - `docs/`: the VitePress site, kilnrender.com
@@ -61,4 +62,4 @@ A new viewer-facing option touches all of these:
 - Headless browsers (SwiftShader) compile WGSL and validate pipelines, but lose the device when bricks upload, on `main` too. That is the environment, not a regression.
 - Rendering can't be verified headless. Every PR deploys a preview to `kilnrender.com/preview/<branch>/`; say in the PR what to look at there.
 - Performance: compare `?bench=1` with and without the feature flag on the preview.
-- `test/ray-iso-feedback.html` and `test/dvr-gradient.html` are manual WebGPU checks that Vitest does not run: serve the repository root with Vite (`configFile: false`, the page in `optimizeDeps.entries`) and open the page. They compile the production compute shader and test the ray-feedback and DVR gradient functions on the GPU.
+- `test/ray-iso-feedback.html`, `test/dvr-gradient.html` and `test/labels-gpu.html` are manual WebGPU checks that Vitest does not run: serve the repository root with Vite (`configFile: false`, the page in `optimizeDeps.entries`) and open the page. They compile the production shaders and test the ray-feedback, DVR gradient and label sampling functions on the GPU.

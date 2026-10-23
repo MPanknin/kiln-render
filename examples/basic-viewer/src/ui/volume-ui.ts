@@ -105,6 +105,8 @@ export class VolumeUI {
   applySelection?: ApplySelection;
   /** Set by the app to reorient the quad layout's axis panes. */
   onUpAxisChanged?: () => void;
+  /** Column of panels on the left; more panels (Labels) can be added below Controls. */
+  readonly dock: HTMLElement;
 
   constructor(viewer: KilnViewer) {
     this.viewer = viewer;
@@ -131,8 +133,9 @@ export class VolumeUI {
     this.params.renderScale = this.renderer.renderScale;
 
     const controlsContainer = document.createElement('div');
-    controlsContainer.style.cssText = 'position: fixed; left: 8px; top: 44px; z-index: 1000;';
+    controlsContainer.className = 'ctl-dock';
     document.body.appendChild(controlsContainer);
+    this.dock = controlsContainer;
 
     const statsContainer = document.createElement('div');
     statsContainer.style.cssText = 'position: fixed; right: 8px; bottom: calc(36px + env(safe-area-inset-bottom, 0px)); z-index: 1000;';

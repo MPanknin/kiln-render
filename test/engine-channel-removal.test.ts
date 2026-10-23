@@ -9,6 +9,7 @@ describe('engine channel-count changes', () => {
     engine.metadata = { sourceChannels: [0, 1, 2, 3], numChannels: 4, timepoint: 0, bitDepth: 8 };
     engine.config = {};
     engine.gpu = { bitDepth: 8 };
+    engine.labels = { setTimepoint: vi.fn() };
     engine.views = [{ renderer: { numChannels: 4, resetAccumulation: vi.fn() } }];
     engine.dataProvider = {
       setSourceSelection: (selection: SourceSelection) => {

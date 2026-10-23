@@ -4,6 +4,7 @@
  */
 
 import type { PyramidLevel, PyramidPolicy } from '../core/pyramid.js';
+import type { LabelLocation } from './label-image.js';
 
 /** Immutable source selection. Indices are zero-based; channel order defines GPU slots. */
 export interface SourceSelection {
@@ -225,6 +226,12 @@ export interface DataProvider {
    * Only relevant for float zarr datasets with worker pools.
    */
   setFloatRange?(min: number, max: number): Promise<void>;
+
+  /** Names of the label images in the image's OME-Zarr `labels` group. Omit when unsupported. */
+  listLabels?(): Promise<string[]>;
+
+  /** Where a label image lives: `source` is a name from listLabels() or an OME-Zarr URL. */
+  labelLocation?(source: string): LabelLocation;
 
   /**
    * Clean up resources (workers, caches, etc.)

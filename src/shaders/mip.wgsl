@@ -109,10 +109,8 @@ fn rayMarchMIP(
         return vec4f(rgb * peak, peak);
     }
 
-    // Single-channel: windowed TF lookup
+    // Single-channel: opaque transfer-function colour at the windowed maximum
     let windowedDensity = applyWindow(maxDensity, windowCenter, windowWidth);
     let tfColor = textureSampleLevel(tfTexture, tfSampler, vec2f(windowedDensity, 0.5), 0.0);
-    // Premultiplied output: alpha = windowed max density so the compute
-    // entry point composites the background correctly.
-    return vec4f(tfColor.rgb * windowedDensity, windowedDensity);
+    return vec4f(tfColor.rgb, 1.0);
 }

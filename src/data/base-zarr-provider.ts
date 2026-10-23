@@ -67,6 +67,15 @@ export interface LodParams {
   spatialOrder?: SpatialOrder;
 }
 
+/**
+ * Whether an OMERO window can serve as a float data range: finite, ordered and within what
+ * the float16 atlas stores. Some writers put the type's limits (±3.4e38) or nothing there.
+ */
+export function usableFloatWindow(w: OmeroWindow): boolean {
+  const values = [w.start, w.end, w.min, w.max];
+  return values.every(v => typeof v === 'number' && Math.abs(v) <= 65504) && w.min < w.max && w.start < w.end;
+}
+
 /** OMERO colours are "RRGGBB" hex strings; returns 0–1 RGB or undefined if malformed. */
 function parseHexColor(hex: unknown): [number, number, number] | undefined {
   if (typeof hex !== 'string' || !/^[0-9a-fA-F]{6}$/.test(hex)) return undefined;
@@ -220,6 +229,14 @@ export abstract class BaseZarrProvider implements DataProvider {
       this.brickStatsCache.set(key, stats);
     }
     return stats ?? null;
+  }
+
+  /**
+   * The real float range is known: brick stats so far were normalised to the provisional
+   * one, so they would misjudge empty bricks. Subclasses also update their workers.
+   */
+  async setFloatRange(_min: number, _max: number): Promise<void> {
+    this.brickStatsCache.clear();
   }
 
   /**
@@ -408,7 +425,9 @@ export abstract class BaseZarrProvider implements DataProvider {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       channelWindows = omeroAttr.channels.map((ch: any) => {
         const w = ch?.window as OmeroWindow | undefined;
-        return w && !isFloat ? { ...w, min: 0, max: dtypeMax } : w;
+        if (!w) return undefined;
+        // Float windows also give the data range; without a usable one it is derived from the data
+        return !isFloat ? { ...w, min: 0, max: dtypeMax } : usableFloatWindow(w) ? w : undefined;
       });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       channels = omeroAttr.channels.map((ch: any) => ({

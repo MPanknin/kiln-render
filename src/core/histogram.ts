@@ -92,3 +92,52 @@ export function computeHistogram(
   for (const data of dataArrays) accumulateRaw(raw, data);
   return rebinHistogram(raw, bitDepth, bins, isFloat32, floatMin, floatMax, targetFormat);
 }
+
+// Finite float16 bit patterns sorted by value; built on first use.
+let float16Order: Uint16Array | null = null;
+function sortedFloat16(): Uint16Array {
+  if (!float16Order) {
+    const lut = getFloat16ToFloat32Lut();
+    const codes = Array.from({ length: 65536 }, (_, i) => i).filter(i => isFinite(lut[i]!));
+    float16Order = Uint16Array.from(codes.sort((a, b) => lut[a]! - lut[b]!));
+  }
+  return float16Order;
+}
+
+/**
+ * Values at the quantiles `lo` and `hi` (0–1) of float16 voxels, from their raw counts (see
+ * accumulateRaw). Exact: every stored value is one of the 65536 bit patterns, so outliers
+ * can't coarsen the result. Non-finite values are ignored; null without finite voxels.
+ */
+export function float16Quantiles(counts: Uint32Array, lo: number, hi: number): [number, number] | null {
+  const lut = getFloat16ToFloat32Lut();
+  const order = sortedFloat16();
+  let total = 0;
+  for (const code of order) total += counts[code]!;
+  if (total === 0) return null;
+  let seen = 0;
+  let low = NaN;
+  for (const code of order) {
+    seen += counts[code]!;
+    if (Number.isNaN(low) && seen > total * lo) low = lut[code]!;
+    if (seen >= total * hi) return [low, lut[code]!];
+  }
+  return [low, lut[order[order.length - 1]!]!];
+}
+
+/** Number of distinct float16 values in [lo, hi]: how finely the atlas resolves that range. */
+export function float16Levels(lo: number, hi: number): number {
+  const lut = getFloat16ToFloat32Lut();
+  const order = sortedFloat16();
+  // Number of sorted values for which `before` holds (a prefix of the order)
+  const prefix = (before: (v: number) => boolean) => {
+    let a = 0, b = order.length;
+    while (a < b) {
+      const m = (a + b) >> 1;
+      if (before(lut[order[m]!]!)) a = m + 1; else b = m;
+    }
+    return a;
+  };
+  const zeros = lo <= 0 && hi >= 0 ? 1 : 0; // +0 and -0 are one value
+  return Math.max(0, prefix(v => v <= hi) - prefix(v => v < lo) - zeros);
+}

@@ -569,15 +569,17 @@ async function assembleBrick(
           let statVal: number;
 
           if (isFloat32) {
+            // NaN voxels (masked or missing data) would poison every ray through them
+            const value = Number.isNaN(raw) ? 0 : raw;
             const range = floatMax - floatMin;
             const normalizedVal = range > 0
-              ? Math.max(0, Math.min(1, (raw - floatMin) / range))
+              ? Math.max(0, Math.min(1, (value - floatMin) / range))
               : 0;
             // Stats always in [0, 65535] space so isBrickEmpty thresholds work
             statVal = Math.round(normalizedVal * 65535);
             // Store raw float value as float16 bits — shader normalises using floatMin/floatMax uniforms.
             // Clamp to r16float representable range (±65504) before encoding.
-            brickVal = float32ToFloat16Bits(Math.max(-65504, Math.min(65504, raw)));
+            brickVal = float32ToFloat16Bits(Math.max(-65504, Math.min(65504, value)));
             // Track raw-space extremes for range derivation
             if (isFinite(raw)) {
               if (raw < rawMinVal) rawMinVal = raw;

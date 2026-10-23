@@ -219,6 +219,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
    * Called after base LOD loading derives the actual data range.
    */
   async setFloatRange(min: number, max: number): Promise<void> {
+    await super.setFloatRange(min, max);
     if (this.workerPool) {
       await this.workerPool.setFloatRange(min, max);
     }

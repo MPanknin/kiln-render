@@ -15,9 +15,14 @@ import { provisionalDataRange } from './value-types.js';
 import { extractMultiscales } from './zarr-validator.js';
 import { RollingAvg } from './network-tracker.js';
 import { clampedLutEntry, computeBrickChunkFootprint, chunkCoords, chunkLayout } from './chunk-math.js';
+import { jsonReader, listLabelNames } from './label-image.js';
+import type { LabelLocation } from './label-image.js';
+import { isUrl } from './zarr-provider.js';
 
 export class LocalZarrDataProvider extends BaseZarrProvider {
   private dirHandle: FileSystemDirectoryHandle;
+  /** Image group: dirHandle, or its bioformats2raw "0" sub-group; set by initialize() */
+  private groupHandle: FileSystemDirectoryHandle;
   private arrays: ZarrArray<DataType, any>[] = [];
   private targetFormat: TargetFormat = 'r16float';
 
@@ -28,6 +33,15 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
   constructor(dirHandle: FileSystemDirectoryHandle) {
     super();
     this.dirHandle = dirHandle;
+    this.groupHandle = dirHandle;
+  }
+
+  async listLabels(): Promise<string[]> {
+    return listLabelNames(jsonReader(new FileSystemStore(this.groupHandle) as never));
+  }
+
+  labelLocation(source: string): LabelLocation {
+    return isUrl(source) ? { kind: 'url', url: source } : { kind: 'local', dir: this.groupHandle, path: ['labels', source] };
   }
 
   // r16float: convert uint16 → float16 bit pattern. r8unorm: downsample to 8-bit. r16unorm: raw.
@@ -56,6 +70,7 @@ export class LocalZarrDataProvider extends BaseZarrProvider {
           attrs = subAttrs;
           ms = subMs;
           subGroupPath = '0/';
+          this.groupHandle = await this.dirHandle.getDirectoryHandle('0');
         }
       } catch {
         // sub-group doesn't exist

@@ -76,6 +76,7 @@ function harness({ taa = false, enabled = true } = {}) {
     clipMin: [0, 0, 0], clipMax: [1, 1, 1],
     channelColors: new Float32Array(16), channelWindowCenter: new Float32Array(4), channelWindowWidth: new Float32Array(4),
     rayReadback: enabled ? staging : null, rayReadbackBusy: false, rayFramesPending: 0,
+    labels: { version: 0 }, labelVersion: 0, pickPending: null, lastCameraPos: new Float32Array(3),
     onRayVisibility: vi.fn((value: Uint32Array, frames: number) => manager.reportRayVisibility(value, frames)),
   });
   const engine: any = Object.create(KilnEngine.prototype);
@@ -83,6 +84,7 @@ function harness({ taa = false, enabled = true } = {}) {
     views: [{ renderer, dirty: true, lastVP: mat4.identity(), hasLastVP: true, lastMoveTime: -10000, width: 8, height: 8 }],
     _streamingManager: manager, vpScratch: new Float32Array(16),
     userRenderScale: 1, interactionRenderScale: 0, firstContentSubmit: null,
+    labels: { update: vi.fn() },
   });
   renderer.onDirty = () => engine.markDirty();
   const view = { proj: mat4.identity(), view: mat4.identity(), position: [0, 0, 2], interacting: false };

@@ -15,6 +15,8 @@ import { extractMultiscales } from './zarr-validator.js';
 import { v2ToV3ArrayMetadata, compressionLabel } from './zarr-v2-metadata.js';
 import { provisionalDataRange } from './value-types.js';
 import type { ZarrV2ArrayJson } from './zarr-v2-metadata.js';
+import { jsonReader, listLabelNames } from './label-image.js';
+import type { LabelLocation } from './label-image.js';
 
 /** Everything initialize() needs, opened in two round trips (see openV2Fast). */
 interface FastOpen {
@@ -24,6 +26,7 @@ interface FastOpen {
   arrayPaths: string[];
   arrayMetadata: ArrayMetadata<DataType>[];
   compression: string | undefined;
+  subGroupPath: string;
 }
 
 /**
@@ -31,6 +34,8 @@ interface FastOpen {
  */
 export class ZarrDataProvider extends BaseZarrProvider {
   private url: string;
+  /** URL of the image group (the bioformats2raw "0" sub-group when there is one), set by initialize() */
+  private groupUrl: string;
 
   /** Worker pool for off-main-thread brick loading */
   private workerPool: ZarrWorkerPool | null = null;
@@ -39,6 +44,15 @@ export class ZarrDataProvider extends BaseZarrProvider {
   constructor(url: string) {
     super();
     this.url = url.replace(/\/$/, '');
+    this.groupUrl = this.url;
+  }
+
+  async listLabels(): Promise<string[]> {
+    return listLabelNames(jsonReader(new TolerantFetchStore(this.groupUrl)));
+  }
+
+  labelLocation(source: string): LabelLocation {
+    return { kind: 'url', url: isUrl(source) ? source : `${this.groupUrl}/labels/${source}` };
   }
 
   /**
@@ -80,7 +94,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
 
     const arrayMetadata = zarrays.map(z => v2ToV3ArrayMetadata(z!));
     const arrays = arrayPaths.map((p, i) => new ZarrArray(store, `/${p}` as AbsolutePath, arrayMetadata[i]!));
-    return { attrs, ms, arrays, arrayPaths, arrayMetadata, compression: compressionLabel(zarrays[0]!.compressor) };
+    return { attrs, ms, arrays, arrayPaths, arrayMetadata, compression: compressionLabel(zarrays[0]!.compressor), subGroupPath };
   }
 
   async initialize(): Promise<VolumeMetadata> {
@@ -98,6 +112,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
 
     if (fast) {
       ({ attrs, arrays, arrayPaths, arrayMetadata, compression } = fast);
+      if (fast.subGroupPath) this.groupUrl = `${this.url}/0`;
     } else {
       const rootGroup = await open(root(store), { kind: 'group' });
 
@@ -116,6 +131,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
             attrs = subAttrs;
             ms = subMs;
             subGroupPath = '0/';
+            this.groupUrl = `${this.url}/0`;
           }
         } catch {
           // sub-group doesn't exist
@@ -235,4 +251,9 @@ export class ZarrDataProvider extends BaseZarrProvider {
     this.workerPool?.terminate();
     this.workerPool = null;
   }
+}
+
+/** An absolute URL (any scheme), as opposed to a label name. */
+export function isUrl(source: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(source);
 }

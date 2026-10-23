@@ -4,7 +4,7 @@
  */
 
 import { CONFIG } from '../core/config.js';
-import { COMPUTE_UNIFORMS, SLICE_UNIFORMS } from './uniform-layout.js';
+import { COMPUTE_UNIFORMS, LABEL_UNIFORMS, MAX_LABEL_LAYERS, SLICE_UNIFORMS } from './uniform-layout.js';
 
 // Import WGSL shader sources
 import commonWGSL from './common.wgsl?raw';
@@ -20,6 +20,8 @@ import axisWGSL from './axis.wgsl?raw';
 import blitWGSL from './blit.wgsl?raw';
 import accumulateWGSL from './accumulate.wgsl?raw';
 import slicePlanesWGSL from './slice-planes.wgsl?raw';
+import labelsWGSL from './labels.wgsl?raw';
+import labelMarchWGSL from './label-march.wgsl?raw';
 
 // Inject rendering constants into shader source. Atlas size is per-viewer (the
 // atlas may be budget-shrunk), so it's passed in rather than read from CONFIG.
@@ -41,6 +43,16 @@ const sharedBindings = /* wgsl */ `
 @group(0) @binding(8) var volumeTexture1: texture_3d<f32>;
 @group(0) @binding(9) var volumeTexture2: texture_3d<f32>;
 @group(0) @binding(10) var volumeTexture3: texture_3d<f32>;
+
+// Label layers (see labels.wgsl and LabelGpu)
+const MAX_LABEL_LAYERS: u32 = ${MAX_LABEL_LAYERS}u;
+struct LabelUniforms {
+${LABEL_UNIFORMS.fields}
+}
+@group(0) @binding(12) var labelPool: texture_3d<u32>;
+@group(0) @binding(13) var<storage, read> labelEntries: array<vec4u>;
+@group(0) @binding(14) var<storage, read> labelPalette: array<u32>;
+@group(0) @binding(15) var<uniform> labelParams: LabelUniforms;
 `;
 
 // Assemble the common shader code for a given atlas size
@@ -48,6 +60,7 @@ function buildSharedCode(atlasSize: number): string {
   return [
     injectConfig(commonWGSL, atlasSize),
     samplingWGSL,
+    labelsWGSL,
     compositingWGSL,
     raymarchingWGSL,
   ].join('\n');
@@ -58,6 +71,7 @@ const modeDispatch = /* wgsl */ `
 // Seeds the ray's jitter; set in main()
 var<private> raySeed: u32;
 
+${labelMarchWGSL}
 ${dvrWGSL}
 ${mipWGSL}
 ${isoWGSL}
@@ -101,6 +115,12 @@ ${sharedBindings}
 // Ray-guided streaming: word 0 is unused, cell i is bit i & 31 of word 1 + (i >> 5).
 // A one-word buffer means the feature is off (see markRayVisited).
 @group(0) @binding(11) var<storage, read_write> rayVisited: array<atomic<u32>>;
+// Label pick: hit voxel (w = 1 when found), then per shown layer slot + 1, palette index, colour, kind
+struct LabelPickRecord {
+    hit: vec4f,
+    layers: array<vec4u, MAX_LABEL_LAYERS>,
+}
+@group(0) @binding(16) var<storage, read_write> labelPick: LabelPickRecord;
 
 ${modeDispatch}
 
@@ -126,6 +146,7 @@ fn main(@builtin(global_invocation_id) globalId: vec3u) {
     let rayDir = normalize(far - near);
     // Orthographic rays share one direction, so their jitter is seeded from the pixel instead
     raySeed = select(rayToSeed(rayDir), hash(globalId.x + globalId.y * 65536u), uniforms.orthographic != 0u);
+    pickRay = all(vec2f(pixelCoord) == uniforms.pickPixel);
 
     let halfSize = uniforms.normalizedSize * 0.5;
     let hit = intersectBox(rayOrigin, rayDir, -halfSize, halfSize);
@@ -172,6 +193,7 @@ export function buildSlicePlanesShader(atlasSize: number = CONFIG.ATLAS_SIZE): s
     sharedBindings,
     injectConfig(commonWGSL, atlasSize),
     samplingWGSL,
+    labelsWGSL,
     slicePlanesWGSL,
   ].join('\n');
 }

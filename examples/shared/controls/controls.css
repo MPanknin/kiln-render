@@ -862,3 +862,246 @@
 .ctl-channel-level .ctl-slider-value {
   flex-basis: 74px;
 }
+
+/* --- Left dock: the column of panels (Controls, Labels) below the top bar ---
+   Panels share its height; each scrolls on its own when both are open. */
+.ctl-dock {
+  position: fixed;
+  left: 8px;
+  top: 44px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: calc(100vh - 44px - 36px - 16px);
+  max-height: calc(100dvh - 44px - 36px - 16px);
+}
+
+.ctl-dock > .ctl-panel {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+/* --- Labels panel: one card per label layer, settings and segments below it --- */
+.lbl-layer .ctl-channel-row {
+  gap: 6px;
+}
+
+.lbl-icon-button,
+.lbl-multi-swatch {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.lbl-icon-button svg {
+  fill: currentColor;
+}
+
+.lbl-icon-button:hover,
+.lbl-icon-button[aria-expanded="true"] {
+  background: rgba(187, 188, 196, 0.12);
+  color: var(--text);
+}
+
+.lbl-multi-swatch {
+  width: 16px;
+  height: 16px;
+}
+
+.lbl-settings {
+  padding: 4px 0 2px;
+  border-top: 1px solid var(--stroke);
+  margin-top: 4px;
+}
+
+.lbl-field {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.lbl-field .ctl-segmented {
+  margin: 2px 0;
+}
+
+.lbl-field .ctl-segment {
+  padding: 3px 0;
+  font-size: 10.5px;
+}
+
+.lbl-segments {
+  margin-top: 6px;
+}
+
+.lbl-eyebrow {
+  display: block;
+  margin: 2px 0 4px;
+}
+
+.lbl-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0;
+}
+
+.lbl-chips-scroll {
+  max-height: 96px;
+  overflow-y: auto;
+}
+
+.lbl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: rgba(187, 188, 196, 0.08);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.lbl-chip:hover {
+  background: rgba(187, 188, 196, 0.16);
+}
+
+.lbl-chip.selected {
+  border-color: var(--accent);
+  background: rgba(47, 129, 247, 0.18);
+}
+
+.lbl-chip.hidden {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}
+
+.lbl-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+
+.lbl-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin: 4px 0;
+}
+
+.lbl-layer-actions {
+  margin-top: 8px;
+}
+
+.lbl-spacer {
+  flex: 1 1 auto;
+}
+
+.lbl-find {
+  display: flex;
+  gap: 4px;
+  margin: 6px 0 2px;
+}
+
+.lbl-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.lbl-input:focus-visible {
+  outline: 1px solid var(--accent);
+}
+
+.lbl-add {
+  margin: 2px 0 4px;
+}
+
+.lbl-add-select {
+  width: 100%;
+}
+
+.lbl-note {
+  padding: 1px 0 3px;
+  font-size: 10.5px;
+  color: #e3b341;
+}
+
+.lbl-hint,
+.lbl-dim {
+  color: var(--text-dim);
+  font-size: 10.5px;
+}
+
+.lbl-hint {
+  margin: 2px 0 4px;
+}
+
+.lbl-footer {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.lbl-more {
+  align-self: center;
+  color: var(--text-dim);
+  font-size: 10.5px;
+}
+
+/* Segments under the cursor, next to it */
+.lbl-tooltip {
+  position: fixed;
+  z-index: 1003;
+  pointer-events: none;
+  padding: 5px 8px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  color: var(--text);
+  font: 11px system-ui, -apple-system, sans-serif;
+}
+
+.lbl-tooltip > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 0;
+}
+
+.lbl-tip-layer {
+  color: var(--text-dim);
+}
+
+.lbl-tip-name {
+  font-weight: 600;
+}

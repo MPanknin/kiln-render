@@ -21,6 +21,8 @@ import { setupShareButton } from '../../shared/share-button.js';
 import { setupScreenshotButton } from '../../shared/screenshot.js';
 import { mountOrientationGizmo } from '../../shared/orientation-gizmo.js';
 import { mountShortcuts, axisSnapShortcut } from '../../shared/shortcuts.js';
+import { mountLabelsPanel } from '../../shared/labels-panel.js';
+import { parseLabelParam, writeLabelParam } from '../../shared/label-params.js';
 import { mountTopBar } from '../../shared/top-bar.js';
 import { trackEvent, trackDataset, trackRenderMode } from '../../shared/analytics.js';
 import { maybeRunBench } from '../../shared/bench.js';
@@ -206,6 +208,7 @@ async function main() {
     showSliceZ: urlParams.sliceVis?.[2],
     showWireframe: urlParams.wireframe,
     showAxis: urlParams.axis,
+    labels: parseLabelParam(params.get('labels')),
   };
 
   // ── Create viewer ──────────────────────────────────────────────────────────
@@ -238,6 +241,10 @@ async function main() {
     ui.syncFromState();
 
     const toast = mountToast();
+    // Label layers (segmentations) for datasets that can have them, in a panel below Controls
+    const labelsPanel = viewer.engine.dataProvider.labelLocation
+      ? mountLabelsPanel(viewer, ui.dock, { notify: (message) => toast.show(message, 4000) })
+      : null;
     const takeScreenshot = setupScreenshotButton(viewer, toast);
     const gizmo = mountOrientationGizmo(viewer);
     mountLayoutButton(quad);
@@ -251,6 +258,7 @@ async function main() {
       { keys: ['s', 'S'], display: 'S', label: 'Save screenshot', run: takeScreenshot },
       { keys: ['q', 'Q'], display: 'Q', label: 'Quad view: front, side, top and 3D', run: () => quad.toggle() },
       { keys: ['d', 'D'], display: 'D', label: 'Diagnostics panel' },
+      ...(labelsPanel?.shortcuts ?? []),
       ...((viewer.metadata.timepointCount ?? 1) > 1 ? timeShortcuts((d) => ui.stepTimepoint(d)) : []),
     ]);
     const buildShareUrl = () => {
@@ -279,6 +287,8 @@ async function main() {
       if (state.clipMax[0] !== 1 || state.clipMax[1] !== 1 || state.clipMax[2] !== 1) {
         p.set('clipMax', state.clipMax.map(v => v.toFixed(2)).join(','));
       }
+
+      if (state.labels.length > 0) p.set('labels', writeLabelParam(state.labels));
 
       if (quad.active) {
         p.set('layout', 'quad');

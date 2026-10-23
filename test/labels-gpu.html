@@ -1,0 +1,115 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Label shaders</title>
+<pre id="result">Running…</pre>
+<script type="module">
+// Serve the repository root with Vite (configFile: false), then open /test/labels-gpu.html.
+// Compiles the production compute and slice shaders (ray march, pick and slice entry points), then
+// runs the production label sampling and surface-normal functions on a small synthetic label pool.
+import { buildComputeShader, buildSlicePlanesShader } from '/src/shaders/index.ts';
+import { COMPUTE_UNIFORMS, LABEL_UNIFORMS } from '/src/shaders/uniform-layout.ts';
+
+const result = document.querySelector('#result');
+const B = 66;
+try {
+  const adapter = await navigator.gpu?.requestAdapter();
+  if (!adapter) throw new Error('WebGPU adapter unavailable');
+  const device = await adapter.requestDevice();
+  const compile = async (code, name) => {
+    const module = device.createShaderModule({ code });
+    const errors = (await module.getCompilationInfo()).messages.filter(m => m.type === 'error');
+    if (errors.length) throw new Error(`${name}:\n${errors.map(m => `${m.lineNum}:${m.linePos} ${m.message}`).join('\n')}`);
+    return module;
+  };
+  const shader = buildComputeShader();
+  const compute = await compile(shader, 'compute');
+  await device.createComputePipelineAsync({ layout: 'auto', compute: { module: compute, entryPoint: 'main' } });
+  await device.createComputePipelineAsync({ layout: 'auto', compute: { module: compute, entryPoint: 'pickLabels' } });
+  const slice = await compile(buildSlicePlanesShader(), 'slice');
+  await device.createRenderPipelineAsync({
+    layout: 'auto',
+    vertex: { module: slice, entryPoint: 'vs' },
+    fragment: { module: slice, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] },
+    depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
+  });
+
+  // A 2 × 2 × 1-slot pool; slot 1 holds a brick whose voxels left of texel 33 are segment 1, the
+  // rest segment 2. Atlas slot 0 of layer 0 points at it, at level 0 (span 1) or level 1 (span 2).
+  const pool = device.createTexture({ size: [2 * B, 2 * B, B], dimension: '3d', format: 'r8uint',
+    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+  const plane = new Uint8Array(B ** 3);
+  for (let z = 0; z < B; z++) for (let y = 0; y < B; y++) for (let x = 0; x < B; x++) plane[(z * B + y) * B + x] = x < 33 ? 1 : 2;
+  device.queue.writeTexture({ texture: pool, origin: [B, 0, 0] }, plane, { bytesPerRow: B, rowsPerImage: B }, [B, B, B]);
+  const red = 0xff0000ff, blue = 0xffff0000;
+  const palette = new Uint32Array([0, 0, 0, 0, 0, red, blue, 0]);
+  const buffer = (data, usage) => {
+    const b = device.createBuffer({ size: Math.max(16, data.byteLength), usage: usage | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(b, 0, data);
+    return b;
+  };
+  const params = new ArrayBuffer(LABEL_UNIFORMS.size);
+  new Uint32Array(params, 0, 4).set([1, 8, 2, 2]); // one layer, 2³ atlas, 2 × 2 pool
+  new Float32Array(params, LABEL_UNIFORMS.offsets.layers, 4).set([1, 1, 3, 0]);
+  const uniforms = new ArrayBuffer(COMPUTE_UNIFORMS.size);
+  new Float32Array(uniforms, COMPUTE_UNIFORMS.offsets.lodScales, 8).set([1, 1, 1, 0, 2, 2, 2, 0]);
+
+  const cases = [
+    // level, voxel, expected colour, expected gradient sign along x (−1, 0, 1)
+    { level: 0, voxel: [10.5, 5.5, 5.5], color: red, grad: 0 },
+    { level: 0, voxel: [40.5, 5.5, 5.5], color: blue, grad: 0 },
+    { level: 0, voxel: [31.5, 5.5, 5.5], color: red, grad: -1 },
+    // Level 1: texel = voxel / 2 + 1, so the boundary moves to voxel 64
+    { level: 1, voxel: [63.5, 5.5, 5.5], color: red, grad: -1 },
+    { level: 1, voxel: [70.5, 5.5, 5.5], color: blue, grad: 0 },
+  ];
+  const failures = [];
+  for (const c of cases) {
+    const entry = new Uint32Array([3 | (1 << 2) | (c.level << 4), 4, 1, 0]);
+    const code = shader.replace(/@compute @workgroup_size\(8, 8, 1\)[^]*$/, `
+      @group(0) @binding(20) var<storage, read_write> output: array<vec4f>;
+      @compute @workgroup_size(1) fn main() {
+        let entry = labelEntry(0u, 0u);
+        let voxel = vec3f(${c.voxel.join(', ')});
+        let packed = labelColor(entry, voxel, vec3f(0.0));
+        let g = labelGradient(entry, voxel, vec3f(0.0), packed);
+        output[0] = vec4f(f32(packed & 0xffffu), f32(packed >> 16u), 0.0, 0.0);
+        output[1] = vec4f(g, 0.0);
+      }`);
+    device.pushErrorScope('validation');
+    const pipeline = await device.createComputePipelineAsync({ layout: 'auto', compute: { module: device.createShaderModule({ code }), entryPoint: 'main' } });
+    const output = device.createBuffer({ size: 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    const staging = device.createBuffer({ size: 32, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const group = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: buffer(uniforms, GPUBufferUsage.UNIFORM) } },
+      { binding: 12, resource: pool.createView() },
+      { binding: 13, resource: { buffer: buffer(entry, GPUBufferUsage.STORAGE) } },
+      { binding: 14, resource: { buffer: buffer(palette, GPUBufferUsage.STORAGE) } },
+      { binding: 15, resource: { buffer: buffer(params, GPUBufferUsage.UNIFORM) } },
+      { binding: 20, resource: { buffer: output } },
+    ] });
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, group);
+    pass.dispatchWorkgroups(1);
+    pass.end();
+    encoder.copyBufferToBuffer(output, 0, staging, 0, 32);
+    device.queue.submit([encoder.finish()]);
+    await staging.mapAsync(GPUMapMode.READ);
+    const out = Array.from(new Float32Array(staging.getMappedRange()));
+    staging.unmap();
+    const error = await device.popErrorScope();
+    if (error) throw new Error(error.message);
+    const color = (out[0] + out[1] * 65536) >>> 0;
+    const gx = out[4];
+    const sign = Math.abs(gx) < 1e-4 ? 0 : Math.sign(gx);
+    const name = `level ${c.level} voxel ${c.voxel[0]}`;
+    if (color !== c.color) failures.push(`${name}: colour ${color.toString(16)}, expected ${c.color.toString(16)}`);
+    if (sign !== c.grad || Math.abs(out[5]) > 1e-4 || Math.abs(out[6]) > 1e-4) failures.push(`${name}: gradient ${out.slice(4, 7)}`);
+  }
+  if (failures.length) throw new Error(failures.join('\n'));
+  result.textContent = `PASS: shaders compile; ${cases.length} label sampling cases`;
+} catch (e) {
+  result.textContent = `FAIL: ${e instanceof Error ? e.message : e}`;
+}
+</script>

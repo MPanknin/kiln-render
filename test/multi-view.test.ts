@@ -133,6 +133,7 @@ describe('engine with several views', () => {
       transferFunction: { version: 0 },
       _streamingManager: { setVisibleChannels: vi.fn(), setRayGuidanceActive: vi.fn(), update: vi.fn(), removeView: vi.fn() },
       views: renderers.map(r => ({ renderer: r, dirty: false, lastVP: mat4.identity(), hasLastVP: false, lastMoveTime: -1e9, width: 8, height: 8, tfVersion: 0 })),
+      labels: { update: vi.fn() },
     });
     return e;
   }

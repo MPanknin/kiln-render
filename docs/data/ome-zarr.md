@@ -13,6 +13,7 @@ Any URL that doesn't serve a sharded binary `volume.json` is read as OME-Zarr, s
 - **NGFF v0.4 or v0.5** with `multiscales` metadata
 - **Spatial axes last:** `z, y, x` as usual, or `x, y, z` as written by [webKnossos](https://webknossos.org). Kiln reads the order from `axes` and reads chunks through their strides, so nothing is transposed
 - **Channels:** any 1–4 of a `c` axis at once (see [Multichannel](/rendering/multichannel)); **time:** one timepoint at a time
+- **Labels:** label images in the `labels` group, or at other URLs, are shown as layers over the volume (see [Labels](/rendering/labels))
 - **Data types:** `uint8`, `uint16`, `int16`, `float32`; `float64` is read as `float32`. Others, such as `int8` or `uint32`, are rejected with a reason
 - **Levels:** each multiscale level is a LOD. Kiln reads each level's own size and per-axis downsampling (1× or 2×). If the levels don't fit that model, for example a level a few slices short of half its parent, it falls back to a uniform 2:1 model and logs why. `?pyramid=native` or `?pyramid=legacy` forces either
 - **Spacing** from `coordinateTransformations`; **windows** from OMERO metadata when present

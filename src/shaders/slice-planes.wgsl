@@ -3,6 +3,8 @@
 struct VertexOut {
     @builtin(position) position: vec4f,
     @location(0)       voxelPos: vec3f,
+    // Axis the plane is normal to (0 x, 1 y, 2 z)
+    @location(1) @interpolate(flat) axis: u32,
 }
 
 @vertex
@@ -12,6 +14,7 @@ fn vs(
 ) -> VertexOut {
     var out: VertexOut;
     out.voxelPos = vec3f(0.0);
+    out.axis = ii;
 
     // Per-instance enable check — clip away disabled planes
     var enabled = false;
@@ -62,7 +65,7 @@ fn vs(
 }
 
 @fragment
-fn fs(@location(0) voxelPos: vec3f) -> @location(0) vec4f {
+fn fs(@location(0) voxelPos: vec3f, @location(1) @interpolate(flat) axis: u32) -> @location(0) vec4f {
     let brickIndex = floor(voxelPos / LOGICAL_BRICK_SIZE);
     let indirection = lookupIndirection(brickIndex);
     if (indirection.w == 0u || indirection.w == 255u) {
@@ -76,6 +79,11 @@ fn fs(@location(0) voxelPos: vec3f) -> @location(0) vec4f {
         let lodColor = getLodColor(indirection.w);
         return vec4f(lodColor, 1.0);
     }
+    return withSliceLabels(sliceImageColor(voxelPos, indirection, lodScale), voxelPos, brickIndex, indirection, axis);
+}
+
+// The image on the slice: straight alpha, blended over the scene
+fn sliceImageColor(voxelPos: vec3f, indirection: vec4u, lodScale: vec3f) -> vec4f {
 
     if (uniforms.numChannels > 1u) {
         // Multi-channel additive blend, same composite as MIP: colour scales with
@@ -101,4 +109,40 @@ fn fs(@location(0) voxelPos: vec3f) -> @location(0) vec4f {
         let windowed = applyWindow(density, uniforms.windowCenter, uniforms.windowWidth);
         return textureSampleLevel(tfTexture, tfSampler, vec2f(windowed, 0.5), 0.0);
     }
+}
+
+// Label layers over a slice colour, the first (top) layer drawn last. Fills cover at half the
+// layer opacity, outlines (voxels with a differently labelled in-plane neighbour) at full.
+fn withSliceLabels(image: vec4f, voxelPos: vec3f, cell: vec3f, indirection: vec4u, axis: u32) -> vec4f {
+    let count = labelParams.layerCount;
+    if (count == 0u) { return image; }
+    let slot = labelAtlasSlot(indirection);
+    var rgb = image.rgb;
+    var a = image.a;
+    for (var k = count; k > 0u; k--) {
+        let layer = k - 1u;
+        let style = labelStyleSlice(layer);
+        let entry = labelEntry(layer, slot);
+        if (style == 0u || !labelEntryActive(entry)) { continue; }
+        let t = vec3i(floor(labelTexelPos(entry, voxelPos, cell)));
+        let packed = labelColorAtTexel(entry, t);
+        if (packed == 0u) { continue; }
+        let c = unpack4x8unorm(packed);
+        var w = 0.0;
+        if ((style & LABEL_SLICE_FILL) != 0u) { w = 0.5 * labelOpacity(layer) * c.a; }
+        if ((style & LABEL_SLICE_OUTLINE) != 0u) {
+            // In-plane neighbours one voxel of the label level away (inside the brick's border)
+            var du = vec3i(0);
+            var dv = vec3i(0);
+            du[(axis + 1u) % 3u] = 1;
+            dv[(axis + 2u) % 3u] = 1;
+            let id = labelSegmentAtTexel(entry, t);
+            let edge = labelSegmentAtTexel(entry, t + du) != id || labelSegmentAtTexel(entry, t - du) != id
+                    || labelSegmentAtTexel(entry, t + dv) != id || labelSegmentAtTexel(entry, t - dv) != id;
+            if (edge) { w = labelOpacity(layer) * c.a; }
+        }
+        rgb = mix(rgb, c.rgb, w);
+        a = max(a, w);
+    }
+    return vec4f(rgb, a);
 }

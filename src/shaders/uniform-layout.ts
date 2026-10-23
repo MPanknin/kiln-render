@@ -94,6 +94,25 @@ export const COMPUTE_UNIFORMS = defineUniformStruct([
   { name: 'shading',         type: 'f32' },
   { name: 'gradientOpacity', type: 'f32' },
   { name: 'orthographic',    type: 'u32' },
+  // Pixel whose first label hit is recorded for picking; negative: none
+  { name: 'pickPixel',       type: 'vec2f' },
+]);
+
+// ---------------------------------------------------------------------------
+// Label layer uniforms (144 bytes), shared by the compute and slice shaders
+// ---------------------------------------------------------------------------
+/** Label layers shown at once; each has a row of entries and a slot in LABEL_UNIFORMS.layers. */
+export const MAX_LABEL_LAYERS = 8;
+
+export const LABEL_UNIFORMS = defineUniformStruct([
+  { name: 'layerCount',      type: 'u32' },
+  // Image atlas slots and slots per axis, to index entries by slot
+  { name: 'atlasSlots',      type: 'u32' },
+  { name: 'atlasGrid',       type: 'u32' },
+  // Label pool slots per axis in x and y (it grows in z)
+  { name: 'poolGrid',        type: 'u32' },
+  // Per layer: opacity, 3D style (0 off, 1 surface, 2 tint), slice style (0 off, 1 fill, 2 outline, 3 both), unused
+  { name: 'layers',          type: `array<vec4f, ${MAX_LABEL_LAYERS}>` },
 ]);
 
 // ---------------------------------------------------------------------------

@@ -12,6 +12,15 @@ export type { ViewParams } from './core/view.js';
 export type { LoadMilestones } from './core/milestones.js';
 export type { PyramidLevel, PyramidPolicy } from './core/pyramid.js';
 
+// Label layers (segmentations)
+export { LabelLayer } from './labels/label-layer.js';
+export type {
+  LabelLayerOptions, LabelLayerState, Label3dStyle, LabelSliceStyle, LabelSegment,
+} from './labels/label-layer.js';
+export type { LabelManager, LabelPick, LabelHit, LabelStats } from './labels/label-manager.js';
+export type { LabelImageInfo, LabelColor } from './data/label-image.js';
+export { MAX_LABEL_LAYERS } from './shaders/uniform-layout.js';
+
 // Render state enums/types (needed to construct ViewerOptions)
 export type { VolumeRenderMode } from './core/renderer.js';
 export type { TFPreset, OpacityPoint } from './core/transfer-function.js';

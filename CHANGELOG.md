@@ -31,6 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Float OMERO windows that aren't finite, have unordered data or display endpoints, or lie outside ±65504 (e.g. ±3.4e38) are ignored and the range is derived from the data instead.
 - NaN voxels are stored as 0 instead of NaN, which poisoned every ray through them.
 - Brick statistics computed against the provisional float range are dropped once the real range is known, so they no longer mark bricks as empty on a later reload.
+- Pending label emptiness checks cannot hide bricks after a label-source switch or an aborted timepoint request.
 - Quad panes follow changes to the up axis, including their labels and when reopening the layout. Removed pane handles cannot change the main view or remove a replacement pane that reuses their canvas.
 - Ray-guided streaming keeps a brick visible for the same number of frames with TAA on or off. With TAA off, each readback covers one frame, which shrank the window fourfold.
 - Ray-guided streaming flushes visibility when rendering goes idle, including with TAA disabled and when a previous GPU readback is still pending, so newly exposed bricks can refine without another camera movement.

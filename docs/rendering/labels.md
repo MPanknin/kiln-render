@@ -33,6 +33,6 @@ viewer.renderer.resetAccumulation();
 
 Label bricks have the same addresses as image bricks and stream into a second atlas (`r16uint`, the VRAM of one 16-bit channel) laid out slot for slot like the image atlas. When a slot takes a new image brick, its labels are marked stale and the label brick at that address loads; the shader reads a slot's labels (nearest voxel, so IDs never blend) only once they have arrived. Label bricks load from their own small worker pool, at most six at a time.
 
-Bricks the image leaves empty, which Kiln normally skips, still load where their label brick has labels, so labelled regions of a dark image keep a slot.
+Bricks the image leaves empty, which Kiln normally skips, still load where their label brick has labels, so labelled regions of a dark image keep a slot. Empty-brick decisions are invalidated when the label source changes, and cancelled image requests cannot write late empty markers after a timepoint switch.
 
 The atlas budget includes the label atlas. The first time labels are shown, an atlas too large to leave room for it is rebuilt smaller (two 16-bit channels: 9³ slots instead of 10³), and labels are rejected if the coarsest level would no longer fit.

@@ -133,6 +133,7 @@ export class StreamingManager {
   private emptyBricks = new Map<string, number>();
   // While labels are shown, a brick is only empty if it has no labels either
   private labelCheck: LabelCheck | null = null;
+  private labelGeneration = 0;
 
   // CPU-side cache of decompressed brick data (avoids re-download after GPU eviction)
   private brickCache: BrickCache;
@@ -426,11 +427,13 @@ export class StreamingManager {
   /**
    * Labels shown over the image (null: none). A brick the image leaves empty still loads when
    * `check` finds labels in it, so the labels have a slot. Empty markers decided without these
-   * labels are forgotten and decided again as the bricks are requested.
+   * labels are forgotten and decided again as the bricks are requested. Pending decisions
+   * carry a generation so a replaced label source cannot mark a brick empty later.
    */
   setLabelCheck(check: LabelCheck | null): void {
     if (this.disposed) return;
     this.labelCheck = check;
+    this.labelGeneration++;
     if (!check || this.emptyBricks.size === 0) return;
     this.emptyBricks.clear();
     this.rebuildIndirection();
@@ -630,10 +633,11 @@ export class StreamingManager {
       if (st.empty === null) {
         const tIsEmpty = performance.now();
         const checkedMask = this.visibleMask;
-        st.empty = this.providerStatsCoverVisibleChannels &&
-          await this.dataProvider.isBrickEmpty(maxLod, bx, by, bz, this.config.emptyBrickThreshold) &&
-          !(await this.keptByLabels(maxLod, bx, by, bz));
-        if (checkedMask !== this.visibleMask) st.empty = false;
+        const imageEmpty = this.providerStatsCoverVisibleChannels &&
+          await this.dataProvider.isBrickEmpty(maxLod, bx, by, bz, this.config.emptyBrickThreshold);
+        const labelGen = this.labelGeneration;
+        st.empty = imageEmpty && !(await this.keptByLabels(maxLod, bx, by, bz));
+        if (checkedMask !== this.visibleMask || labelGen !== this.labelGeneration) st.empty = false;
         sumIsEmptyMs += performance.now() - tIsEmpty;
         if (stale()) return;
         if (st.empty) {
@@ -1344,10 +1348,11 @@ export class StreamingManager {
     if (signal.aborted) return;
 
     // Labels found here keep a dark brick, and skip the dark check below
+    const labelGen = this.labelGeneration;
     const labelled = isEmpty && checkedMask === this.visibleMask && await this.keptByLabels(lod, bx, by, bz);
     if (signal.aborted) return;
 
-    if (isEmpty && checkedMask === this.visibleMask && !labelled) {
+    if (isEmpty && checkedMask === this.visibleMask && labelGen === this.labelGeneration && !labelled) {
       this.emptyBricks.set(key, checkedMask);
       this.resources.indirection.setEmpty(bx, by, bz, lod);
       // May replace a coarse parent already on screen — the region must redraw
@@ -1395,13 +1400,16 @@ export class StreamingManager {
       const maxAcrossChannels = Math.max(...channelResults.map(r => r?.max ?? 0));
       if (maxAcrossChannels < threshold) {
         if (this.channelsToLoad().some(ch => !loadChannels.includes(ch))) return;
-        if (!(await this.keptByLabels(lod, bx, by, bz))) {
+        const labelGen = this.labelGeneration;
+        const kept = await this.keptByLabels(lod, bx, by, bz);
+        if (signal.aborted) return;
+        if (this.channelsToLoad().some(ch => !loadChannels.includes(ch))) return;
+        if (!kept && labelGen === this.labelGeneration) {
           this.emptyBricks.set(key, channelMask(loadChannels));
           this.resources.indirection.setEmpty(bx, by, bz, lod);
           this.notifyContentChanged();
           return;
         }
-        if (signal.aborted) return;
       }
     }
 
@@ -1584,13 +1592,16 @@ export class StreamingManager {
         return;
       }
       // every channel below threshold and no labels: empty, exactly as the all-at-once path decides
-      if (!labelled && !(await this.keptByLabels(lod, bx, by, bz))) {
+      const labelGen = this.labelGeneration;
+      const kept = labelled || await this.keptByLabels(lod, bx, by, bz);
+      if (signal.aborted) return;
+      if (this.channelsToLoad().some(ch => !loadChannels.includes(ch))) return;
+      if (!kept && labelGen === this.labelGeneration) {
         this.emptyBricks.set(key, channelMask(loadChannels));
         this.resources.indirection.setEmpty(bx, by, bz, lod);
         this.notifyContentChanged();
         return;
       }
-      if (signal.aborted) return;
     }
     for (const ch of loadChannels) {
       const r = results[ch];

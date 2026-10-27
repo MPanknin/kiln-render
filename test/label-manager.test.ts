@@ -58,7 +58,7 @@ function setup({ budget = 64 * LABEL_SLOT_BYTES, timepoints = 1 } = {}) {
     levels: [{ lod: 0, dimensions: [128, 128, 128] }, { lod: 1, dimensions: [64, 64, 64] }],
   };
   const allocator = new AtlasAllocator(2);
-  const streaming = { setLabelCheck: vi.fn() };
+  const streaming = { setLabelCheck: vi.fn(), notifyContentChanged: vi.fn() };
   const redraw = vi.fn();
   const gpu = new LabelGpu(device(), budget);
   const labels = new LabelManager(gpu, {
@@ -199,6 +199,24 @@ describe('label bricks in the atlas', () => {
     expect(await check(0, 1, 0, 0)).toBe(true); // cached: no load
     expect(pending).toHaveLength(0);
   });
+
+  it('commits arriving bricks through the streaming manager; check-only loads commit nothing', async () => {
+    const t = setup();
+    await t.labels.add('cells');
+    bricks.set('1/0/0/0', uniform(7));
+    t.place(0, 1); // the slot waits for its label brick
+    await t.settle();
+    expect(t.streaming.notifyContentChanged).toHaveBeenCalledTimes(1);
+    expect(t.redraw).not.toHaveBeenCalled();
+    // An emptiness check for a brick no slot shows: an answer, nothing on screen
+    t.streaming.notifyContentChanged.mockClear();
+    bricks.set('1/1/0/0', uniform(3));
+    const check = (t.streaming.setLabelCheck.mock.lastCall![0] as (...b: number[]) => Promise<boolean>)(1, 1, 0, 0);
+    await t.settle();
+    expect(await check).toBe(true);
+    expect(t.streaming.notifyContentChanged).not.toHaveBeenCalled();
+    expect(t.redraw).not.toHaveBeenCalled();
+  });
 });
 
 describe('label styles', () => {
@@ -215,6 +233,22 @@ describe('label styles', () => {
     layer.select(7);
     t.labels.update();
     expect(t.entry(0)[1]! >>> 24).toBe(255);
+    expect(t.redraw).toHaveBeenCalled();
+  });
+
+  it('applies a style change without rewriting the entries', async () => {
+    const t = setup();
+    const layer = await t.labels.add('cells');
+    bricks.set('1/0/0/0', uniform(7));
+    t.place(0, 1);
+    await t.settle();
+    const clearRows = vi.spyOn(t.gpu, 'clearRows');
+    const setLayers = vi.spyOn(t.gpu, 'setLayers');
+    layer.opacity = 0.3;
+    t.labels.update();
+    expect(clearRows).not.toHaveBeenCalled();
+    expect(setLayers).toHaveBeenCalledTimes(1);
+    expect(t.entry(0)).toEqual([ENTRY_UNIFORM, resolveColor(7, layer.segmentStyle()), 0, 0]);
     expect(t.redraw).toHaveBeenCalled();
   });
 

@@ -99,6 +99,9 @@ export interface EngineOptions {
   labelBudgetBytes?: number;
 }
 
+/** Longest that engine creation waits for the dataset's label listing (ms); a slow store delivers it later. */
+const LABEL_LIST_WAIT_MS = 1000;
+
 /** How long after the last view change the camera still counts as interacting (ms). */
 const INTERACTION_HOLD_MS = 200;
 
@@ -444,7 +447,10 @@ export class KilnEngine {
       engine.streamingManager.maxPixelError = options.maxPixelError;
     }
 
-    engine.labels.available = await labelNames;
+    // The listing is optional UI data: wait briefly, then let it arrive on its own
+    const listed = await Promise.race([labelNames, new Promise<null>(r => setTimeout(() => r(null), LABEL_LIST_WAIT_MS))]);
+    if (listed) engine.labels.available = listed;
+    else void labelNames.then((names) => { engine.labels.available = names; engine.labels.onChange?.(); });
     if (options.labels?.length) void engine.labels.addAll(options.labels);
 
     device.lost.then(() => engine.dispose());

@@ -37,6 +37,13 @@ const RETRY_MS = 10_000;
 /** Default upper bound of the label pool's GPU memory. */
 export const DEFAULT_LABEL_BUDGET_BYTES = 512 * 1024 * 1024;
 
+/** Whether two bounds label a slot the same way. */
+function sameBound(a: LabelBound, b: LabelBound): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.kind !== b.kind) return false;
+  return a.kind === 'uniform' ? a.id === (b as { id: number }).id : a.brick === (b as { brick: ResidentLabelBrick }).brick;
+}
+
 /** What the manager needs from the engine. */
 export interface LabelHost {
   readonly provider: DataProvider;
@@ -44,7 +51,7 @@ export interface LabelHost {
   readonly config: DatasetConfig;
   resources(): VolumeResources;
   streaming(): StreamingManager;
-  /** Content changed: every view re-renders and restarts accumulation */
+  /** A layer was added, removed or restyled: every view re-renders and restarts accumulation */
   redraw(): void;
 }
 
@@ -115,7 +122,7 @@ export class LabelManager implements LabelLayerHost {
   private resources: VolumeResources | null = null;
   private timepoint = 0;
   private nextUid = 1;
-  private layoutDirty = false;
+  private stylesDirty = false;
   private readonly recolor = new Set<LabelLayer>();
   private disposed = false;
 
@@ -220,7 +227,7 @@ export class LabelManager implements LabelLayerHost {
       this.layout();
       this.onChange?.();
     } else if (what === 'style') {
-      this.layoutDirty = true;
+      this.stylesDirty = true;
     } else {
       this.recolor.add(layer);
     }
@@ -254,7 +261,7 @@ export class LabelManager implements LabelLayerHost {
   /** Per frame: apply style and colour changes, start loads, send writes to the GPU. */
   update(): void {
     if (this.disposed) return;
-    if (this.layoutDirty) this.layoutRows();
+    if (this.stylesDirty) this.applyStyles();
     for (const layer of this.recolor) this.applyColors(layer);
     this.recolor.clear();
     this.pump();
@@ -367,13 +374,17 @@ export class LabelManager implements LabelLayerHost {
 
   /** Rewrite every entry row and the layer styles. */
   private layoutRows(): void {
-    this.layoutDirty = false;
     this.gpu.clearRows(0);
-    const shown = this.shown;
-    for (const layer of shown) {
+    for (const layer of this.shown) {
       layer.bindings.forEach((b, slot) => { if (b) this.writeEntry(layer, slot, b.bound); });
     }
-    this.gpu.setLayers(shown.map(l => ({
+    this.applyStyles();
+  }
+
+  /** The shown layers' opacity and modes (one small uniform write). */
+  private applyStyles(): void {
+    this.stylesDirty = false;
+    this.gpu.setLayers(this.shown.map(l => ({
       opacity: l.opacity,
       mode3d: { off: 0, surface: 1, tint: 2 }[l.style3d],
       slice: { off: 0, fill: 1, outline: 2, both: 3 }[l.slice],
@@ -501,10 +512,18 @@ export class LabelManager implements LabelLayerHost {
 
   private retryStarved(load: Load): void {
     if (this.disposed || load.layer.disposed) return;
-    for (const slot of load.waiters) {
-      const b = load.layer.bindings[slot];
-      if (b && b.key === load.key && !b.exact) this.resolve(load.layer, slot, b);
-    }
+    let changed = false;
+    for (const slot of load.waiters) changed = this.rebind(load.layer, slot, load.key) || changed;
+    if (changed) this.host.streaming().notifyContentChanged();
+  }
+
+  /** Resolve a waiting slot again (its brick arrived or found room); true when its labels changed. */
+  private rebind(layer: LabelLayer, slot: number, key: string): boolean {
+    const b = layer.bindings[slot];
+    if (!b || b.key !== key || b.exact) return false;
+    const before = b.bound;
+    this.resolve(layer, slot, b);
+    return !sameBound(before, b.bound);
   }
 
   private writeEntry(layer: LabelLayer, slot: number, bound: LabelBound): void {
@@ -608,11 +627,10 @@ export class LabelManager implements LabelLayerHost {
     if (data.kind === 'mixed') this.remember(key, data);
     for (const check of load.checks) check(data.kind !== 'empty');
     load.checks = [];
-    for (const slot of load.waiters) {
-      const b = layer.bindings[slot];
-      if (b && b.key === key && !b.exact) this.resolve(layer, slot, b);
-    }
-    this.host.redraw();
+    // Like image bricks: a debounced commit (soft or full reset), and only if something shows
+    let changed = false;
+    for (const slot of load.waiters) changed = this.rebind(layer, slot, key) || changed;
+    if (changed) this.host.streaming().notifyContentChanged();
   }
 
   private failed(load: Load): void {

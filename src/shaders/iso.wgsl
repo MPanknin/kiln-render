@@ -89,7 +89,7 @@ fn rayMarchISO(
                     let normal = -normalize(gradient);
                     let tfColor = textureSampleLevel(tfTexture, tfSampler, vec2f(isoValue, 0.5), 0.0);
                     // Tint layers colour the isosurface by the label just inside it
-                    let surface = phongLighting(normal, -rayDir, isoSurfaceColor(tfColor.rgb, surfaceVoxel - normal * 0.5 * surfaceLodScale));
+                    let surface = phongLighting(normal, -rayDir, isoSurfaceColor(&lm, tfColor.rgb, surfaceVoxel - normal * 0.5 * surfaceLodScale));
                     return labels + vec4f(surface, 1.0) * (1.0 - labels.a);
                 }
             }
@@ -108,13 +108,13 @@ fn rayMarchISO(
 }
 
 // Isosurface colour under the tint layers at a voxel (upper layers first)
-fn isoSurfaceColor(base: vec3f, voxel: vec3f) -> vec3f {
+fn isoSurfaceColor(m: ptr<function, LabelMarch>, base: vec3f, voxel: vec3f) -> vec3f {
     for (var i = 0u; i < labelParams.layerCount; i++) {
         if (labelStyle3d(i) != LABEL_STYLE_TINT) { continue; }
         let packed = labelColorAtVoxel(i, voxel);
         if (packed == 0u) { continue; }
         let c = unpack4x8unorm(packed);
-        if (pickRay) { labelPick.hit = vec4f(voxel, 1.0); }
+        labelPickHit(m, voxel);
         return mix(base, c.rgb, labelOpacity(i) * c.a);
     }
     return base;

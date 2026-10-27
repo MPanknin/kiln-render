@@ -14,20 +14,17 @@ Kiln draws OME-Zarr label images, such as segmentations, over the volume: up to 
 
 ## In the viewer
 
-Datasets that can have labels get a **Labels** panel below Controls. `?labels=cells,nuclei` opens layers from the URL; **Share** keeps every setting below.
+Datasets that can have labels get a **Labels** panel below Controls. `?labels=cells,nuclei` opens layers from the URL; **Share** keeps the layers, their colours and opacities.
 
 | Control | Behaviour |
 |---------|-----------|
 | Add labels | The dataset's label images that aren't open yet, or **From URL…** for any OME-Zarr label image |
+| Swatch | The layer's colour, one for all its segments |
 | Toggle | Shows the layer. Hidden layers free their GPU memory and stop streaming |
-| ⋯ | Opens the layer's settings |
-| Opacity | Surfaces and outlines at this opacity, slice fills at half of it |
-| 3D | **Surface**: each segment as a shaded surface. **Tint**: the label colour mixed into the image (unshaded, through the volume; not shown in MIP). **Off**: slices only |
-| Slices | **Fill**, **Outline** (voxels next to another label in the slice plane), **Both** or **Off** |
-| Colours | **Per segment**, or **One colour** for the whole layer (swatch). In one colour, touching segments form one surface in 3D; slice outlines still separate them |
-| ↑ ↓ Remove | Drawing order (the top layer wins where layers overlap) and removal |
+| Opacity | Surfaces and slice outlines at this opacity, slice fills at half of it |
+| × | Removes the layer |
 
-Hovering a view shows the segments under the cursor (layer, ID and name), in 3D and on slices. Clicking selects the top segment (Shift: add or remove it); clicking empty space or `Esc` clears the selection. Selected segments are drawn lighter and fully opaque, the others fainter. With a selection, **Hide** (`H`) hides it and **Only these** (`I`) shows nothing else. `L` shows or hides all layers.
+Layers are drawn as shaded surfaces in 3D and filled on slices. The other display modes, per-segment colours, and picking segments are in the API for now, not in the panel.
 
 ## Display
 
@@ -38,7 +35,7 @@ Hovering a view shows the segments under the cursor (layer, ID and name), in 3D 
 | ISO | Surfaces in front of the isosurface; tint colours the isosurface |
 | Slice | Fills and outlines, the top layer last |
 
-A segment's surface is drawn where the ray's nearest-voxel label changes to it, and shaded with the headlight from the gradient of the segment's mask. Surfaces follow the voxels of the level shown, so they sharpen as the image refines; while a brick's labels load, its slot shows the nearest loaded coarser labels.
+A segment's surface is drawn where the ray's nearest-voxel label changes to it, and shaded with the headlight from the gradient of the segment's mask. In one colour, touching segments form one surface; slice outlines still separate them. Surfaces follow the voxels of the level shown, so they sharpen as the image refines; while a brick's labels load, its slot shows the nearest loaded coarser labels.
 
 ## API
 
@@ -53,8 +50,8 @@ viewer.labels.layers;             // open layers in drawing order (opened after 
 const layer = await viewer.labels.add('https://example.com/scan.zarr/labels/membrane', { color: [255, 200, 0] });
 layer.opacity = 0.5;
 layer.style3d = 'surface';        // 'surface' | 'tint' | 'off'
-layer.slice = 'outline';          // 'fill' | 'outline' | 'both' | 'off'
-layer.color = null;               // per-segment colours
+layer.slice = 'outline';          // 'fill' | 'outline' | 'both' | 'off' (default 'fill')
+layer.color = null;               // per-segment colours (default: one colour per layer)
 layer.select([12, 14]);           // or select(id, 'add' | 'toggle')
 layer.isolate = true;             // only the selected segments
 layer.setHidden(3, true);

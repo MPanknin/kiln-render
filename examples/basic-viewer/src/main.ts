@@ -242,9 +242,9 @@ async function main() {
 
     const toast = mountToast();
     // Label layers (segmentations) for datasets that can have them, in a panel below Controls
-    const labelsPanel = viewer.engine.dataProvider.labelLocation
-      ? mountLabelsPanel(viewer, ui.dock, { notify: (message) => toast.show(message, 4000) })
-      : null;
+    if (viewer.engine.dataProvider.labelLocation) {
+      mountLabelsPanel(viewer, ui.dock, { notify: (message) => toast.show(message, 4000) });
+    }
     const takeScreenshot = setupScreenshotButton(viewer, toast);
     const gizmo = mountOrientationGizmo(viewer);
     mountLayoutButton(quad);
@@ -258,7 +258,6 @@ async function main() {
       { keys: ['s', 'S'], display: 'S', label: 'Save screenshot', run: takeScreenshot },
       { keys: ['q', 'Q'], display: 'Q', label: 'Quad view: front, side, top and 3D', run: () => quad.toggle() },
       { keys: ['d', 'D'], display: 'D', label: 'Diagnostics panel' },
-      ...(labelsPanel?.shortcuts ?? []),
       ...((viewer.metadata.timepointCount ?? 1) > 1 ? timeShortcuts((d) => ui.stepTimepoint(d)) : []),
     ]);
     const buildShareUrl = () => {

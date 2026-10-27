@@ -11,7 +11,7 @@ export type LabelParam = LabelLayerOptions & { source: string };
 
 const STYLES_3D: Label3dStyle[] = ['surface', 'tint', 'off'];
 const STYLES_SLICE: LabelSliceStyle[] = ['fill', 'outline', 'both', 'off'];
-const DEFAULTS = { opacity: 0.8, style3d: 'surface', slice: 'both' } as const;
+const DEFAULTS = { opacity: 0.8, style3d: 'surface', slice: 'fill' } as const;
 
 const hex = (rgb: readonly number[]) => rgb.map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
 

@@ -4,7 +4,7 @@ import type { LabelLayerState } from '../src/labels/label-layer.js';
 
 describe('labels URL parameter', () => {
   const state = (over: Partial<LabelLayerState>): LabelLayerState => ({
-    source: 'cells', visible: true, opacity: 0.8, style3d: 'surface', slice: 'both',
+    source: 'cells', visible: true, opacity: 0.8, style3d: 'surface', slice: 'fill',
     color: null, isolate: false, hidden: [], selected: [], ...over,
   });
 

@@ -883,13 +883,13 @@
   max-height: none;
 }
 
-/* --- Labels panel: one card per label layer, settings and segments below it --- */
+/* --- Labels panel: one card per label layer --- */
+
 .lbl-layer .ctl-channel-row {
   gap: 6px;
 }
 
-.lbl-icon-button,
-.lbl-multi-swatch {
+.lbl-icon-button {
   flex: 0 0 auto;
   display: grid;
   place-items: center;
@@ -908,100 +908,9 @@
   fill: currentColor;
 }
 
-.lbl-icon-button:hover,
-.lbl-icon-button[aria-expanded="true"] {
+.lbl-icon-button:hover {
   background: rgba(187, 188, 196, 0.12);
   color: var(--text);
-}
-
-.lbl-multi-swatch {
-  width: 16px;
-  height: 16px;
-}
-
-.lbl-settings {
-  padding: 4px 0 2px;
-  border-top: 1px solid var(--stroke);
-  margin-top: 4px;
-}
-
-.lbl-field {
-  display: grid;
-  grid-template-columns: 52px 1fr;
-  align-items: center;
-  gap: 8px;
-}
-
-.lbl-field .ctl-segmented {
-  margin: 2px 0;
-}
-
-.lbl-field .ctl-segment {
-  padding: 3px 0;
-  font-size: 10.5px;
-}
-
-.lbl-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin: 4px 0;
-}
-
-.lbl-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 100%;
-  padding: 2px 6px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  background: rgba(187, 188, 196, 0.08);
-  color: var(--text);
-  font-family: var(--mono);
-  font-size: 10.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-}
-
-.lbl-chip:hover {
-  background: rgba(187, 188, 196, 0.16);
-}
-
-.lbl-chip.selected {
-  border-color: var(--accent);
-  background: rgba(47, 129, 247, 0.18);
-}
-
-.lbl-chip.hidden {
-  color: var(--text-dim);
-  text-decoration: line-through;
-}
-
-.lbl-dot {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
-}
-
-.lbl-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-  margin: 4px 0;
-}
-
-.lbl-layer-actions {
-  margin-top: 8px;
-}
-
-.lbl-spacer {
-  flex: 1 1 auto;
 }
 
 .lbl-find {
@@ -1040,54 +949,7 @@
   color: #e3b341;
 }
 
-.lbl-hint,
 .lbl-dim {
   color: var(--text-dim);
   font-size: 10.5px;
-}
-
-.lbl-hint {
-  margin: 2px 0 4px;
-}
-
-.lbl-footer {
-  margin-top: 4px;
-  font-size: 10px;
-  color: var(--text-dim);
-}
-
-.lbl-more {
-  align-self: center;
-  color: var(--text-dim);
-  font-size: 10.5px;
-}
-
-/* Segments under the cursor, next to it */
-.lbl-tooltip {
-  position: fixed;
-  z-index: 1003;
-  pointer-events: none;
-  padding: 5px 8px;
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius);
-  background: var(--bg-panel);
-  backdrop-filter: blur(8px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
-  color: var(--text);
-  font: 11px system-ui, -apple-system, sans-serif;
-}
-
-.lbl-tooltip > div {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 1px 0;
-}
-
-.lbl-tip-layer {
-  color: var(--text-dim);
-}
-
-.lbl-tip-name {
-  font-weight: 600;
 }

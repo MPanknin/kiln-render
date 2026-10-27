@@ -11,6 +11,8 @@ import type { TransferFunction, TFPreset } from './core/transfer-function.js';
 import type { StreamingManager } from './streaming/streaming-manager.js';
 import type { DataProvider, SourceSelection, VolumeMetadata } from './data/data-provider.js';
 import type { LoadMilestones } from './core/milestones.js';
+import type { LabelManager, LabelPick } from './labels/label-manager.js';
+import type { LabelLayerState } from './labels/label-layer.js';
 
 export interface ViewerOptions extends EngineOptions {
   /** Camera up axis */
@@ -49,6 +51,8 @@ export interface ViewerState {
   showSliceZ: boolean;
   showWireframe: boolean;
   showAxis: boolean;
+  /** Label layers in drawing priority (see KilnEngine.labels) */
+  labels: LabelLayerState[];
 }
 
 /** Another view of the viewer's dataset in its own canvas, e.g. one pane of a multi-view layout. */
@@ -139,6 +143,8 @@ export class KilnViewer {
   get device(): GPUDevice { return this.engine.device; }
   get metadata(): VolumeMetadata { return this.engine.metadata; }
   get milestones(): LoadMilestones { return this.engine.milestones; }
+  /** Label layers (segmentations) over the volume */
+  get labels(): LabelManager { return this.engine.labels; }
 
   // Render state convenience API
   get mode(): VolumeRenderMode { return this.renderer.volumeRenderMode; }
@@ -237,6 +243,27 @@ export class KilnViewer {
     state!.context.unconfigure();
   }
 
+  /** Whether `canvas` shows this viewer: the main canvas or a pane's. */
+  ownsCanvas(canvas: EventTarget | null): canvas is HTMLCanvasElement {
+    return canvas === this.canvas || this.panes.some(p => p.canvas === canvas);
+  }
+
+  /**
+   * Label segments under a point of the main canvas or a pane's canvas, in client (CSS) pixels,
+   * e.g. a pointer event's clientX/clientY (see KilnEngine.pickLabels). Null when the canvas
+   * isn't this viewer's or no label layer is shown.
+   */
+  pickLabels(canvas: HTMLCanvasElement, clientX: number, clientY: number): Promise<LabelPick | null> {
+    const view = canvas === this.canvas ? 0 : this.panes.findIndex(p => p.canvas === canvas) + 1;
+    if (this.disposed || view < 0 || (view === 0 && canvas !== this.canvas)) return Promise.resolve(null);
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return Promise.resolve(null);
+    const x = (clientX - rect.left) * canvas.width / rect.width;
+    const y = (clientY - rect.top) * canvas.height / rect.height;
+    if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return Promise.resolve(null);
+    return this.engine.pickLabels(x, y, view);
+  }
+
   /** Switch source channels/timepoint in place (see KilnEngine.setSourceSelection); the camera stays. */
   setSourceSelection(selection: SourceSelection): void { this.engine.setSourceSelection(selection); }
 
@@ -277,6 +304,7 @@ export class KilnViewer {
       showSliceZ: this.renderer.showSliceZ,
       showWireframe: this.renderer.showWireframe,
       showAxis: this.renderer.showAxis,
+      labels: this.engine.labels.layers.map(l => l.state()),
     };
   }
 

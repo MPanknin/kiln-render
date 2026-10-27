@@ -56,6 +56,7 @@ const viewer = await KilnViewer.create(canvas, url, {
   sourceChannels: [0, 1, 2, 3], // OME-Zarr channels in display order (default: the first four)
   timepoint: 0,
   visibleChannels: [true, true, false, false], // hidden channels aren't streamed until shown
+  labels: ['cells', { source: 'nuclei', style3d: 'tint' }], // label layers (see Labels)
 });
 ```
 

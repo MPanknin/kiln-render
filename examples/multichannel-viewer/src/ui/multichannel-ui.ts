@@ -110,6 +110,8 @@ export class MultichannelUI {
   private timeSlider: TimeSlider | null = null;
   /** Set by the app: applies a source selection in place or opens the other viewer. */
   applySelection?: ApplySelection;
+  /** Column of panels on the left; more panels (Labels) can be added below Controls. */
+  readonly dock: HTMLElement;
   private upAxisSelect!: ReturnType<typeof createSelect>;
   private wireframeToggle!: ReturnType<typeof createToggle>;
   private axesToggle!: ReturnType<typeof createToggle>;
@@ -143,9 +145,9 @@ export class MultichannelUI {
 
     // Controls pane — top-left, below top bar
     const controlsContainer = document.createElement("div");
-    controlsContainer.style.cssText =
-      "position: fixed; left: 8px; top: 44px; z-index: 1000;";
+    controlsContainer.className = "ctl-dock";
     document.body.appendChild(controlsContainer);
+    this.dock = controlsContainer;
 
     // Stats pane — bottom-left
     const statsContainer = document.createElement("div");

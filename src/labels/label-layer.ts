@@ -22,9 +22,9 @@ export interface LabelLayerOptions {
   opacity?: number;
   /** Default 'surface' */
   style3d?: Label3dStyle;
-  /** Default 'both' */
+  /** Default 'fill' */
   slice?: LabelSliceStyle;
-  /** One colour (0–255 RGB) for every segment; null or absent: per-segment colours */
+  /** One colour (0–255 RGB) for every segment (default: a colour per layer); null: per-segment colours */
   color?: Rgb | null;
   /** Segments not drawn */
   hidden?: readonly number[];
@@ -134,8 +134,8 @@ export class LabelLayer {
     this._visible = options.visible ?? true;
     this._opacity = clamp01(options.opacity ?? 0.8);
     this._style3d = options.style3d ?? 'surface';
-    this._slice = options.slice ?? 'both';
-    this._color = options.color ?? null;
+    this._slice = options.slice ?? 'fill';
+    this._color = options.color === undefined ? this.layerColor : options.color;
     this._isolate = options.isolate ?? false;
     this.hidden = new Set(options.hidden ?? []);
     this.selected = new Set(options.selected ?? []);

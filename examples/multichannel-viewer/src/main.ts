@@ -20,6 +20,8 @@ import { setupShareButton } from '../../shared/share-button.js';
 import { setupScreenshotButton } from '../../shared/screenshot.js';
 import { mountOrientationGizmo } from '../../shared/orientation-gizmo.js';
 import { mountShortcuts, axisSnapShortcut } from '../../shared/shortcuts.js';
+import { mountLabelsPanel } from '../../shared/labels-panel.js';
+import { parseLabelParam, writeLabelParam } from '../../shared/label-params.js';
 import { mountTopBar } from '../../shared/top-bar.js';
 import { trackDataset, trackRenderMode } from '../../shared/analytics.js';
 import { maybeRunBench } from '../../shared/bench.js';
@@ -130,6 +132,7 @@ async function main() {
     pyramid: urlParams.pyramid,
     // Hidden channels in the share URL must not be streamed for the base load
     visibleChannels: urlParams.channels?.map(ch => ch.visible),
+    labels: parseLabelParam(params.get('labels')),
   };
 
   // Show spinner during metadata fetch + any pre-scans (cause 1: main-thread
@@ -157,6 +160,10 @@ async function main() {
   // ── Share button ───────────────────────────────────────────────────────────
 
   const toast = mountToast();
+  // Label layers (segmentations) for datasets that can have them, in a panel below Controls
+  if (viewer.engine.dataProvider.labelLocation) {
+    mountLabelsPanel(viewer, ui.dock, { notify: (message) => toast.show(message, 4000) });
+  }
   const takeScreenshot = setupScreenshotButton(viewer, toast);
   const gizmo = mountOrientationGizmo(viewer);
   mountShortcuts([
@@ -183,6 +190,7 @@ async function main() {
     const [rx, ry, dist, tx, ty, tz] = state.cam;
     p.set('cam', `${rx.toFixed(3)},${ry.toFixed(3)},${dist.toFixed(3)},${tx.toFixed(3)},${ty.toFixed(3)},${tz.toFixed(3)}`);
     if (state.projection === 'orthographic') p.set('proj', 'ortho');
+    if (state.labels.length > 0) p.set('labels', writeLabelParam(state.labels));
     const channelState = ui.getChannelState();
     if (channelState.length > 0) {
       p.set('channels', channelState.map(ch =>

@@ -23,7 +23,7 @@ import { ZarrDataProvider } from './data/zarr-provider.js';
 import type { TargetFormat } from './data/brick-convert.js';
 import { initializeWithPyramidFallback } from './data/pyramid-fallback.js';
 import { UINT16_FLOAT16_OFFSET } from './utils/float16.js';
-import { isFlagDisabled } from './core/feature-flags.js';
+import { isFlagDisabled, isFlagEnabled } from './core/feature-flags.js';
 
 export interface EngineOptions {
   /** Zero-based OME-Zarr source channels, in display order (one to four). */
@@ -163,6 +163,8 @@ interface GpuSetup {
   atlasBudgetBytes?: number;
   /** Ray-guided brick selection; on by default, `?rayguide=0` turns it off */
   rayGuided: boolean;
+  /** Experimental `?softreset=1`: soft accumulation reset on brick commits, per-pixel jitter */
+  softReset: boolean;
 }
 
 export class KilnEngine {
@@ -322,6 +324,7 @@ export class KilnEngine {
     const gpu: GpuSetup = {
       outputFormat: format, textureFormat, bitDepth: effectiveBitDepth, atlasBudgetBytes: options.atlasBudgetBytes,
       rayGuided: !isFlagDisabled('rayguide'),
+      softReset: isFlagEnabled('softreset'),
     };
     const { resources, renderer } = KilnEngine.buildGpu(device, metadata, config, gpu);
     milestones.gpuReady = performance.now();
@@ -455,6 +458,7 @@ export class KilnEngine {
     device: GPUDevice, metadata: VolumeMetadata, config: DatasetConfig, gpu: GpuSetup, resources: VolumeResources,
   ): Renderer {
     const renderer = new Renderer(device, gpu.outputFormat, resources, config, gpu.rayGuided);
+    renderer.softReset = gpu.softReset;
     // uint16 on r16float is stored as value - offset; map texels back to value / 65535
     if (gpu.textureFormat === 'r16float' && !metadata.isFloat) {
       renderer.texelScale = 65535;
@@ -491,7 +495,7 @@ export class KilnEngine {
       this.metadata,
       this.device,
       this.config,
-      () => { for (const view of this.views) view.renderer.resetAccumulation(); },
+      () => { for (const view of this.views) view.renderer.bricksCommitted(); },
       visibleChannelMask(this.renderer),
     );
     if (this.gpu.rayGuided) streamingManager.enableRayGuidance();

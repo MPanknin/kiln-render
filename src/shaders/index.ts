@@ -55,8 +55,19 @@ function buildSharedCode(atlasSize: number): string {
 
 // Mode dispatch function (calls appropriate render mode)
 const modeDispatch = /* wgsl */ `
-// Seeds the ray's jitter; set in main()
+// Seed the ray's jitter; set in main()
 var<private> raySeed: u32;
+var<private> pixelSeed: u32;
+
+// Fraction of a step that offsets the ray's first sample. Mode 2 (?softreset=1) hashes
+// pixel and frame. Mode 1 seeds by quantised ray direction, which is identical for
+// parallel rays and repeats along screen lines (orthographic rays use the pixel).
+fn rayJitter() -> f32 {
+    if (uniforms.jitter == 2u) {
+        return rand(hash(pixelSeed ^ hash(uniforms.frameIndex)));
+    }
+    return rand(raySeed + uniforms.frameIndex);
+}
 
 ${dvrWGSL}
 ${mipWGSL}
@@ -110,6 +121,7 @@ fn main(@builtin(global_invocation_id) globalId: vec3u) {
     let screenSize = vec2i(uniforms.screenSize);
 
     if (pixelCoord.x >= screenSize.x || pixelCoord.y >= screenSize.y) { return; }
+    pixelSeed = globalId.x + globalId.y * 65536u;
 
     let ndc = vec2f(
         (f32(pixelCoord.x) + 0.5) / f32(screenSize.x) * 2.0 - 1.0,
@@ -125,7 +137,7 @@ fn main(@builtin(global_invocation_id) globalId: vec3u) {
     let rayOrigin = select(uniforms.cameraPos, near, uniforms.orthographic != 0u);
     let rayDir = normalize(far - near);
     // Orthographic rays share one direction, so their jitter is seeded from the pixel instead
-    raySeed = select(rayToSeed(rayDir), hash(globalId.x + globalId.y * 65536u), uniforms.orthographic != 0u);
+    raySeed = select(rayToSeed(rayDir), hash(pixelSeed), uniforms.orthographic != 0u);
 
     let halfSize = uniforms.normalizedSize * 0.5;
     let hit = intersectBox(rayOrigin, rayDir, -halfSize, halfSize);

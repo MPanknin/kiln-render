@@ -23,6 +23,9 @@ const LOOK_SCALARS = [
 ] as const;
 const LOOK_ARRAYS = ['clipMin', 'clipMax', 'channelColors', 'channelWindowCenter', 'channelWindowWidth'] as const;
 
+// With `softReset`, a brick commit keeps the history weighted as this many frames.
+export const SOFT_RESET_FRAMES = 4;
+
 // Volume render mode (shader-side)
 export type VolumeRenderMode = 'dvr' | 'mip' | 'iso' | 'lod' | 'slice' | 'slice-lod';
 
@@ -77,6 +80,10 @@ export class Renderer {
 
   // TAA: accumulate jittered frames for temporal anti-aliasing
   enableTAA = true;
+
+  // Experimental (`?softreset=1`): brick commits keep part of the accumulated history,
+  // and jitter is seeded per pixel instead of per ray direction.
+  softReset = false;
 
   // Volume render mode: dvr, mip, or iso
   volumeRenderMode: VolumeRenderMode = 'dvr';
@@ -455,6 +462,28 @@ export class Renderer {
     return changed;
   }
 
+  /**
+   * Show newly committed bricks. Restarts accumulation, or with `softReset` keeps the
+   * history as SOFT_RESET_FRAMES frames: the new data blends in over a few frames instead
+   * of the image dropping back to one jittered sample per pixel, which shows as woodgrain.
+   */
+  bricksCommitted(): void {
+    if (!this.softReset) {
+      this.resetAccumulation();
+      return;
+    }
+    for (const set of this.scaleSets.values()) {
+      set.accumFrameCount = Math.min(set.accumFrameCount, SOFT_RESET_FRAMES);
+    }
+    this.onDirty?.();
+  }
+
+  /** Jitter uniform: 0 = off, 1 = seeded by ray direction, 2 = seeded per pixel (`softReset`). */
+  get jitterMode(): number {
+    if (!this.enableJitter || !this.enableTAA) return 0;
+    return this.softReset ? 2 : 1;
+  }
+
   /** Whether the image is stable (no further rendering will change the output) */
   private get isSliceMode(): boolean {
     return this.volumeRenderMode === 'slice' || this.volumeRenderMode === 'slice-lod';
@@ -768,7 +797,7 @@ export class Renderer {
     d[o.screenSize / 4] = this.active.width;
     d[o.screenSize / 4 + 1] = this.active.height;
     dv.setUint32(o.frameIndex, this.frameIndex, true);
-    dv.setUint32(o.jitter, (this.enableJitter && this.enableTAA) ? 1 : 0, true);
+    dv.setUint32(o.jitter, this.jitterMode, true);
     d[o.windowCenter / 4] = this.windowCenter;
     d[o.windowWidth / 4] = this.windowWidth;
     d[o.floatMin / 4] = this.floatMin * this.texelScale + this.texelBias;

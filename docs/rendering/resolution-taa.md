@@ -24,3 +24,5 @@ Accumulation restarts when:
 - the camera moves
 - a render setting changes (mode, transfer function, window, threshold, …)
 - streamed bricks are committed, debounced to 100 ms after the last commit and at most 250 ms after the first, so a burst of bricks restarts it once
+
+Each restart drops back to a single jittered frame, which shows the sampling steps as woodgrain while bricks keep arriving. With `?softreset=1` (experimental) a commit keeps the history weighted as four frames instead, so new bricks blend in over a few frames, and the jitter is hashed from pixel and frame rather than seeded by ray direction, which is identical for parallel rays.

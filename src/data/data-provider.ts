@@ -226,6 +226,12 @@ export interface DataProvider {
    */
   setFloatRange?(min: number, max: number): Promise<void>;
 
+  /** Names of the label images in the image's OME-Zarr `labels` group. Omit when unsupported. */
+  listLabels?(): Promise<string[]>;
+
+  /** URL of a label image: `source` is a name from listLabels() or an OME-Zarr URL. Omit when unsupported. */
+  labelLocation?(source: string): string;
+
   /**
    * Clean up resources (workers, caches, etc.)
    */

@@ -53,6 +53,12 @@ export class AtlasAllocator {
   // Total slots available (gridSize³)
   readonly totalSlots: number;
 
+  /**
+   * Called when a slot gets a brick (setMetadata) or loses it (eviction, free, reset; meta null).
+   * Lets data that follows image bricks slot for slot, such as labels, track the atlas.
+   */
+  onSlotChange?: (slotIndex: number, meta: BrickMetadata | null) => void;
+
   constructor(gridSize: number = GRID_SIZE) {
     this.gridSize = gridSize;
     this.totalSlots = gridSize * gridSize * gridSize;
@@ -88,6 +94,7 @@ export class AtlasAllocator {
    */
   setMetadata(slotIndex: number, meta: BrickMetadata): void {
     this.slotMetadata[slotIndex] = meta;
+    this.onSlotChange?.(slotIndex, meta);
   }
 
   /**
@@ -159,6 +166,7 @@ export class AtlasAllocator {
     // Update tracking for the reused slot
     this.lastUsedFrame[victim] = frame;
     this.slotMetadata[victim] = null;
+    if (evicted) this.onSlotChange?.(victim, null);
 
     return {
       slot: this.indexToSlot(victim),
@@ -206,7 +214,9 @@ export class AtlasAllocator {
     this.used.delete(idx);
     // a freed slot must not stay pinned
     this.pinned.delete(idx);
+    const had = this.slotMetadata[idx] !== null;
     this.slotMetadata[idx] = null;
+    if (had) this.onSlotChange?.(idx, null);
     this.lastUsedFrame[idx] = 0;
     this.freeList.push(idx);
   }
@@ -243,6 +253,9 @@ export class AtlasAllocator {
    * Reset allocator (free all slots)
    */
   reset(): void {
+    if (this.onSlotChange) {
+      for (const idx of this.used) if (this.slotMetadata[idx]) this.onSlotChange(idx, null);
+    }
     this.used.clear();
     this.pinned.clear();
     this.freeList = [];

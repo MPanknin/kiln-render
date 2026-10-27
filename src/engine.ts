@@ -25,6 +25,9 @@ import { initializeWithPyramidFallback } from './data/pyramid-fallback.js';
 import { UINT16_FLOAT16_OFFSET } from './utils/float16.js';
 import { isFlagDisabled, isFlagEnabled } from './core/feature-flags.js';
 import { DEFAULT_LABEL_BUDGET_BYTES, LabelGpu } from './labels/label-gpu.js';
+import { LabelManager } from './labels/label-manager.js';
+import type { LabelPick } from './labels/label-manager.js';
+import type { LabelLayerOptions } from './labels/label-layer.js';
 
 export interface EngineOptions {
   /** Zero-based OME-Zarr source channels, in display order (one to four). */
@@ -86,9 +89,18 @@ export interface EngineOptions {
   /** Initial per-channel visibility (multichannel): hidden channels start with alpha 0 and are
    *  not streamed until shown. Overrides OMERO `active`. */
   visibleChannels?: boolean[];
+  /**
+   * Label layers to show, in drawing priority: names from the dataset's OME-Zarr `labels` group
+   * or URLs of OME-Zarr label images, optionally with a style. They open after the engine is
+   * created (see `engine.labels`); ones that can't be shown are skipped with a warning.
+   */
+  labels?: ReadonlyArray<string | (LabelLayerOptions & { source: string })>;
   /** Upper bound of the label pool's GPU memory in bytes (default 512 MiB; it grows only as needed). */
   labelBudgetBytes?: number;
 }
+
+/** Longest that engine creation waits for the dataset's label listing (ms); a slow store delivers it later. */
+const LABEL_LIST_WAIT_MS = 1000;
 
 /** How long after the last view change the camera still counts as interacting (ms). */
 const INTERACTION_HOLD_MS = 200;
@@ -189,6 +201,9 @@ export class KilnEngine {
   get resources(): VolumeResources { return this._resources; }
   get streamingManager(): StreamingManager { return this._streamingManager; }
 
+  /** Label layers (segmentations) over the volume: add, style, pick. */
+  readonly labels: LabelManager;
+
   /** Callback invoked when float/channel ranges are derived during base LOD loading. */
   onChannelWindowsChanged?: () => void;
 
@@ -227,7 +242,16 @@ export class KilnEngine {
     this.config = config;
     this.gpu = gpu;
     this.userRenderScale = renderer.renderScale;
+    this.labels = new LabelManager(gpu.labels, {
+      provider: dataProvider,
+      metadata,
+      config,
+      resources: () => this._resources,
+      streaming: () => this._streamingManager,
+      redraw: () => { for (const view of this.views) view.renderer.resetAccumulation(); },
+    });
     this._streamingManager = this.attachStreaming(resources);
+    this.labels.attach(resources);
   }
 
   /**
@@ -287,6 +311,8 @@ export class KilnEngine {
     // The level model must reach the provider before workers and brick loads exist.
     // Native unless requested otherwise, falling back to legacy if native rejects the levels.
     const { metadata, pyramid } = await initializeWithPyramidFallback(dataProvider, options.pyramid);
+    // Label discovery is a metadata read or two; it overlaps the GPU setup below
+    const labelNames = dataProvider.listLabels?.().catch(() => []) ?? Promise.resolve([]);
     milestones.metadataReady = performance.now();
     if ((metadata.pyramidPolicy ?? 'legacy') !== pyramid) {
       throw new Error(`Data provider uses pyramid "${metadata.pyramidPolicy ?? 'legacy'}" but the engine requested "${pyramid}"`);
@@ -420,6 +446,12 @@ export class KilnEngine {
     if (options.maxPixelError !== undefined) {
       engine.streamingManager.maxPixelError = options.maxPixelError;
     }
+
+    // The listing is optional UI data: wait briefly, then let it arrive on its own
+    const listed = await Promise.race([labelNames, new Promise<null>(r => setTimeout(() => r(null), LABEL_LIST_WAIT_MS))]);
+    if (listed) engine.labels.available = listed;
+    else void labelNames.then((names) => { engine.labels.available = names; engine.labels.onChange?.(); });
+    if (options.labels?.length) void engine.labels.addAll(options.labels);
 
     device.lost.then(() => engine.dispose());
 
@@ -612,6 +644,7 @@ export class KilnEngine {
 
     this._streamingManager = this.attachStreaming(resources);
     this._streamingManager.maxPixelError = maxPixelError;
+    this.labels.attach(resources);
   }
 
   /** User-intended render scale (the interaction override is not reflected here). */
@@ -705,6 +738,7 @@ export class KilnEngine {
     if (primary.numChannels > 1) this.streamingManager.setVisibleChannels(visibleChannelMask(primary));
     resolved.forEach((_, i) => this.streamingManager.setRayGuidanceActive(this.views[i]!.renderer.marchesRays, i));
     this.streamingManager.update(resolved);
+    this.labels.update();
 
     return resolved.map((view, i) => {
       const v = this.views[i]!;
@@ -752,6 +786,21 @@ export class KilnEngine {
     }
   }
 
+  /**
+   * Label segments under pixel (x, y) of view `view`, in output pixels: the front-most drawn
+   * label along the ray in volume modes, the slice plane under the pixel in slice mode. Resolves
+   * with the hit voxel and one hit per shown layer with a segment there (top layer first), or null
+   * when no layer is shown or a newer pick replaced this one.
+   */
+  async pickLabels(x: number, y: number, view = 0): Promise<LabelPick | null> {
+    const v = this.views[view];
+    if (!v) throw new RangeError(`No view ${view}`);
+    if (this.disposed || this.labels.shown.length === 0) return null;
+    v.dirty = true; // volume modes pick during the next render
+    const record = await v.renderer.pick(x, y);
+    return record && !this.disposed ? this.labels.resolvePick(record) : null;
+  }
+
   /** Host hook: call at the start of each animation frame to record the presentation proxy. */
   noteAnimationFrame(now = performance.now()): void {
     if (this.firstContentSubmit !== null && this.firstContentFrame === null) this.firstContentFrame = now;
@@ -771,7 +820,7 @@ export class KilnEngine {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.gpu.labels.dispose();
+    this.labels.dispose();
     this.streamingManager.dispose();
     for (const view of this.views) view.renderer.dispose();
     this.transferFunction.dispose();

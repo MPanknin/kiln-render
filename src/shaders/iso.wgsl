@@ -25,10 +25,17 @@ fn rayMarchISO(
     var t = tStart;
     var tSample = -1.0;  // sentinel: not yet initialized
 
+    // Label surfaces in front of the isosurface, composited front to back
+    var lm: LabelMarch;
+    let labelCount = labelParams.layerCount;
+    var labels = vec4f(0.0);
+    let voxelsPerUnit = datasetSize / normalizedSize;
+
     for (var brickIter = 0u; brickIter < MAX_BRICK_TRAVERSALS; brickIter++) {
         if (t >= tEnd) { break; }
 
         let brick = setupBrick(rayOrigin, rayDir, invDir, t, tEnd, normalizedSize, datasetSize);
+        if (labelCount > 0u) { labelMarchBrick(&lm, brick.valid, brick.indirection); }
 
         if (!brick.valid) {
             // scale-sensitive epsilon
@@ -49,6 +56,10 @@ fn rayMarchISO(
 
             let pos = rayOrigin + rayDir * tSample;
             let voxel = normalizedToVoxel(pos, normalizedSize, datasetSize);
+            if (labelCount > 0u) {
+                labels += labelMarchSample(&lm, voxel, brick.cell, voxelsPerUnit, -rayDir, true) * (1.0 - labels.a);
+                if (labels.a > EARLY_EXIT_ALPHA) { return labels; }
+            }
             let rawDensity = sampleAtlasAffine(voxel, brick.atlasOffset, brick.atlasScale);
             // Normalize from raw float range to [0, 1] (no-op for uint data where floatMin=0, floatMax=1)
             let normalizedDensity = clamp((rawDensity - uniforms.floatMin) * floatInvRange, 0.0, 1.0);
@@ -77,7 +88,9 @@ fn rayMarchISO(
                 if (length(gradient) * floatInvRange >= 0.001) {
                     let normal = -normalize(gradient);
                     let tfColor = textureSampleLevel(tfTexture, tfSampler, vec2f(isoValue, 0.5), 0.0);
-                    return vec4f(phongLighting(normal, -rayDir, tfColor.rgb), 1.0);
+                    // Tint layers colour the isosurface by the label just inside it
+                    let surface = phongLighting(normal, -rayDir, isoSurfaceColor(&lm, tfColor.rgb, surfaceVoxel - normal * 0.5 * surfaceLodScale));
+                    return labels + vec4f(surface, 1.0) * (1.0 - labels.a);
                 }
             }
 
@@ -91,5 +104,18 @@ fn rayMarchISO(
     }
 
     // No isosurface found
-    return vec4f(0.0, 0.0, 0.0, 0.0);
+    return labels;
+}
+
+// Isosurface colour under the tint layers at a voxel (upper layers first)
+fn isoSurfaceColor(m: ptr<function, LabelMarch>, base: vec3f, voxel: vec3f) -> vec3f {
+    for (var i = 0u; i < labelParams.layerCount; i++) {
+        if (labelStyle3d(i) != LABEL_STYLE_TINT) { continue; }
+        let packed = labelColorAtVoxel(i, voxel);
+        if (packed == 0u) { continue; }
+        let c = unpack4x8unorm(packed);
+        labelPickHit(m, voxel);
+        return mix(base, c.rgb, labelOpacity(i) * c.a);
+    }
+    return base;
 }

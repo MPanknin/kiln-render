@@ -8,11 +8,11 @@
  * and the CPU-side writes to be updated deliberately, together.
  */
 import { describe, it, expect } from 'vitest';
-import { COMPUTE_UNIFORMS, SLICE_UNIFORMS } from '../src/shaders/uniform-layout.js';
+import { COMPUTE_UNIFORMS, LABEL_UNIFORMS, SLICE_UNIFORMS } from '../src/shaders/uniform-layout.js';
 
 describe('COMPUTE_UNIFORMS layout', () => {
   it('has the expected total size (multiple of 16)', () => {
-    expect(COMPUTE_UNIFORMS.size).toBe(480);
+    expect(COMPUTE_UNIFORMS.size).toBe(496);
     expect(COMPUTE_UNIFORMS.size % 16).toBe(0);
   });
 
@@ -31,6 +31,7 @@ describe('COMPUTE_UNIFORMS layout', () => {
       shading: 464,
       gradientOpacity: 468,
       orthographic: 472,
+      pickPixel: 480,
     });
   });
 
@@ -58,6 +59,13 @@ describe('SLICE_UNIFORMS layout', () => {
       channelWindowWidth: 224,
       lodScales: 240,
     });
+  });
+});
+
+describe('LABEL_UNIFORMS layout', () => {
+  it('has a 16-byte header and one vec4 per layer', () => {
+    expect(LABEL_UNIFORMS.offsets).toEqual({ layerCount: 0, atlasSlots: 4, atlasGrid: 8, poolGrid: 12, layers: 16 });
+    expect(LABEL_UNIFORMS.size).toBe(144);
   });
 });
 

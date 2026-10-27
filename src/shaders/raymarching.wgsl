@@ -16,6 +16,8 @@ struct BrickInfo {
     // plus half of its ghost border (beyond that, filtering reads the next slot)
     sampleMin: vec3f,
     sampleMax: vec3f,
+    // finest-level brick cell the brick was looked up from (label entries map positions with it)
+    cell: vec3f,
 }
 
 // Set up brick traversal parameters
@@ -43,6 +45,7 @@ fn setupBrick(
 
     markRayVisited(brickIndex);
 
+    info.cell = brickIndex;
     info.indirection = lookupIndirection(brickIndex);
     // w=0 means not loaded, w=255 means known empty - both are invalid
     info.valid = info.indirection.w > 0u && info.indirection.w < 255u;

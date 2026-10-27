@@ -24,6 +24,7 @@ import type { TargetFormat } from './data/brick-convert.js';
 import { initializeWithPyramidFallback } from './data/pyramid-fallback.js';
 import { UINT16_FLOAT16_OFFSET } from './utils/float16.js';
 import { isFlagDisabled, isFlagEnabled } from './core/feature-flags.js';
+import { DEFAULT_LABEL_BUDGET_BYTES, LabelGpu } from './labels/label-gpu.js';
 
 export interface EngineOptions {
   /** Zero-based OME-Zarr source channels, in display order (one to four). */
@@ -85,6 +86,8 @@ export interface EngineOptions {
   /** Initial per-channel visibility (multichannel): hidden channels start with alpha 0 and are
    *  not streamed until shown. Overrides OMERO `active`. */
   visibleChannels?: boolean[];
+  /** Upper bound of the label pool's GPU memory in bytes (default 512 MiB; it grows only as needed). */
+  labelBudgetBytes?: number;
 }
 
 /** How long after the last view change the camera still counts as interacting (ms). */
@@ -165,6 +168,8 @@ interface GpuSetup {
   rayGuided: boolean;
   /** Experimental `?softreset=1`: soft accumulation reset on brick commits, per-pixel jitter */
   softReset: boolean;
+  /** Label pool and entries, shared by every renderer and kept across atlas rebuilds */
+  labels: LabelGpu;
 }
 
 export class KilnEngine {
@@ -325,6 +330,7 @@ export class KilnEngine {
       outputFormat: format, textureFormat, bitDepth: effectiveBitDepth, atlasBudgetBytes: options.atlasBudgetBytes,
       rayGuided: !isFlagDisabled('rayguide'),
       softReset: isFlagEnabled('softreset'),
+      labels: new LabelGpu(device, options.labelBudgetBytes ?? DEFAULT_LABEL_BUDGET_BYTES),
     };
     const { resources, renderer } = KilnEngine.buildGpu(device, metadata, config, gpu);
     milestones.gpuReady = performance.now();
@@ -457,7 +463,7 @@ export class KilnEngine {
   private static buildRenderer(
     device: GPUDevice, metadata: VolumeMetadata, config: DatasetConfig, gpu: GpuSetup, resources: VolumeResources,
   ): Renderer {
-    const renderer = new Renderer(device, gpu.outputFormat, resources, config, gpu.rayGuided);
+    const renderer = new Renderer(device, gpu.outputFormat, resources, config, gpu.labels, gpu.rayGuided);
     renderer.softReset = gpu.softReset;
     // uint16 on r16float is stored as value - offset; map texels back to value / 65535
     if (gpu.textureFormat === 'r16float' && !metadata.isFloat) {
@@ -765,6 +771,7 @@ export class KilnEngine {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.gpu.labels.dispose();
     this.streamingManager.dispose();
     for (const view of this.views) view.renderer.dispose();
     this.transferFunction.dispose();

@@ -66,12 +66,15 @@ fn rayMarchDVR(
     var alpha = 0.0;
     var t = tStart;
     var tSample = -1.0;  // sentinel: not yet initialized
+    var lm: LabelMarch;
+    let labelCount = labelParams.layerCount;
 
     for (var brickIter = 0u; brickIter < MAX_BRICK_TRAVERSALS; brickIter++) {
         if (t >= tEnd) { break; }
         if (alpha > EARLY_EXIT_ALPHA) { break; }
 
         let brick = setupBrick(rayOrigin, rayDir, invDir, t, tEnd, normalizedSize, datasetSize);
+        if (labelCount > 0u) { labelMarchBrick(&lm, brick.valid, brick.indirection); }
 
         if (!brick.valid) {
             // scale-sensitive epsilon
@@ -97,6 +100,15 @@ fn rayMarchDVR(
             let pos = rayOrigin + rayDir * tSample;
             let voxel = normalizedToVoxel(pos, normalizedSize, datasetSize);
 
+            // Label surfaces starting here lie in front of this sample
+            var tint = vec4f(0.0);
+            if (labelCount > 0u) {
+                let surface = labelMarchSample(&lm, voxel, brick.cell, voxelsPerUnit, lightDir, true);
+                color += surface.rgb * (1.0 - alpha);
+                alpha += surface.a * (1.0 - alpha);
+                tint = lm.tint;
+            }
+
             if (numCh > 1u) {
                 // Multi-channel: per-channel windowing + additive composite
                 var weightedColor = vec3f(0.0);
@@ -114,16 +126,25 @@ fn rayMarchDVR(
                     weightedColor += density * chColor.rgb * chColor.a;
                     maxDensity = max(maxDensity, density);
                 }
+                if (tint.a > 0.0) {
+                    // Tinted: visible samples take the label colour by its opacity, and are at least that opaque
+                    let visible = maxDensity > 0.01;
+                    let rgb = mix(select(vec3f(0.0), weightedColor / maxDensity, visible), tint.rgb, select(1.0, tint.a, visible));
+                    maxDensity = max(select(0.0, maxDensity, visible), tint.a);
+                    weightedColor = rgb * maxDensity;
+                }
                 composeSampleAdditive(weightedColor, maxDensity, extinctionScale, &color, &alpha);
             } else {
                 // Single channel: TF-based DVR with windowing and float normalisation
                 let rawDensity = sampleAtlasAffine(voxel, brick.atlasOffset, brick.atlasScale);
                 let density = clamp((rawDensity - uniforms.floatMin) * floatInvRange, 0.0, 1.0);
                 let windowed = applyWindow(density, windowCenter, windowWidth);
+                var rgb = vec3f(0.0);
+                var opacity = 0.0;
                 if (windowed > 0.01) {
                     let tf = textureSampleLevel(tfTexture, tfSampler, vec2f(windowed, 0.5), 0.0);
-                    var rgb = tf.rgb;
-                    var opacity = tf.a;
+                    rgb = tf.rgb;
+                    opacity = tf.a;
                     // Boundary emphasis can only lower opacity, so with it on every sample
                     // needs a gradient; shading alone skips samples that barely contribute.
                     if (useGradient && (gradientOpacity > 0.0
@@ -136,6 +157,13 @@ fn rayMarchDVR(
                             rgb = mix(rgb, shadeTwoSided(n, lightDir, rgb), shading * edge);
                         }
                     }
+                }
+                if (tint.a > 0.0) {
+                    // Tinted: the label colour mixes into visible samples and makes the rest visible
+                    rgb = mix(rgb, tint.rgb, select(tint.a, 1.0, opacity == 0.0));
+                    opacity = max(opacity, tint.a);
+                }
+                if (opacity > 0.0) {
                     let sampleAlpha = 1.0 - exp2(-opacity * extinctionScale);
                     color += rgb * sampleAlpha * (1.0 - alpha);
                     alpha += sampleAlpha * (1.0 - alpha);

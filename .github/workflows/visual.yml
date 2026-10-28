@@ -1,7 +1,8 @@
 name: Visual
 
 # Renders the scenes in test/visual on the organisation's GPU runner (NVIDIA T4) and compares them
-# with test/visual/baselines. Run it by hand with "update" to commit new Linux baselines.
+# with test/visual/baselines. Baselines that don't exist yet (a new scene) are written and committed
+# to the branch; run it by hand with "update" to rewrite all of them.
 on:
   pull_request:
     paths-ignore:
@@ -29,8 +30,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The branch itself, not the merge commit, so new baselines can be pushed to it
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -59,13 +63,15 @@ jobs:
         run: bunx playwright install --with-deps chromium
 
       - name: Visual tests
+        id: tests
         env:
           KILN_GPU: nvidia
-        run: xvfb-run -a -s "-screen 0 1920x1080x24" bunx playwright test ${{ inputs.update && '--update-snapshots=all' || '' }}
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" bunx playwright test --update-snapshots=${{ inputs.update && 'all' || 'missing' }}
 
       - name: Commit baselines
-        if: inputs.update
+        if: always() && steps.tests.outcome != 'skipped'
         run: |
+          [ -d test/visual/baselines ] || exit 0
           git config user.name 'github-actions[bot]'
           git config user.email '41898283+github-actions[bot]@users.noreply.github.com'
           git add test/visual/baselines

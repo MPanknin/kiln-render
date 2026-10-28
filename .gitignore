@@ -21,3 +21,8 @@ bench/dists/
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
+
+# visual tests: generated data and reports
+test/visual/.data/
+playwright-report/
+test-results/

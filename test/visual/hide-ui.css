@@ -1,0 +1,3 @@
+/* Visual tests compare the rendering only: everything but the canvases is hidden for the screenshot */
+* { visibility: hidden !important; }
+canvas { visibility: visible !important; }

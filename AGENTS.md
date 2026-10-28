@@ -12,6 +12,7 @@ Use **bun** only. Never npm, yarn or pnpm, and never add a second lockfile.
 bun install
 bunx tsc --noEmit          # type check (CI)
 bun run test:run           # unit tests (CI)
+bun run test:visual        # visual snapshot tests (real GPU, opens Chromium)
 bun run dev                # single-channel viewer
 bun run dev:multichannel   # multichannel viewer
 bun run dev:site           # docs site
@@ -58,7 +59,8 @@ A new viewer-facing option touches all of these:
 
 ## Testing
 
-- Headless browsers (SwiftShader) compile WGSL and validate pipelines, but lose the device when bricks upload, on `main` too. That is the environment, not a regression.
-- Rendering can't be verified headless. Every PR deploys a preview to `kilnrender.com/preview/<branch>/`; say in the PR what to look at there.
+- Headless Chromium on Linux destroys the WebGPU device on the first frame presented to a canvas. Run Chromium headed, under Xvfb on a machine without a display.
+- Visual tests (`test/visual`) render scenes in the basic viewer until they converge and compare the canvases with `test/visual/baselines/<scene>-<platform>.png`. The Visual workflow runs them on the kilnrender GPU runner (NVIDIA T4) and fails on any other adapter; run it by hand with **update** to commit new Linux baselines. `bun run test:visual:update` writes baselines for your own machine.
+- Every PR also deploys a preview to `kilnrender.com/preview/<branch>/`; say in the PR what to look at there.
 - Performance: compare `?bench=1` with and without the feature flag on the preview.
 - `test/ray-iso-feedback.html` and `test/dvr-gradient.html` are manual WebGPU checks that Vitest does not run: serve the repository root with Vite (`configFile: false`, the page in `optimizeDeps.entries`) and open the page. They compile the production compute shader and test the ray-feedback and DVR gradient functions on the GPU.

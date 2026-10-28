@@ -56,12 +56,15 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:visual": "playwright test",
+    "test:visual:update": "playwright test --update-snapshots=all",
     "lint:publish": "bun run build:lib && bunx publint && bunx @arethetypeswrong/cli --pack . --profile esm-only"
   },
   "dependencies": {
     "@webgpu/types": "^0.1.69"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "fflate": "^0.8.3",
     "typescript": "^5.7.2",
     "vite": "^6.4.4",

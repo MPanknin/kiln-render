@@ -8,6 +8,7 @@
 import type { StreamingManager } from '@kiln/streaming/streaming-manager.js';
 import type { VolumeMetadata } from '@kiln/data/data-provider.js';
 import type { LoadMilestones } from '@kiln/core/milestones.js';
+import type { MemoryStats } from '@kiln/core/memory-stats.js';
 import { createPanel, createSection, createRow } from './controls/widgets.js';
 
 export interface DatasetInfoOptions {
@@ -27,6 +28,7 @@ export class StatsPanel {
   private lastFrameTime = 0;
   private streamingManager: StreamingManager | null = null;
   private milestones: (() => LoadMilestones) | null = null;
+  private memory: (() => MemoryStats) | null = null;
   private statsUpdateInterval: number | null = null;
 
   private stripDot: HTMLElement | null = null;
@@ -85,6 +87,18 @@ export class StatsPanel {
     this.addRow(pipeline, 'brickLifecycle', 'Lifecycle');
     this.addRow(pipeline, 'wastedRate', 'Wasted');
     this.addRow(pipeline, 'chunkCacheHit', 'Cache hit');
+
+    const memory = createSection('Memory');
+    body.appendChild(memory);
+    this.addRow(memory, 'gpuTotal', 'GPU');
+    this.addRow(memory, 'gpuAtlas', 'Atlas');
+    this.addRow(memory, 'gpuTargets', 'Targets');
+    this.addRow(memory, 'gpuLabels', 'Labels');
+    this.addRow(memory, 'brickCache', 'Brick cache');
+    this.addRow(memory, 'brickHit', 'Brick hit');
+    this.addRow(memory, 'chunkCache', 'Chunk cache');
+    this.addRow(memory, 'jsHeap', 'JS heap');
+    this.addRow(memory, 'refused', 'Refused');
   }
 
   private mountStatusStrip(): void {
@@ -153,10 +167,11 @@ export class StatsPanel {
     if (this.stripDatasetText) this.stripDatasetText.textContent = stripSummary;
   }
 
-  /** Wires the streaming manager (and optional milestone source) and starts the 4×/s update loop. */
-  bindStreaming(manager: StreamingManager, milestones?: () => LoadMilestones): void {
+  /** Wires the streaming manager (and optional milestone and memory sources) and starts the 4×/s update loop. */
+  bindStreaming(manager: StreamingManager, milestones?: () => LoadMilestones, memory?: () => MemoryStats): void {
     this.streamingManager = manager;
     this.milestones = milestones ?? null;
+    this.memory = memory ?? null;
     if (this.statsUpdateInterval !== null) return;
     this.statsUpdateInterval = window.setInterval(() => this.updateStats(), 250); // 4x/s
   }
@@ -205,6 +220,8 @@ export class StatsPanel {
         ? `${(firstContent - m.datasetOpenStart).toFixed(0)} ms`
         : 'Loading...';
 
+      this.updateMemory();
+
       // Status strip — always-on subset (IA-5). The center spinner only covers
       // the pre-first-render phase; ongoing streaming activity lives here.
       const isActive = stats.pendingCount > 0;
@@ -215,6 +232,26 @@ export class StatsPanel {
           : 'Idle';
       }
     }
+  }
+
+  private updateMemory(): void {
+    const m = this.memory?.();
+    if (!m) return;
+    const pct = (ratio: number) => `${(ratio * 100).toFixed(0)}%`;
+    const views = m.gpu.views > 1 ? ` · ${m.gpu.views} views` : '';
+    this.rows.gpuTotal!.textContent = `${mb(m.gpu.totalBytes)} MB`;
+    this.rows.gpuAtlas!.textContent = `${mb(m.gpu.atlasBytes)} MB`;
+    this.rows.gpuTargets!.textContent = `${mb(m.gpu.renderTargetBytes)} MB${views} · ${m.gpu.scaleSets} sets`;
+    this.rows.gpuLabels!.textContent = m.gpu.labelBytes > 0 || m.pressure.labelPoolGrows > 0
+      ? `${mb(m.gpu.labelBytes)} / ${mb(m.gpu.labelMaxBytes)} MB${m.pressure.labelPoolAtBudget ? ' (full)' : ''}`
+      : '—';
+    this.rows.brickCache!.textContent = `${mb(m.cpu.brickCacheBytes)} / ${mb(m.cpu.brickCacheMaxBytes)} MB`;
+    this.rows.brickHit!.textContent = `${pct(m.cpu.brickCacheHitRatio)} · ${m.pressure.brickCacheEvictions} evicted`;
+    this.rows.chunkCache!.textContent = m.cpu.chunkCacheMaxBytes > 0
+      ? `${mb(m.cpu.chunkCacheBytes)} / ${mb(m.cpu.chunkCacheMaxBytes)} MB`
+      : '—';
+    this.rows.jsHeap!.textContent = m.cpu.jsHeapBytes !== null ? `${mb(m.cpu.jsHeapBytes)} MB` : '—';
+    this.rows.refused!.textContent = `${m.pressure.allocationsRefused}`;
   }
 
   /** Record a frame time for performance tracking. Call once per frame from the render loop. */
@@ -230,6 +267,12 @@ export class StatsPanel {
     }
     this.lastFrameTime = now;
   }
+}
+
+/** MB with one decimal under 100 MB, whole numbers above. */
+function mb(bytes: number): string {
+  const v = bytes / (1024 * 1024);
+  return v < 100 ? v.toFixed(1) : v.toFixed(0);
 }
 
 /** Bytes per source voxel: from the dtype when known (float32 is 4), else the stored bit depth. */

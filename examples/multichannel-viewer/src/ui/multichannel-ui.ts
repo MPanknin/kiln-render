@@ -586,7 +586,7 @@ export class MultichannelUI {
       fileSizeChannelMultiplier: metadata.numChannels,
     });
     manager.setBaseLodLoadedCallback(() => this.onBaseLodLoaded());
-    this.stats.bindStreaming(manager, () => this.viewer.milestones);
+    this.stats.bindStreaming(manager, () => this.viewer.milestones, () => this.viewer.getMemoryStats());
   }
 
   /** Base level (re)loaded: per-channel histograms for Auto contrast and the slider ranges. */

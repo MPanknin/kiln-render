@@ -119,6 +119,9 @@ export interface ZarrWorkerResponse {
    */
   chunkStoreBytes?: number;
   chunkStoreRequests?: number;
+  /** This worker's decoded-chunk cache: bytes held now, and its budget */
+  chunkCacheBytes?: number;
+  chunkCacheBudget?: number;
   /** ?bench=1 only: cache keys of the chunks this brick's core touches */
   coreChunkKeys?: string[];
   /** ?bench=1 only: bytes downloaded per chunk, for fetches this brick waited on */
@@ -334,6 +337,8 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
           chunkTotal: result.chunkTotal,
           chunkStoreBytes: workerStore?.bytesFetched,
           chunkStoreRequests: workerStore?.requestCount,
+          chunkCacheBytes: cacheBytes,
+          chunkCacheBudget: cacheBudgetBytes(),
           coreChunkKeys: result.coreChunkKeys,
           fetchedChunkBytes: result.fetchedChunkBytes,
         };

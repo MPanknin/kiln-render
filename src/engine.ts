@@ -7,6 +7,8 @@
 
 import { mat4 } from 'wgpu-matrix';
 import type { LoadMilestones } from './core/milestones.js';
+import { jsHeapBytes } from './core/memory-stats.js';
+import type { MemoryStats } from './core/memory-stats.js';
 import type { PyramidLevel, PyramidPolicy } from './core/pyramid.js';
 import { Renderer, VolumeRenderMode } from './core/renderer.js';
 import { VolumeResources } from './core/volume-resources.js';
@@ -804,6 +806,62 @@ export class KilnEngine {
   /** Host hook: call at the start of each animation frame to record the presentation proxy. */
   noteAnimationFrame(now = performance.now()): void {
     if (this.firstContentSubmit !== null && this.firstContentFrame === null) this.firstContentFrame = now;
+  }
+
+  /** GPU and CPU-cache memory held now, with the pressure counters behind it. */
+  getMemoryStats(): MemoryStats {
+    const resources = this._resources;
+    const allocator = resources.allocator;
+    const labels = this.gpu.labels;
+    const streaming = this.streamingManager.getStats();
+    const cache = this.streamingManager.brickCacheStats;
+    const timings = streaming.pipelineTimings;
+
+    let renderTargetBytes = 0;
+    let bufferBytes = 0;
+    let scaleSets = 0;
+    for (const view of this.views) {
+      renderTargetBytes += view.renderer.renderTargetBytes;
+      bufferBytes += view.renderer.bufferBytes;
+      scaleSets += view.renderer.scaleSetCount;
+    }
+    const atlasBytes = resources.atlasBytes;
+    const labelBytes = labels.gpuBytes;
+    const otherBytes = resources.indirection.gpuBytes + bufferBytes;
+    const lookups = cache.hits + cache.misses;
+
+    return {
+      gpu: {
+        atlasBytes,
+        atlasSlotsUsed: allocator.usedCount,
+        atlasSlotsTotal: allocator.totalSlots,
+        atlasSlotsPinned: allocator.pinnedCount,
+        renderTargetBytes,
+        views: this.views.length,
+        scaleSets,
+        labelBytes,
+        labelMaxBytes: labels.maxPoolBytes,
+        otherBytes,
+        totalBytes: atlasBytes + renderTargetBytes + labelBytes + otherBytes,
+      },
+      cpu: {
+        brickCacheBytes: cache.bytes,
+        brickCacheMaxBytes: cache.maxBytes,
+        brickCacheEntries: cache.entries,
+        brickCacheHitRatio: lookups > 0 ? cache.hits / lookups : 0,
+        chunkCacheBytes: timings.chunkCacheBytes ?? 0,
+        chunkCacheMaxBytes: timings.chunkCacheMaxBytes ?? 0,
+        chunkCacheHitRatio: timings.chunkCacheHitRatio ?? 0,
+        jsHeapBytes: jsHeapBytes(),
+      },
+      pressure: {
+        atlasEvictions: streaming.evictedCount,
+        allocationsRefused: streaming.allocationsRefused,
+        brickCacheEvictions: cache.evictions,
+        labelPoolGrows: labels.poolGrows,
+        labelPoolAtBudget: labels.poolBytes >= labels.maxPoolBytes,
+      },
+    };
   }
 
   /** Load milestones, all as performance.now() timestamps since navigation start. */

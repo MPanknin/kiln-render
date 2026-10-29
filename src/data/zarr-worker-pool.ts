@@ -58,6 +58,9 @@ export class ZarrWorkerPool {
   /** Per-worker last-seen cumulative store bytes/requests, for delta computation. */
   private workerLastBytes: number[] = [];
   private workerLastRequests: number[] = [];
+  /** Per-worker decoded-chunk cache occupancy and budget, as of its last brick */
+  private workerCacheBytes: number[] = [];
+  private workerCacheBudget: number[] = [];
 
   /** Stored from init() for spatial worker routing (see workerIndexFor). */
   private lodParams: ZarrWorkerRequest['lodParams'] = [];
@@ -101,7 +104,7 @@ export class ZarrWorkerPool {
       this.workerLastRequests[i] = 0;
 
       worker.onmessage = (event: MessageEvent<ZarrWorkerResponse>) => {
-        const { type: msgType, id, error, data, min, max, avg, rawMin, rawMax, fetchMs, assemblyMs, queueMs, chunkHits, chunkTotal, chunkStoreBytes, chunkStoreRequests, coreChunkKeys, fetchedChunkBytes } = event.data;
+        const { type: msgType, id, error, data, min, max, avg, rawMin, rawMax, fetchMs, assemblyMs, queueMs, chunkHits, chunkTotal, chunkStoreBytes, chunkStoreRequests, chunkCacheBytes, chunkCacheBudget, coreChunkKeys, fetchedChunkBytes } = event.data;
         const pending = this.pendingRequests.get(id);
         if (!pending) return;
         this.pendingRequests.delete(id);
@@ -127,6 +130,10 @@ export class ZarrWorkerPool {
           if (chunkHits !== undefined && chunkTotal !== undefined) {
             this.chunkHitTotal += chunkHits;
             this.chunkReqTotal += chunkTotal;
+          }
+          if (chunkCacheBytes !== undefined && chunkCacheBudget !== undefined) {
+            this.workerCacheBytes[i] = chunkCacheBytes;
+            this.workerCacheBudget[i] = chunkCacheBudget;
           }
           if (fetchedChunkBytes) {
             for (const [key, bytes] of fetchedChunkBytes) this.bytesByChunk.set(key, (this.bytesByChunk.get(key) ?? 0) + bytes);
@@ -322,6 +329,8 @@ export class ZarrWorkerPool {
       avgUploadMs: 0, // measured in StreamingManager
       sampleCount: this.fetchAvg.count,
       chunkCacheHitRatio: this.chunkReqTotal > 0 ? this.chunkHitTotal / this.chunkReqTotal : 0,
+      chunkCacheBytes: this.workerCacheBytes.reduce((a, b) => a + b, 0),
+      chunkCacheMaxBytes: this.workerCacheBudget.reduce((a, b) => a + b, 0),
       ...(this.bytesByChunk.size > 0 ? summarizeBorderBytes(this.bytesByChunk, this.coreChunks) : {}),
     };
   }

@@ -79,6 +79,12 @@ export class LabelGpu {
   get poolBytes(): number { return this.poolGrid ** 2 * this.depth * LABEL_SLOT_BYTES; }
   get maxPoolBytes(): number { return this.poolGrid ** 2 * this.maxDepth * LABEL_SLOT_BYTES; }
   get paletteBytes(): number { return this.paletteData.byteLength; }
+  /** Pool, palette, entries, params and pick buffer together. */
+  get gpuBytes(): number {
+    return this.poolBytes + this.palette.size + this.entries.size + this.params.size + this.pick.size;
+  }
+  /** Times the pool grew; a high count on a small dataset means thrash. */
+  poolGrows = 0;
 
   /** Grow the pool by doubling its z layers (copying its slots); false at the budget. */
   growPool(): boolean {
@@ -95,6 +101,7 @@ export class LabelGpu {
     this.pool = pool;
     this.slots.grow((depth - this.depth) * this.poolGrid ** 2);
     this.depth = depth;
+    this.poolGrows++;
     this.version++;
     return true;
   }

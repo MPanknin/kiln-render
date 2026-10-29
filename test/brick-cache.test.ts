@@ -129,3 +129,31 @@ describe('BrickCache — LRU promotion', () => {
     expect(cache.get('d')).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Stats
+// ---------------------------------------------------------------------------
+
+describe('BrickCache — stats', () => {
+  it('reports occupancy, hits, misses and evictions', () => {
+    const cache = new BrickCache(200);
+    expect(cache.stats).toEqual({ bytes: 0, maxBytes: 200, entries: 0, hits: 0, misses: 0, evictions: 0 });
+
+    cache.put('a', makeData(100));
+    cache.put('b', makeData(100));
+    cache.get('a');       // hit
+    cache.get('missing'); // miss
+    cache.put('c', makeData(100)); // evicts b (a was promoted)
+
+    expect(cache.stats).toEqual({ bytes: 200, maxBytes: 200, entries: 2, hits: 1, misses: 1, evictions: 1 });
+  });
+
+  it('clear drops the bytes but keeps the counters', () => {
+    const cache = new BrickCache(100);
+    cache.put('a', makeData(60));
+    cache.put('b', makeData(60)); // evicts a
+    cache.get('a');               // miss
+    cache.clear();
+    expect(cache.stats).toEqual({ bytes: 0, maxBytes: 100, entries: 0, hits: 0, misses: 1, evictions: 1 });
+  });
+});

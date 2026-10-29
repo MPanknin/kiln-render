@@ -11,6 +11,7 @@ import type { TransferFunction, TFPreset } from './core/transfer-function.js';
 import type { StreamingManager } from './streaming/streaming-manager.js';
 import type { DataProvider, SourceSelection, VolumeMetadata } from './data/data-provider.js';
 import type { LoadMilestones } from './core/milestones.js';
+import type { MemoryStats } from './core/memory-stats.js';
 import type { LabelManager, LabelPick } from './labels/label-manager.js';
 import type { LabelLayerState } from './labels/label-layer.js';
 
@@ -143,6 +144,8 @@ export class KilnViewer {
   get device(): GPUDevice { return this.engine.device; }
   get metadata(): VolumeMetadata { return this.engine.metadata; }
   get milestones(): LoadMilestones { return this.engine.milestones; }
+  /** GPU and CPU-cache memory held now */
+  getMemoryStats(): MemoryStats { return this.engine.getMemoryStats(); }
   /** Label layers (segmentations) over the volume */
   get labels(): LabelManager { return this.engine.labels; }
 

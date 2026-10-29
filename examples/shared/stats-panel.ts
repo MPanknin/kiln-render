@@ -71,7 +71,7 @@ export class StatsPanel {
 
     const streaming = createSection('Streaming');
     body.appendChild(streaming);
-    this.addRow(streaming, 'cacheUsage', 'Cache');
+    this.addRow(streaming, 'cacheUsage', 'Atlas slots');
     this.addRow(streaming, 'pendingBricks', 'Pending');
     this.addRow(streaming, 'evictedBricks', 'Evicted');
     this.addRow(streaming, 'throughput', 'Throughput');
@@ -86,7 +86,7 @@ export class StatsPanel {
     this.addRow(pipeline, 'pipelineUpload', 'Upload');
     this.addRow(pipeline, 'brickLifecycle', 'Lifecycle');
     this.addRow(pipeline, 'wastedRate', 'Wasted');
-    this.addRow(pipeline, 'chunkCacheHit', 'Cache hit');
+    this.addRow(pipeline, 'chunkCacheHit', 'Chunk hit');
 
     const memory = createSection('Memory');
     body.appendChild(memory);
@@ -95,7 +95,7 @@ export class StatsPanel {
     this.addRow(memory, 'gpuTargets', 'Targets');
     this.addRow(memory, 'gpuLabels', 'Labels');
     this.addRow(memory, 'brickCache', 'Brick cache');
-    this.addRow(memory, 'brickHit', 'Brick hit');
+    this.addRow(memory, 'brickHit', 'Brick cache hit');
     this.addRow(memory, 'chunkCache', 'Chunk cache');
     this.addRow(memory, 'jsHeap', 'JS heap');
     this.addRow(memory, 'refused', 'Refused');

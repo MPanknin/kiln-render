@@ -10,6 +10,7 @@ export { KilnEngine } from './engine.js';
 export type { EngineOptions } from './engine.js';
 export type { ViewParams } from './core/view.js';
 export type { LoadMilestones } from './core/milestones.js';
+export type { MemoryStats } from './core/memory-stats.js';
 export type { PyramidLevel, PyramidPolicy } from './core/pyramid.js';
 
 // Label layers (segmentations)

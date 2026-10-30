@@ -34,6 +34,12 @@ export class VolumeResources {
   /** Channel-0 alias for single-channel callers */
   get canvas(): VolumeCanvas { return this.canvases[0]!; }
 
+  /** Bytes of the atlas textures over all channels. */
+  get atlasBytes(): number {
+    const bytesPerVoxel = this.canvas.bitDepth === 16 ? 2 : 1;
+    return this.numChannels * this.atlasSize ** 3 * bytesPerVoxel;
+  }
+
   constructor(device: GPUDevice, bitDepth: BitDepth, textureFormat: GPUTextureFormat, config: DatasetConfig, numChannels = 1, gridSize: number = GRID_SIZE) {
     this.numChannels = Math.min(Math.max(1, numChannels), 4);
     this.gridSize = gridSize;

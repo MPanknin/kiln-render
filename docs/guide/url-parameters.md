@@ -43,8 +43,9 @@ Not included in share links.
 
 | Parameter | Description |
 |-----------|-------------|
-| `debug=1` | Opens the stats panel (also `D`) |
-| `bench=1` | Once streaming and accumulation have converged, logs a report (timings, bytes, bricks) and sets `window.__KILN_BENCH_RESULT`. Options: `benchLabel`, `benchTimeout` (ms, default 120000), `benchStable` (polls, default 8), `report=<url>` to POST the JSON |
+| `debug=1` | Opens the stats panel (also `D`). Its **Memory** section shows GPU memory (atlas, render targets, labels), the brick and chunk caches with their hit rates, the JS heap where the browser exposes it, and pressure counters (refused allocations, evictions) |
+| `bench=1` | Once streaming and accumulation have converged, logs a report (timings, bytes, bricks, GPU and cache memory with peaks) and sets `window.__KILN_BENCH_RESULT`. Options: `benchLabel`, `benchTimeout` (ms, default 120000), `benchStable` (polls, default 8), `report=<url>` to POST the JSON |
+| `benchSweep=1` | With `bench=1`: after the first convergence, orbits the camera once (`benchSweepMs`, default 6000) so eviction and the caches get exercised, then waits for convergence again and reports the bricks and bytes that took |
 | `rayguide=0` | Turns off [ray-guided brick selection](/architecture/streaming#ray-guided-selection), which is on by default |
 | `softreset=1` | Experimental fix for woodgrain while refining: brick commits keep part of the accumulated image and jitter is seeded per pixel ([details](/rendering/resolution-taa#jitter-and-accumulation)) |
 | `local=true` | Set by the viewer after opening a local directory; reopens it on reload |

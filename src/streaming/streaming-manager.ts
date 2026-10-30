@@ -12,6 +12,7 @@ import type { DataProvider, VolumeMetadata, BrickLoadResult, LodLevel } from '..
 import { AtlasSlot } from './atlas-allocator.js';
 import type { AllocationResult } from './atlas-allocator.js';
 import { BrickCache } from './brick-cache.js';
+import type { BrickCacheStats } from './brick-cache.js';
 import { LOGICAL_BRICK_SIZE, PHYSICAL_BRICK_SIZE } from '../core/config.js';
 import type { DatasetConfig } from '../core/config.js';
 import { writeToCanvas } from '../core/volume.js';
@@ -980,6 +981,9 @@ export class StreamingManager {
     this.loadedBricks.delete(key);
     this.pinnedBricks.delete(key);
   }
+
+  /** Occupancy and hit rate of the CPU brick cache. */
+  get brickCacheStats(): BrickCacheStats { return this.brickCache.stats; }
 
   /**
    * Get current stats

@@ -660,6 +660,21 @@ export class Renderer {
     for (const tex of set.accumTextures) tex.destroy();
   }
 
+  /** Bytes of the render targets: output and two accumulation rgba16float textures per scale set, plus depth. */
+  get renderTargetBytes(): number {
+    let bytes = this.screenWidth * this.screenHeight * 4; // depth24plus
+    for (const set of this.scaleSets.values()) bytes += 3 * set.width * set.height * 8;
+    return bytes;
+  }
+
+  /** Scale sets allocated (one per render scale used). */
+  get scaleSetCount(): number { return this.scaleSets.size; }
+
+  /** Bytes of the renderer's buffers: ray visibility and its readback, pick readback. */
+  get bufferBytes(): number {
+    return this.rayVisitedBuffer.size + (this.rayReadback?.size ?? 0) + this.pickReadback.size;
+  }
+
   /** Destroy renderer-owned GPU textures and buffers (device, atlas and TF texture are external). */
   dispose(): void {
     if (this.disposed) return;

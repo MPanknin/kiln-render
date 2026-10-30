@@ -477,7 +477,7 @@ export class VolumeUI {
 
     manager.setBaseLodLoadedCallback(() => this.onBaseLodLoaded());
 
-    this.stats.bindStreaming(manager, () => this.viewer.milestones);
+    this.stats.bindStreaming(manager, () => this.viewer.milestones, () => this.viewer.getMemoryStats());
   }
 
   /**

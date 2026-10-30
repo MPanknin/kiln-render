@@ -59,6 +59,9 @@ export class IndirectionTable {
     this.updateFullGPU();
   }
 
+  /** Bytes of the indirection texture (the CPU mirror is the same size). */
+  get gpuBytes(): number { return this.data.byteLength; }
+
   /**
    * Register a brick mapping: virtual position -> atlas position.
    * Coarser LODs fill (2^lod)³ cells to cover the equivalent region.

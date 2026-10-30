@@ -3,9 +3,11 @@
  *
  * Activates only on `?bench=1`. Measures the initial load of whatever dataset
  * the URL points at: time-to-converge, number of fetches, bytes, brick
- * lifecycle counts, and the per-stage pipeline breakdown. No camera
- * interaction — you point the URL at a dataset, it measures the load, prints a
- * compact block you can copy-paste for A/B comparison.
+ * lifecycle counts, the per-stage pipeline breakdown, and GPU and cache memory
+ * (current and peak). No camera interaction unless `?benchSweep=1`, which
+ * orbits the camera once after the first convergence so eviction and the
+ * caches get exercised, then waits for convergence again. Prints a compact
+ * block you can copy-paste for A/B comparison.
  *
  * Results are emitted three ways:
  *   1. a human-readable block + `KILN_BENCH_RESULT <json>` in the console
@@ -19,10 +21,13 @@
  *   ?benchTimeout=120000  give-up timeout (ms) if it never converges
  *   ?benchStable=8        consecutive stable polls required to call it converged
  *   ?benchLabel=<name>    label echoed into the report
+ *   ?benchSweep=1         orbit the camera once after converging, then converge again
+ *   ?benchSweepMs=6000    duration of the orbit (ms)
  *   ?report=<url>         POST the JSON report here when done
  */
 
 import type { LoadMilestones } from '@kiln/core/milestones.js';
+import type { MemoryStats } from '@kiln/core/memory-stats.js';
 
 interface BenchStats {
   desiredCount: number;
@@ -48,12 +53,44 @@ interface BenchStats {
   };
 }
 
+type OrbitState = [number, number, number, number, number, number];
+
 /** Minimal structural view of KilnViewer — only what the bench reads. */
 export interface BenchViewer {
   renderer: { isConverged: boolean; numChannels: number };
   streamingManager: { baseLodLoaded: boolean; getStats(): BenchStats };
   metadata: { name: string };
   milestones: LoadMilestones;
+  getMemoryStats(): MemoryStats;
+  camera: { getOrbitState(): OrbitState; setOrbitState(state: OrbitState): void };
+}
+
+export interface BenchMemory {
+  /** GPU bytes at the end, and the most seen at any poll */
+  gpuBytes: number;
+  gpuPeakBytes: number;
+  atlasBytes: number;
+  renderTargetBytes: number;
+  labelBytes: number;
+  brickCacheBytes: number;
+  brickCachePeakBytes: number;
+  brickCacheHitRatio: number;
+  chunkCacheBytes: number;
+  chunkCacheHitRatio: number;
+  /** Chrome only, else null */
+  jsHeapPeakBytes: number | null;
+  allocationsRefused: number;
+  atlasEvictions: number;
+  brickCacheEvictions: number;
+}
+
+export interface BenchSweep {
+  durationMs: number;
+  /** ms from the end of the orbit until converged again (null if never) */
+  reconvergeMs: number | null;
+  /** Bricks dispatched and bytes downloaded from the start of the orbit to reconvergence */
+  bricksDispatched: number;
+  bytesDownloaded: number;
 }
 
 export interface BenchReport {
@@ -87,6 +124,9 @@ export interface BenchReport {
   chunkBytes: number | null;
   borderOnlyBytes: number | null;
   timings: { queueMs: number; fetchMs: number; assemblyMs: number; uploadMs: number };
+  memory: BenchMemory;
+  /** Present with ?benchSweep=1 */
+  sweep: BenchSweep | null;
   userAgent: string;
 }
 
@@ -100,15 +140,29 @@ function num(params: URLSearchParams, key: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/** Peak memory over every poll of the run. */
+class PeakTracker {
+  gpu = 0;
+  brickCache = 0;
+  jsHeap: number | null = null;
+
+  sample(m: MemoryStats): void {
+    this.gpu = Math.max(this.gpu, m.gpu.totalBytes);
+    this.brickCache = Math.max(this.brickCache, m.cpu.brickCacheBytes);
+    if (m.cpu.jsHeapBytes !== null) this.jsHeap = Math.max(this.jsHeap ?? 0, m.cpu.jsHeapBytes);
+  }
+}
+
 /**
  * Wait until the pipeline is idle and the image has converged, held stable for
  * `stablePolls` consecutive polls (debounce: a transient `pendingCount===0`
  * mid-stream doesn't count). Returns whether it settled before the timeout.
  */
-async function waitForConverged(v: BenchViewer, timeoutMs: number, stablePolls: number): Promise<boolean> {
+async function waitForConverged(v: BenchViewer, peaks: PeakTracker, timeoutMs: number, stablePolls: number): Promise<boolean> {
   const deadline = performance.now() + timeoutMs;
   let stable = 0;
   while (performance.now() < deadline) {
+    peaks.sample(v.getMemoryStats());
     const s = v.streamingManager.getStats();
     const idle = s.pendingCount === 0 && v.streamingManager.baseLodLoaded && v.renderer.isConverged;
     stable = idle ? stable + 1 : 0;
@@ -118,11 +172,49 @@ async function waitForConverged(v: BenchViewer, timeoutMs: number, stablePolls: 
   return false;
 }
 
+/** One full orbit around the target, zooming to half distance midway and back out. */
+async function sweepCamera(v: BenchViewer, peaks: PeakTracker, durationMs: number): Promise<void> {
+  const [rx, ry, dist, tx, ty, tz] = v.camera.getOrbitState();
+  const start = performance.now();
+  let lastSample = 0;
+  for (;;) {
+    const t = Math.min(1, (performance.now() - start) / durationMs);
+    v.camera.setOrbitState([rx, ry + 2 * Math.PI * t, dist * (1 - 0.5 * Math.sin(Math.PI * t)), tx, ty, tz]);
+    if (performance.now() - lastSample >= POLL_MS) {
+      peaks.sample(v.getMemoryStats());
+      lastSample = performance.now();
+    }
+    if (t >= 1) return;
+    await new Promise<void>(r => requestAnimationFrame(() => r()));
+  }
+}
+
+function benchMemory(m: MemoryStats, peaks: PeakTracker): BenchMemory {
+  return {
+    gpuBytes: m.gpu.totalBytes,
+    gpuPeakBytes: peaks.gpu,
+    atlasBytes: m.gpu.atlasBytes,
+    renderTargetBytes: m.gpu.renderTargetBytes,
+    labelBytes: m.gpu.labelBytes,
+    brickCacheBytes: m.cpu.brickCacheBytes,
+    brickCachePeakBytes: peaks.brickCache,
+    brickCacheHitRatio: m.cpu.brickCacheHitRatio,
+    chunkCacheBytes: m.cpu.chunkCacheBytes,
+    chunkCacheHitRatio: m.cpu.chunkCacheHitRatio,
+    jsHeapPeakBytes: peaks.jsHeap,
+    allocationsRefused: m.pressure.allocationsRefused,
+    atlasEvictions: m.pressure.atlasEvictions,
+    brickCacheEvictions: m.pressure.brickCacheEvictions,
+  };
+}
+
 function formatReport(r: BenchReport): string {
   const mb = (b: number) => (b / 1e6).toFixed(1);
   const ms = (v: number | null) => (v === null ? 'n/a' : Math.round(v) + ' ms');
+  const pct = (v: number) => (v * 100).toFixed(0) + '%';
   const pad = (label: string) => (label + ':').padEnd(20);
   const m = r.milestones;
+  const mem = r.memory;
   return [
     '=== KILN BENCH ===',
     `${pad('dataset')}${r.dataset} (${r.numChannels}ch)`,
@@ -137,12 +229,19 @@ function formatReport(r: BenchReport): string {
     `${pad('bricks')}dispatched ${r.bricksDispatched} · committed ${r.bricksCommitted} · cancelled ${r.bricksCancelled} · discarded ${r.bricksDiscarded}`,
     `${pad('evicted')}${r.evicted}`,
     `${pad('avg brick latency')}${Math.round(r.avgBrickLatencyMs)} ms`,
-    `${pad('chunk cache hit')}${(r.chunkCacheHitRatio * 100).toFixed(0)}%`,
+    `${pad('chunk cache hit')}${pct(r.chunkCacheHitRatio)}`,
     ...(r.chunkBytes && r.borderOnlyBytes !== null
       ? [`${pad('border-only')}${mb(r.borderOnlyBytes)} of ${mb(r.chunkBytes)} MB chunk data (${(100 * r.borderOnlyBytes / r.chunkBytes).toFixed(0)}%)`]
       : []),
     `${pad('pipeline avg ms')}queue ${r.timings.queueMs.toFixed(0)} · fetch ${r.timings.fetchMs.toFixed(0)} · assembly ${r.timings.assemblyMs.toFixed(0)} · upload ${r.timings.uploadMs.toFixed(0)}`,
     `${pad('resident/desired')}${r.loadedCount} / ${r.desiredCount}${r.rayCulled > 0 ? ` · ray-culled ${r.rayCulled}` : ''}`,
+    `${pad('gpu memory')}${mb(mem.gpuBytes)} MB (peak ${mb(mem.gpuPeakBytes)}) · atlas ${mb(mem.atlasBytes)} · targets ${mb(mem.renderTargetBytes)} · labels ${mb(mem.labelBytes)}`,
+    `${pad('cpu caches')}bricks ${mb(mem.brickCacheBytes)} MB (peak ${mb(mem.brickCachePeakBytes)}, hit ${pct(mem.brickCacheHitRatio)}) · chunks ${mb(mem.chunkCacheBytes)} MB (hit ${pct(mem.chunkCacheHitRatio)})` +
+      (mem.jsHeapPeakBytes !== null ? ` · js heap peak ${mb(mem.jsHeapPeakBytes)} MB` : ''),
+    `${pad('pressure')}refused ${mem.allocationsRefused} · atlas evictions ${mem.atlasEvictions} · brick cache evictions ${mem.brickCacheEvictions}`,
+    ...(r.sweep
+      ? [`${pad('sweep')}orbit ${Math.round(r.sweep.durationMs)} ms · reconverge ${ms(r.sweep.reconvergeMs)} · dispatched ${r.sweep.bricksDispatched} · downloaded ${mb(r.sweep.bytesDownloaded)} MB`]
+      : []),
     '==================',
   ].join('\n');
 }
@@ -158,11 +257,29 @@ export async function maybeRunBench(viewer: BenchViewer): Promise<void> {
   const stablePolls = num(params, 'benchStable', 8);
   const label = params.get('benchLabel') ?? 'run';
   const reportUrl = params.get('report');
+  const peaks = new PeakTracker();
 
-  const settled = await waitForConverged(viewer, timeoutMs, stablePolls);
+  const settled = await waitForConverged(viewer, peaks, timeoutMs, stablePolls);
   // performance.now() is ms since page navigation start, so this is the full
   // open→converge wall-clock (WebGPU init + metadata + base load + refinement).
   const convergeMs = performance.now();
+
+  let sweep: BenchSweep | null = null;
+  if (params.get('benchSweep') === '1') {
+    const durationMs = num(params, 'benchSweepMs', 6000);
+    const before = viewer.streamingManager.getStats();
+    await sweepCamera(viewer, peaks, durationMs);
+    const orbitEnd = performance.now();
+    const reconverged = await waitForConverged(viewer, peaks, timeoutMs, stablePolls);
+    const after = viewer.streamingManager.getStats();
+    sweep = {
+      durationMs,
+      reconvergeMs: reconverged ? performance.now() - orbitEnd : null,
+      bricksDispatched: after.bricksDispatched - before.bricksDispatched,
+      bytesDownloaded: after.totalBytesDownloaded - before.totalBytesDownloaded,
+    };
+  }
+
   const s = viewer.streamingManager.getStats();
   const m = viewer.milestones;
 
@@ -197,6 +314,8 @@ export async function maybeRunBench(viewer: BenchViewer): Promise<void> {
       assemblyMs: s.pipelineTimings.avgAssemblyMs,
       uploadMs: s.pipelineTimings.avgUploadMs,
     },
+    memory: benchMemory(viewer.getMemoryStats(), peaks),
+    sweep,
     userAgent: navigator.userAgent,
   };
 

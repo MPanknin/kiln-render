@@ -134,6 +134,9 @@ export interface PipelineTimings {
   sampleCount: number;
   /** Per-worker chunk cache hit ratio (0–1). Measures bandwidth amplification quality. */
   chunkCacheHitRatio?: number;
+  /** Decoded-chunk caches over all workers: bytes held, and their budgets (Zarr only) */
+  chunkCacheBytes?: number;
+  chunkCacheMaxBytes?: number;
   /** ?bench=1 only (Zarr): chunk bytes downloaded so far */
   chunkBytes?: number;
   /** ?bench=1 only (Zarr): part of chunkBytes from chunks no brick's core needed, i.e. fetched only for the one-voxel border */

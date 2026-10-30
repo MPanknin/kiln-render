@@ -1,12 +1,14 @@
-// Serves the visual tests' data on :5199, with CORS and real 404s. The synthetic dataset is written
-// on first use (test/visual/.data): a 128³ uint8 OME-Zarr (v0.4, uncompressed, two levels) with a
-// label image `labels/cells` of four spheres, deterministic so every run renders the same scene.
+// Serves the visual tests' data on :5199, with CORS and real 404s: the committed datasets in
+// test/visual/fixtures, and a synthetic one written on first use (test/visual/.data): a 128³ uint8
+// OME-Zarr (v0.4, uncompressed, two levels) with a label image `labels/cells` of four spheres,
+// deterministic so every run renders the same scene.
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('.data/', import.meta.url));
+const FIXTURES = fileURLToPath(new URL('fixtures/', import.meta.url));
 const SYNTH = path.join(ROOT, 'synth.zarr');
 const N = 128;
 
@@ -79,8 +81,10 @@ http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', '*');
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
-  const file = path.join(ROOT, decodeURIComponent(new URL(req.url, 'http://localhost').pathname));
-  if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); return res.end(); }
+  const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+  const file = [ROOT, FIXTURES].map(root => path.join(root, pathname))
+    .find(f => (f.startsWith(ROOT) || f.startsWith(FIXTURES)) && fs.existsSync(f) && fs.statSync(f).isFile());
+  if (!file) { res.writeHead(404); return res.end(); }
   res.writeHead(200);
   res.end(req.method === 'HEAD' ? undefined : fs.readFileSync(file));
 }).listen(5199, '127.0.0.1', () => console.log('visual test data on http://127.0.0.1:5199'));

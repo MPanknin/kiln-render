@@ -4,6 +4,8 @@ import { test, expect } from '@playwright/test';
 // compared with baselines/<scene>-<platform>.png. KILN_GPU (a pattern, e.g. "nvidia") fails the
 // test on any other WebGPU adapter, so a silent fallback to a software renderer can't pass.
 const SYNTH = 'http://127.0.0.1:5199/synth.zarr';
+// Zarr v3, sharded, zstd: one level, 128³ uint8
+const HYDROGEN = 'http://127.0.0.1:5199/hydrogen_atom.ome.zarr';
 
 interface Scene {
   name: string;
@@ -20,7 +22,9 @@ const SCENES: Scene[] = [
   { name: 'synth-slice', dataset: SYNTH, query: 'mode=slice' },
   { name: 'synth-labels-dvr', dataset: SYNTH, query: 'mode=dvr&labels=cells', settleMs: 4000 },
   { name: 'synth-labels-slice', dataset: SYNTH, query: 'mode=slice&labels=cells:0.8:surface:both', settleMs: 4000 },
-  { name: 'chameleon-dvr', dataset: 'https://d39zu0xtgv0613.cloudfront.net/chameleon-16bit', query: 'mode=dvr' },
+  { name: 'hydrogen-dvr', dataset: HYDROGEN, query: 'mode=dvr&tf=plasma' },
+  { name: 'hydrogen-mip', dataset: HYDROGEN, query: 'mode=mip&tf=plasma' },
+  { name: 'hydrogen-iso', dataset: HYDROGEN, query: 'mode=iso&iso=0.3' },
 ];
 
 test.beforeEach(async ({ page }) => {

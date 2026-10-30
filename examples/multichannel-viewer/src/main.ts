@@ -52,6 +52,7 @@ function parseURLParams(): {
   mode?: string;
   cam?: [number, number, number] | [number, number, number, number, number, number];
   projection?: Projection;
+  wireframe?: boolean;
   channels?: ChannelState[];
   slice?: SliceParams;
 } {
@@ -91,6 +92,7 @@ function parseURLParams(): {
     mode: params.get('mode') ?? undefined,
     cam,
     projection: params.get('proj') === 'ortho' ? 'orthographic' : undefined,
+    wireframe: params.get('wireframe') === '1' ? true : undefined,
     channels,
     slice,
   };
@@ -128,6 +130,7 @@ async function main() {
     upAxis: urlParams.up as UpAxis | undefined,
     cam: urlParams.cam,
     projection: urlParams.projection,
+    showWireframe: urlParams.wireframe,
     renderScale: urlParams.scale,
     pyramid: urlParams.pyramid,
     // Hidden channels in the share URL must not be streamed for the base load
@@ -190,6 +193,7 @@ async function main() {
     const [rx, ry, dist, tx, ty, tz] = state.cam;
     p.set('cam', `${rx.toFixed(3)},${ry.toFixed(3)},${dist.toFixed(3)},${tx.toFixed(3)},${ty.toFixed(3)},${tz.toFixed(3)}`);
     if (state.projection === 'orthographic') p.set('proj', 'ortho');
+    if (state.showWireframe) p.set('wireframe', '1');
     if (state.labels.length > 0) p.set('labels', writeLabelParam(state.labels));
     const channelState = ui.getChannelState();
     if (channelState.length > 0) {

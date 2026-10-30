@@ -34,7 +34,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: 'bun run build && bunx vite preview --port 5173 --strictPort --host 127.0.0.1',
+      command: 'bun run build && bun run build:multichannel && bunx vite preview --port 5173 --strictPort --host 127.0.0.1',
       url: 'http://127.0.0.1:5173/kiln-render/app/',
       env: { BROWSER: 'none' },
       timeout: 300_000,

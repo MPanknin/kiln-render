@@ -1,0 +1,89 @@
+name: Visual
+
+# Renders the scenes in test/visual on the organisation's GPU runner (NVIDIA T4) and compares them
+# with test/visual/baselines. Baselines that don't exist yet (a new scene) are written and committed
+# to the branch; run it by hand with "update" to rewrite all of them.
+on:
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+    inputs:
+      update:
+        description: Write new baselines and commit them to the branch
+        type: boolean
+        default: false
+
+concurrency:
+  group: visual-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  visual:
+    # The GPU runner belongs to the kilnrender organisation; pull requests from forks don't use it
+    if: >-
+      github.repository_owner == 'kilnrender' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: gpu
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      # The branch itself, not the merge commit, so new baselines can be pushed to it
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      # Without the modules, /dev/nvidia0 is missing and Chrome silently renders on the CPU
+      - name: GPU
+        run: |
+          sudo modprobe nvidia
+          sudo modprobe nvidia_uvm
+          nvidia-smi
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb vulkan-tools > /dev/null
+          vulkaninfo --summary || true
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Chromium
+        run: bunx playwright install --with-deps chromium
+
+      - name: Visual tests
+        id: tests
+        env:
+          KILN_GPU: nvidia
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" bunx playwright test --update-snapshots=${{ inputs.update && 'all' || 'missing' }}
+
+      - name: Commit baselines
+        if: always() && steps.tests.outcome != 'skipped'
+        run: |
+          [ -d test/visual/baselines ] || exit 0
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898283+github-actions[bot]@users.noreply.github.com'
+          git add test/visual/baselines
+          git diff --cached --quiet && echo 'Baselines unchanged' && exit 0
+          git commit -m 'test: update visual baselines'
+          git push
+
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-report
+          path: |
+            playwright-report/
+            test-results/

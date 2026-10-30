@@ -87,7 +87,7 @@ viewer.onChannelWindowsChanged = () => {
 | `sourceChannels`, `timepoint` | zero-based indices | Source selection |
 | `mode` | `dvr`, `mip`, `slice` | Render mode |
 | `slice` | `x,y,z,showX,showY,showZ` | Slice positions and visibility |
-| `cam`, `up`, `scale`, `pyramid` | | As in the [single-channel viewer](/guide/url-parameters) |
+| `cam`, `up`, `scale`, `pyramid`, `wireframe` | | As in the [single-channel viewer](/guide/url-parameters) |
 
 ```
 ?channels=51,102,255,1.00,1,0.10,0.80;255,230,51,1.00,1,0.20,0.90;255,51,51,1.00,0,0.00,1.00

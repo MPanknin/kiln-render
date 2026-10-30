@@ -165,7 +165,7 @@ export default defineConfig({
       },
     ],
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/MPanknin/kiln-render' },
+      { icon: 'github', link: 'https://github.com/kilnrender/kiln-render' },
     ],
     footer: {
       message: 'Apache-2.0',

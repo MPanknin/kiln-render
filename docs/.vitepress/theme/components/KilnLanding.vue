@@ -12,12 +12,12 @@ import { withBase } from 'vitepress';
       <nav class="kiln-links">
         <a :href="withBase('/gallery')">Examples</a>
         <a :href="withBase('/guide/introduction')">Documentation</a>
-        <a href="https://github.com/MPanknin/kiln-render" target="_blank" rel="noreferrer">GitHub</a>
+        <a href="https://github.com/kilnrender/kiln-render" target="_blank" rel="noreferrer">GitHub</a>
       </nav>
     </div>
 
     <footer class="kiln-footer">
-      <p class="kiln-version">v0.5.0</p>
+      <p class="kiln-version">v0.6.0</p>
       <p class="kiln-copyright">© 2026 mpanknin</p>
     </footer>
   </main>

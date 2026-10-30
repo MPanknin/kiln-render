@@ -2,8 +2,8 @@
 
 Thanks for your interest in Kiln! Bug reports, datasets that don't load, docs fixes and pull requests are all welcome.
 
-- **Questions:** [GitHub Discussions](https://github.com/MPanknin/kiln-render/discussions)
-- **Bugs and datasets that don't load:** [open an issue](https://github.com/MPanknin/kiln-render/issues/new/choose)
+- **Questions:** [GitHub Discussions](https://github.com/kilnrender/kiln-render/discussions)
+- **Bugs and datasets that don't load:** [open an issue](https://github.com/kilnrender/kiln-render/issues/new/choose)
 - **Security issues:** please report them privately, see [SECURITY.md](SECURITY.md)
 
 ## Development

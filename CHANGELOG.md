@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-30
+
 ### Added
 - OME-Zarr with x, y, z axis order and Zarr URLs without `.zarr`, so public [webKnossos](https://webknossos.org) datasets open directly.
 - Auto contrast per channel in the multichannel viewer (an **Auto** button on each channel, `A` fits all visible channels).
@@ -97,9 +99,10 @@ First release on npm.
 ### Changed
 - Licensed under Apache 2.0.
 
-[Unreleased]: https://github.com/MPanknin/kiln-render/compare/v0.5.0...HEAD
-[0.5.0]: https://github.com/MPanknin/kiln-render/releases/tag/v0.5.0
-[0.4.1]: https://github.com/MPanknin/kiln-render/releases/tag/v0.4.1
-[0.4.0]: https://github.com/MPanknin/kiln-render/releases/tag/v0.4.0
-[0.2.1]: https://github.com/MPanknin/kiln-render/releases/tag/v0.2.1
-[0.2.0]: https://github.com/MPanknin/kiln-render/releases/tag/v0.2.0
+[Unreleased]: https://github.com/kilnrender/kiln-render/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/kilnrender/kiln-render/releases/tag/v0.6.0
+[0.5.0]: https://github.com/kilnrender/kiln-render/releases/tag/v0.5.0
+[0.4.1]: https://github.com/kilnrender/kiln-render/releases/tag/v0.4.1
+[0.4.0]: https://github.com/kilnrender/kiln-render/releases/tag/v0.4.0
+[0.2.1]: https://github.com/kilnrender/kiln-render/releases/tag/v0.2.1
+[0.2.0]: https://github.com/kilnrender/kiln-render/releases/tag/v0.2.0

@@ -335,7 +335,7 @@ const topBar = IS_EMBED ? null : mountTopBar();
 if (!IS_EMBED) {
   mountDatasetDialog({
     remoteDescription: 'Enter URL to an OME-Zarr dataset or Kiln sharded binary',
-    docsLink: 'https://github.com/MPanknin/kiln-render/blob/main/docs/data/ome-zarr.md',
+    docsLink: 'https://github.com/kilnrender/kiln-render/blob/main/docs/data/ome-zarr.md',
   });
 }
 

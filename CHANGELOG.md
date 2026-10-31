@@ -6,32 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-30
+
 ### Added
-- OME-Zarr with x, y, z axis order and Zarr URLs without `.zarr`, so public [webKnossos](https://webknossos.org) datasets open directly.
-- Auto contrast per channel in the multichannel viewer (an **Auto** button on each channel, `A` fits all visible channels).
-- `StreamingManager.getChannelHistogram(channel, bins)`: the value distribution of a channel over the loaded base level.
-- `?bench=1` reports how much of the downloaded chunk payload data (excluding shared shard indexes) came from chunks that only the one-voxel brick border needed.
-- Ray-guided brick selection, on by default: rays mark the brick cells they enter, and bricks no ray reached (behind opaque material, outside the clip box) are not streamed. In DVR views that refine deeply it cut time to converge by 24–41 % and downloads by 32–47 %. `?rayguide=0` turns it off. The stats panel and `?bench=1` report how many bricks it left out.
-- Several views of one dataset, for example the panes of a multi-view layout: `KilnEngine.addView()`, `updateViews()` and `render(colorView, view, index)`. The views share the atlas and the stream, which loads what any of them needs. Each has its own camera, render mode and accumulation; the other display settings follow view 0.
-- Quad view in the single-channel viewer: front, side and top panes around the 3D view, each with its own render mode (slices by default), all fed by one stream. Switch with the grid button in the top bar or `Q`; panes keep their mode and camera across switches. `?layout=quad&panes=mip,dvr,slice` starts in it. `KilnViewer.addPane(canvas)` adds such a pane, and `Camera.orbitEnabled = false` makes dragging pan instead of orbit.
-- Orthographic projection: the grid button under the orientation gizmo or `O` switches all views, quad panes included; `?proj=ortho` starts in it. Switching keeps the volume's size at the camera target, and brick selection uses a distance-independent screen-space error. API: `KilnViewer.projection`, `Camera.projection`, the `projection` viewer option, and orthographic `proj` matrices in `KilnEngine`.
-- `?softreset=1` (experimental) against woodgrain while bricks refine: a brick commit keeps the accumulated image weighted as four frames instead of restarting from one jittered frame, and jitter is seeded per pixel instead of by ray direction, which parallel rays share.
-- Opt-in, LOD-consistent gradient shading in single-channel DVR, and optional boundary emphasis, where opacity follows the gradient magnitude. Set them with the `shading` and `gradientOpacity` options, the **Shading** and **Boundaries** sliders, or the `shade` and `boundary` URL parameters.
-- Memory telemetry: `KilnEngine.getMemoryStats()` / `KilnViewer.getMemoryStats()` report GPU memory (atlas, render targets of every view and render scale, labels, indirection and ray buffers), the brick and chunk caches with their budgets and hit rates, the JS heap where the browser exposes it, and pressure counters (atlas evictions, refused allocations, brick-cache evictions, label pool growth). The stats panel shows them in a **Memory** section, `?bench=1` records them with their peaks, and `?benchSweep=1` orbits the camera once after converging so eviction and the caches get exercised.
-- `wireframe=1` in the multichannel viewer, which also keeps the bounding box in share links.
-- Label layers: up to 8 OME-Zarr label images (segmentations) over the volume, from the dataset's `labels` group or any URL, each in one colour with its own opacity: shaded surfaces in 3D, filled on slices. Label pyramids are matched to the image levels, including coarser and single-scale labels. Label bricks stream with the image bricks: bricks of one ID take no GPU memory, mixed ones share one pool that grows up to `labelBudgetBytes` (512 MiB) and is freed when no layer is shown. A **Labels** panel in both viewers, the `labels` option and URL parameter, and `KilnViewer.labels` / `pickLabels()` in the API (tint and outline styles, per-segment colours, selection and picking are API-only for now).
+- Label layers: up to 8 OME-Zarr segmentations over the volume, shaded in 3D and filled on slices, with a **Labels** panel in both viewers.
+- Quad view in the single-channel viewer: front, side and top panes around the 3D view (`Q` or `?layout=quad`). Engine API for several views of one dataset (`KilnEngine.addView()`).
+- Orthographic projection (`O` or `?proj=ortho`).
+- Ray-guided streaming, on by default: bricks hidden behind opaque material are no longer loaded. Converges 24–41 % faster in DVR views. `?rayguide=0` turns it off.
+- Gradient shading and boundary emphasis in single-channel DVR (**Shading** and **Boundaries** sliders).
+- Auto contrast per channel in the multichannel viewer (**Auto** button, `A` for all channels).
+- Memory stats for GPU, caches and heap in the stats panel and `?bench=1`.
+- webKnossos datasets open directly (x, y, z axis order, URLs without `.zarr`).
+- `?softreset=1` (experimental): less flicker while bricks refine.
 
 ### Changed
-- Atlas selection validates filterable 3D bindings inside a WebGPU error scope. Devices exposing unfilterable `r16unorm` under `texture-formats-tier1` fall back to the 12-bit-exact `r16float` path before loading bricks.
-- `uint16` volumes are stored bit-exact as `r16unorm` where the GPU supports `texture-formats-tier1`, which `KilnEngine.createDevice()` now requests. Without it they stay on `r16float`, now stored so that 12-bit data is exact; it used to lose about a quarter of its levels.
-- Window, width, ISO and channel level sliders span the data's value range instead of the whole data type range, and label raw values. 12-bit microscopy stored as `uint16` used to live in the first two slider steps.
-- `StreamingManager.setBaseLodLoadedCallback` no longer passes brick data to the callback, and also fires when a channel shown later has filled in.
+- `uint16` data is stored bit-exact where the GPU supports it. 12-bit data stays exact on the fallback path too.
+- Contrast and ISO sliders span the data's actual value range instead of the whole data type range.
+- `StreamingManager.setBaseLodLoadedCallback` no longer passes brick data.
 
 ### Fixed
-- Quad panes follow changes to the up axis, including their labels and when reopening the layout. Removed pane handles cannot change the main view or remove a replacement pane that reuses their canvas.
-- Ray-guided streaming keeps a brick visible for the same number of frames with TAA on or off. With TAA off, each readback covers one frame, which shrank the window fourfold.
-- Ray-guided streaming flushes visibility when rendering goes idle, including with TAA disabled and when a previous GPU readback is still pending, so newly exposed bricks can refine without another camera movement.
-- `int16` and `float32` values are rounded to the nearest half float. They were truncated, and values below 2^-14 were flushed to zero.
+- `int16` and `float32` values are rounded instead of truncated, and tiny values are no longer flushed to zero.
+- Ray-guided streaming with TAA off.
+- Quad panes now follow changes to the up axis.
 
 ## [0.5.0] - 2026-09-28
 
@@ -97,9 +93,10 @@ First release on npm.
 ### Changed
 - Licensed under Apache 2.0.
 
-[Unreleased]: https://github.com/MPanknin/kiln-render/compare/v0.5.0...HEAD
-[0.5.0]: https://github.com/MPanknin/kiln-render/releases/tag/v0.5.0
-[0.4.1]: https://github.com/MPanknin/kiln-render/releases/tag/v0.4.1
-[0.4.0]: https://github.com/MPanknin/kiln-render/releases/tag/v0.4.0
-[0.2.1]: https://github.com/MPanknin/kiln-render/releases/tag/v0.2.1
-[0.2.0]: https://github.com/MPanknin/kiln-render/releases/tag/v0.2.0
+[Unreleased]: https://github.com/kilnrender/kiln-render/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/kilnrender/kiln-render/releases/tag/v0.6.0
+[0.5.0]: https://github.com/kilnrender/kiln-render/releases/tag/v0.5.0
+[0.4.1]: https://github.com/kilnrender/kiln-render/releases/tag/v0.4.1
+[0.4.0]: https://github.com/kilnrender/kiln-render/releases/tag/v0.4.0
+[0.2.1]: https://github.com/kilnrender/kiln-render/releases/tag/v0.2.1
+[0.2.0]: https://github.com/kilnrender/kiln-render/releases/tag/v0.2.0

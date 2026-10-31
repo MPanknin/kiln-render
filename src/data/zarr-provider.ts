@@ -7,7 +7,7 @@ import { open, root, Array as ZarrArray } from 'zarrita';
 import type { DataType, Readable, ArrayMetadata, AbsolutePath } from 'zarrita';
 import { TolerantFetchStore } from './tolerant-fetch-store.js';
 import { ZarrWorkerPool } from './zarr-worker-pool.js';
-import { BaseZarrProvider, detectCompression } from './base-zarr-provider.js';
+import { BaseZarrProvider, detectCompression, v3CompressionLabel } from './base-zarr-provider.js';
 import type { OmeMultiscales } from './base-zarr-provider.js';
 import type { VolumeMetadata, BrickLoadResult, PipelineTimings } from './data-provider.js';
 import { UnsupportedDatasetError } from './data-provider.js';
@@ -17,11 +17,13 @@ import { provisionalDataRange } from './value-types.js';
 import type { ZarrV2ArrayJson } from './zarr-v2-metadata.js';
 import { jsonReader, listLabelNames } from './label-image.js';
 
-/** Everything initialize() needs, opened in two round trips (see openV2Fast). */
+type JsonGetter = <T = Record<string, unknown>>(key: string) => Promise<T | null>;
+
+/** Everything initialize() needs, opened in two round trips (see openFast). */
 interface FastOpen {
+  format: 2 | 3;
   attrs: Record<string, unknown>;
   ms: OmeMultiscales;
-  arrays: ZarrArray<DataType, Readable>[];
   arrayPaths: string[];
   arrayMetadata: ArrayMetadata<DataType>[];
   compression: string | undefined;
@@ -35,6 +37,8 @@ export class ZarrDataProvider extends BaseZarrProvider {
   private url: string;
   /** URL of the image group (the bioformats2raw "0" sub-group when there is one), set by initialize() */
   private groupUrl: string;
+  /** Zarr format found by initialize(), so label probes skip the other one */
+  private zarrFormat: 2 | 3 | undefined;
 
   /** Worker pool for off-main-thread brick loading */
   private workerPool: ZarrWorkerPool | null = null;
@@ -47,7 +51,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
   }
 
   async listLabels(): Promise<string[]> {
-    return listLabelNames(jsonReader(new TolerantFetchStore(this.groupUrl)));
+    return listLabelNames(jsonReader(new TolerantFetchStore(this.groupUrl)), '', this.zarrFormat);
   }
 
   labelLocation(source: string): string {
@@ -65,35 +69,52 @@ export class ZarrDataProvider extends BaseZarrProvider {
     }
   }
 
-  /** Zarr v2 OME open in two round trips: root + bioformats2raw "0" attrs, then all .zarray in
-   *  parallel; arrays come from that JSON and workers get it too. null → not v2, caller probes. */
-  private async openV2Fast(store: TolerantFetchStore): Promise<FastOpen | null> {
+  /** Open in two round trips: root metadata (v3 and v2 in parallel), then all array metadata.
+   *  Workers get the metadata too, so nothing probes the wrong format. null → caller probes. */
+  private async openFast(store: TolerantFetchStore): Promise<FastOpen | null> {
     const getJson = async <T,>(key: string): Promise<T | null> => {
       const bytes = await store.get(key as AbsolutePath).catch(() => undefined);
-      return bytes ? JSON.parse(new TextDecoder().decode(bytes)) as T : null;
+      if (!bytes) return null;
+      try { return JSON.parse(new TextDecoder().decode(bytes)) as T; } catch { return null; }
     };
-    const [rootAttrs, subAttrs] = await Promise.all([
+    const [v3Root, v2Attrs] = await Promise.all([
+      getJson<Record<string, unknown>>('/zarr.json'),
       getJson<Record<string, unknown>>('/.zattrs'),
-      getJson<Record<string, unknown>>('/0/.zattrs'),
     ]);
-    if (!rootAttrs && !subAttrs) return null;
+    return v3Root ? this.openV3Fast(getJson, v3Root) : this.openV2Fast(getJson, v2Attrs);
+  }
 
-    let attrs = rootAttrs ?? {};
-    let ms = extractMultiscales(attrs) as OmeMultiscales | null;
-    let subGroupPath = '';
-    if (!ms && subAttrs) {
-      const subMs = extractMultiscales(subAttrs) as OmeMultiscales | null;
-      if (subMs) { attrs = subAttrs; ms = subMs; subGroupPath = '0/'; }
-    }
-    if (!ms) return null;
+  /** Multiscales from the root attributes, else from the bioformats2raw "0" sub-group. */
+  private async findMultiscales(
+    rootAttrs: Record<string, unknown> | null,
+    subAttrs: () => Promise<Record<string, unknown> | null>,
+  ): Promise<{ attrs: Record<string, unknown>; ms: OmeMultiscales; subGroupPath: string } | null> {
+    const ms = rootAttrs && extractMultiscales(rootAttrs) as OmeMultiscales | null;
+    if (ms) return { attrs: rootAttrs!, ms, subGroupPath: '' };
+    const sub = await subAttrs();
+    const subMs = sub && extractMultiscales(sub) as OmeMultiscales | null;
+    return subMs ? { attrs: sub!, ms: subMs, subGroupPath: '0/' } : null;
+  }
 
-    const arrayPaths = ms.datasets.map(ds => `${subGroupPath}${ds.path}`);
+  private async openV2Fast(getJson: JsonGetter, rootAttrs: Record<string, unknown> | null): Promise<FastOpen | null> {
+    const found = await this.findMultiscales(rootAttrs, () => getJson('/0/.zattrs'));
+    if (!found) return null;
+    const arrayPaths = found.ms.datasets.map(ds => `${found.subGroupPath}${ds.path}`);
     const zarrays = await Promise.all(arrayPaths.map(p => getJson<ZarrV2ArrayJson>(`/${p}/.zarray`)));
     if (zarrays.some(z => !z)) return null;
-
     const arrayMetadata = zarrays.map(z => v2ToV3ArrayMetadata(z!));
-    const arrays = arrayPaths.map((p, i) => new ZarrArray(store, `/${p}` as AbsolutePath, arrayMetadata[i]!));
-    return { attrs, ms, arrays, arrayPaths, arrayMetadata, compression: compressionLabel(zarrays[0]!.compressor), subGroupPath };
+    return { ...found, format: 2, arrayPaths, arrayMetadata, compression: compressionLabel(zarrays[0]!.compressor) };
+  }
+
+  private async openV3Fast(getJson: JsonGetter, rootJson: Record<string, unknown>): Promise<FastOpen | null> {
+    const attrsOf = (doc: Record<string, unknown> | null) => (doc?.['attributes'] as Record<string, unknown> | undefined) ?? null;
+    const found = await this.findMultiscales(attrsOf(rootJson), async () => attrsOf(await getJson('/0/zarr.json')));
+    if (!found) return null;
+    const arrayPaths = found.ms.datasets.map(ds => `${found.subGroupPath}${ds.path}`);
+    const metas = await Promise.all(arrayPaths.map(p => getJson<Record<string, unknown>>(`/${p}/zarr.json`)));
+    if (metas.some(m => m?.['node_type'] !== 'array')) return null;
+    const arrayMetadata = metas as unknown as ArrayMetadata<DataType>[];
+    return { ...found, format: 3, arrayPaths, arrayMetadata, compression: v3CompressionLabel(metas[0]) };
   }
 
   async initialize(): Promise<VolumeMetadata> {
@@ -101,7 +122,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
 
     // Use zarrita on main thread for lightweight metadata reading only
     const store = new TolerantFetchStore(this.url);
-    const fast = await this.openV2Fast(store);
+    const fast = await this.openFast(store);
 
     let attrs: Record<string, unknown>;
     let arrays: ZarrArray<DataType, Readable>[];
@@ -110,7 +131,9 @@ export class ZarrDataProvider extends BaseZarrProvider {
     let compression: string | undefined;
 
     if (fast) {
-      ({ attrs, arrays, arrayPaths, arrayMetadata, compression } = fast);
+      ({ attrs, arrayPaths, arrayMetadata, compression } = fast);
+      arrays = arrayPaths.map((p, i) => new ZarrArray(store, `/${p}` as AbsolutePath, fast.arrayMetadata[i]!));
+      this.zarrFormat = fast.format;
       if (fast.subGroupPath) this.groupUrl = `${this.url}/0`;
     } else {
       const rootGroup = await open(root(store), { kind: 'group' });

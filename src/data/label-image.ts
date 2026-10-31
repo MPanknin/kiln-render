@@ -97,7 +97,7 @@ export interface LabelArrayInfo {
   /** Physical voxel spacing and origin, when the multiscales metadata has them */
   spacing?: Vec3;
   origin?: Vec3;
-  /** Zarr v3 array metadata (v2 converted), so readers build arrays without fetching it again */
+  /** @internal Zarr v3 array metadata (v2 converted), so readers build arrays without refetching */
   metadata: ArrayMetadata<DataType>;
 }
 
@@ -236,7 +236,7 @@ export function alignLabelLevels(image: ImageGeometry, label: LabelImageInfo): {
 /** Reads JSON documents of a Zarr hierarchy (remote or local), absent documents as null. */
 export type JsonReader = (key: string) => Promise<Record<string, unknown> | null>;
 
-/** A JsonReader over any zarrita-style store. */
+/** @internal A JsonReader over any zarrita-style store. */
 export function jsonReader(store: { get(key: AbsolutePath): Promise<Uint8Array | undefined> }): JsonReader {
   return async (key) => {
     const bytes = await store.get(key as AbsolutePath).catch(() => undefined);
@@ -245,15 +245,19 @@ export function jsonReader(store: { get(key: AbsolutePath): Promise<Uint8Array |
   };
 }
 
-/** Attributes of the group at `prefix` ('' = root): v3 `zarr.json` attributes or v2 `.zattrs`. */
-async function groupAttrs(read: JsonReader, prefix: string): Promise<Record<string, unknown> | null> {
-  const [v3, v2] = await Promise.all([read(`${prefix}/zarr.json`), read(`${prefix}/.zattrs`)]);
+/** Attributes of the group at `prefix` ('' = root): v3 `zarr.json` attributes or v2 `.zattrs`.
+ *  A known `format` reads only that document. */
+async function groupAttrs(read: JsonReader, prefix: string, format?: 2 | 3): Promise<Record<string, unknown> | null> {
+  const [v3, v2] = await Promise.all([
+    format === 2 ? null : read(`${prefix}/zarr.json`),
+    format === 3 ? null : read(`${prefix}/.zattrs`),
+  ]);
   return (v3?.['attributes'] as Record<string, unknown> | undefined) ?? v2;
 }
 
 /** Names of the label images in the `labels` group under `prefix` (the image group). */
-export async function listLabelNames(read: JsonReader, prefix = ''): Promise<string[]> {
-  const attrs = await groupAttrs(read, `${prefix}/labels`);
+export async function listLabelNames(read: JsonReader, prefix = '', format?: 2 | 3): Promise<string[]> {
+  const attrs = await groupAttrs(read, `${prefix}/labels`, format);
   return attrs ? parseLabelNames(attrs) : [];
 }
 
@@ -267,6 +271,7 @@ async function arrayMetadata(read: JsonReader, path: string): Promise<ArrayMetad
 interface OmeTransform { type: string; scale?: number[]; translation?: number[] }
 
 /**
+ * @internal
  * Read a label image's metadata from the root of `store`: multiscales, array geometry,
  * `image-label` colours and properties. Throws UnsupportedDatasetError when it isn't a label
  * image Kiln can show.
@@ -350,7 +355,7 @@ export async function readLabelImage(
   };
 }
 
-/** zarrita arrays for a label image, built from metadata already read (no network round trips). */
+/** @internal zarrita arrays for a label image, from metadata already read (no round trips). */
 export function labelArrays(store: Readable, info: Pick<LabelImageInfo, 'arrays'>): ZarrArray<DataType, Readable>[] {
   return info.arrays.map(a => new ZarrArray(store, `/${a.path}` as AbsolutePath, a.metadata));
 }

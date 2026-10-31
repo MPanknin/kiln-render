@@ -51,7 +51,7 @@ export interface LabelSegment {
 /** What labels an image atlas slot: a uniform ID, a brick in the pool, or nothing. */
 export type LabelBound = null | { kind: 'uniform'; id: number } | { kind: 'mixed'; brick: ResidentLabelBrick };
 
-/** @internal A mixed label brick in the pool. */
+/** A mixed label brick in the pool (not exported from the package). */
 export interface ResidentLabelBrick {
   key: string;
   layer: LabelLayer;
@@ -78,7 +78,7 @@ export interface LabelBinding {
   exact: boolean;
 }
 
-/** @internal The manager's side of a layer. */
+/** The manager's side of a layer (not exported from the package). */
 export interface LabelLayerHost {
   layerChanged(layer: LabelLayer, what: 'visible' | 'style' | 'colors'): void;
 }

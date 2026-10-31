@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-31
+
+### Fixed
+- TypeScript types in the npm package compile with `skipLibCheck` off. Label layer types referred to `zarrita` and to types missing from the package.
+- Far fewer 404s in the browser console when opening a dataset: Kiln reads the dataset's own Zarr version instead of probing for the other one.
+- The `r16unorm` atlas fallback is logged as info instead of a warning.
+
 ## [0.6.0] - 2026-10-30
 
 ### Added
@@ -93,7 +100,8 @@ First release on npm.
 ### Changed
 - Licensed under Apache 2.0.
 
-[Unreleased]: https://github.com/kilnrender/kiln-render/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/kilnrender/kiln-render/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/kilnrender/kiln-render/releases/tag/v0.6.1
 [0.6.0]: https://github.com/kilnrender/kiln-render/releases/tag/v0.6.0
 [0.5.0]: https://github.com/kilnrender/kiln-render/releases/tag/v0.5.0
 [0.4.1]: https://github.com/kilnrender/kiln-render/releases/tag/v0.4.1

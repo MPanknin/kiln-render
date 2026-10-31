@@ -6,7 +6,7 @@
 npm install kiln-render
 ```
 
-An ES module with bundled dependencies and TypeScript types, including `@webgpu/types`.
+An ES module with bundled dependencies and TypeScript types, including `@webgpu/types`. Use it with a bundler or dev server such as [Vite](https://vite.dev); a plain `<script type="module">` can't resolve `kiln-render`.
 
 ## Basic usage
 

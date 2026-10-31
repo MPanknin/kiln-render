@@ -18,8 +18,8 @@ repository-code: "https://github.com/kilnrender/kiln-render"
 url: "https://kilnrender.com"
 doi: 10.5281/zenodo.23015442
 license: Apache-2.0
-version: 0.6.0
-date-released: "2026-10-30"
+version: 0.6.1
+date-released: "2026-10-31"
 keywords:
   - WebGPU
   - volume rendering

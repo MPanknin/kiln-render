@@ -102,15 +102,16 @@ export async function detectCompression(
   }
 
   // Zarr v3: zarr.json has a "codecs" array
-  const v3 = await tryParse(`/${arrayPath}/zarr.json`);
-  if (v3?.codecs) {
-    const comp = (v3.codecs as { name: string }[]).find(c =>
-      ['blosc', 'zstd', 'gzip', 'zlib', 'bz2', 'lz4'].includes(c.name)
-    );
-    return comp?.name;
-  }
+  return v3CompressionLabel(await tryParse(`/${arrayPath}/zarr.json`));
+}
 
-  return undefined;
+/** Compression codec named in v3 array metadata (its "codecs" array), if any. */
+export function v3CompressionLabel(meta: { codecs?: unknown } | null | undefined): string | undefined {
+  if (!Array.isArray(meta?.codecs)) return undefined;
+  const comp = (meta.codecs as { name: string }[]).find(c =>
+    ['blosc', 'zstd', 'gzip', 'zlib', 'bz2', 'lz4'].includes(c.name)
+  );
+  return comp?.name;
 }
 
 /**

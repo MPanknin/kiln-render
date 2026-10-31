@@ -1,7 +1,7 @@
 # Kiln
 
 [![npm](https://img.shields.io/npm/v/kiln-render?color=cb3837)](https://www.npmjs.com/package/kiln-render)
-[![CI](https://github.com/MPanknin/kiln-render/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MPanknin/kiln-render/actions/workflows/ci.yml)
+[![CI](https://github.com/kilnrender/kiln-render/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kilnrender/kiln-render/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![OME-NGFF tools registry](https://img.shields.io/badge/OME--NGFF-tools%20registry-2b8cbe)](https://ngff.openmicroscopy.org/resources/tools/index.html)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23015443.svg)](https://doi.org/10.5281/zenodo.23015443)
@@ -11,7 +11,7 @@ A WebGPU-native out-of-core volume rendering system for large virtualized volume
 
 Kiln streams multi-gigabyte volumes over HTTP, rendering them at interactive framerates using a bounded GPU residency/atlas cache and virtual-texture indirection. It handles single-channel and multichannel OME-Zarr datasets (up to 4 channels).
 
-> **v0.5.0** — Multichannel rendering is in **beta**; see [Multichannel](docs/rendering/multichannel.md) for details and known limitations.
+> **v0.6.0** — Multichannel rendering is in **beta**; see [Multichannel](docs/rendering/multichannel.md) for details and known limitations.
 
 **Documentation:** New to Kiln? Start with the [Guide](docs/guide/introduction.md), or browse the [full docs index](docs/README.md).
 
@@ -59,12 +59,14 @@ try {
 
 ## Features
 
-- **Out-of-core streaming** — Fixed VRAM footprint, SSE-based LOD selection, LRU brick cache
+- **Out-of-core streaming** — Fixed VRAM footprint, SSE-based LOD selection, ray-guided brick selection, LRU brick cache
 - **Multichannel rendering** — Up to 4 channels with per-channel colour, windowing, and visibility controls ([details](docs/rendering/multichannel.md))
 - **OME-Zarr & Kiln binary** — Stream from S3, CDN, or load local files (OME-Zarr v0.4/v0.5, uint8/uint16/int16/float32)
 - **Local filesystem** — Load local `.zarr` / `.ome.zarr` directories via the File System Access API (Chrome/Edge)
 - **uint8, uint16, int16 & float32 input** — `uint16` is stored bit-exact as `r16unorm` where the GPU supports it, otherwise as `r16float` (exact up to 12 bits); `int16` and `float32` use `r16float`, with window/level controls
-- **Compute shader raymarching** — Brick-aware DVR (with density scale and optional gradient shading), MIP, isosurface, and slice plane rendering
+- **Compute shader raymarching** — Brick-aware DVR (with density scale, optional gradient shading and boundary emphasis), MIP, isosurface, and slice plane rendering
+- **Label layers** — Up to 8 OME-Zarr segmentations over the volume, as shaded surfaces in 3D and filled on slices ([details](docs/rendering/labels.md))
+- **Views** — Quad layout with front, side and top panes around the 3D view, and orthographic projection
 - **Embeddable** — `KilnViewer` for a canvas in a few lines, or `KilnEngine` for apps that bring their own WebGPU device, camera and frame loop
 
 ## Developing from source
@@ -103,7 +105,7 @@ Make sure hardware acceleration is enabled in your browser settings.
 
 ## Contributing
 
-Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Questions go to [Discussions](https://github.com/MPanknin/kiln-render/discussions).
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Questions go to [Discussions](https://github.com/kilnrender/kiln-render/discussions).
 
 ## Citing Kiln
 

@@ -42,3 +42,7 @@ jobs:
         # The package is ESM-only by design (exports has only "import"), so skip
         # the CommonJS resolution modes instead of failing on "dynamic import only".
         run: bunx @arethetypeswrong/cli --pack . --profile esm-only
+
+      - name: Type-check the packed tarball as a consumer
+        # skipLibCheck off: catches dev-only imports and names removed by stripInternal (0.6.0)
+        run: node scripts/check-consumer-types.mjs

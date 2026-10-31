@@ -19,6 +19,14 @@ Without WebGPU, `KilnViewer.create()` rejects with an error, which the demo show
 
 Almost always CORS. The server must send `Access-Control-Allow-Origin` for your site, and allow the `Range` header for sharded binary and sharded Zarr. See [Hosting](/data/hosting).
 
+## Why are there 404s in the browser console?
+
+Kiln looks for metadata that may not exist: the other Zarr version's root document, and the `labels` group, which most datasets don't have. A missing document is a normal answer, but the browser still logs the 404. They don't affect loading.
+
+## TypeScript 7 reports duplicate WebGPU identifiers
+
+TypeScript 7 includes the WebGPU types in its DOM library, and Kiln's types also load `@webgpu/types`. Set `skipLibCheck: true` in your `tsconfig.json` until a later Kiln release drops the bundled copy.
+
 ## How much VRAM does Kiln use?
 
 The atlas and indirection table stay within a fixed budget, ~1.3 GiB by default (`atlasBudgetBytes`), whatever the dataset size. Render targets come on top. See [Memory budget](/architecture/memory-budget).

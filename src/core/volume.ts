@@ -63,7 +63,7 @@ export async function detectBest16BitFormat(device: GPUDevice, isFloat = false):
       console.log(`[Kiln] Using ${format} for 16-bit atlas texture`);
       return format;
     }
-    console.warn(`[Kiln] ${format} cannot be used as a filterable 3D atlas; trying next format.`);
+    console.info(`[Kiln] ${format} cannot be used as a filterable 3D atlas; trying next format.`);
   }
 
   throw new Error('[Kiln] No filterable atlas texture format is available');

@@ -4,14 +4,14 @@
 [![CI](https://github.com/kilnrender/kiln-render/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kilnrender/kiln-render/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![OME-NGFF tools registry](https://img.shields.io/badge/OME--NGFF-tools%20registry-2b8cbe)](https://ngff.openmicroscopy.org/resources/tools/index.html)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23015443.svg)](https://doi.org/10.5281/zenodo.23015443)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23015442.svg)](https://doi.org/10.5281/zenodo.23015442)
 
 
 A WebGPU-native out-of-core volume rendering system for large virtualized volumetric datasets.
 
 Kiln streams multi-gigabyte volumes over HTTP, rendering them at interactive framerates using a bounded GPU residency/atlas cache and virtual-texture indirection. It handles single-channel and multichannel OME-Zarr datasets (up to 4 channels).
 
-> **v0.6.0** — Multichannel rendering is in **beta**; see [Multichannel](docs/rendering/multichannel.md) for details and known limitations.
+> **v0.6.1** — Multichannel rendering is in **beta**; see [Multichannel](docs/rendering/multichannel.md) for details and known limitations.
 
 **Documentation:** New to Kiln? Start with the [Guide](docs/guide/introduction.md), or browse the [full docs index](docs/README.md).
 
@@ -27,7 +27,7 @@ Kiln streams multi-gigabyte volumes over HTTP, rendering them at interactive fra
 npm install kiln-render
 ```
 
-Ships as an ES module with bundled dependencies and TypeScript types (including `@webgpu/types`) — no peer packages to install.
+Ships as an ES module with bundled dependencies and TypeScript types (including `@webgpu/types`) — no peer packages to install. Use it with a bundler or dev server such as [Vite](https://vite.dev); a plain `<script type="module">` can't resolve `kiln-render`.
 
 ## Usage
 

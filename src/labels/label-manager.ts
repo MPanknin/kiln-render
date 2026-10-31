@@ -21,7 +21,7 @@ import { MAX_LABEL_LAYERS } from '../shaders/uniform-layout.js';
 import { ENTRY_MIXED, ENTRY_UNIFORM, PICK_BYTES } from './label-gpu.js';
 import type { LabelGpu } from './label-gpu.js';
 import { LabelLayer } from './label-layer.js';
-import type { LabelBinding, LabelBound, LabelLayerHost, LabelLayerOptions, ResidentLabelBrick } from './label-layer.js';
+import type { LabelBinding, LabelBound, LabelLayerOptions, ResidentLabelBrick } from './label-layer.js';
 import { resolveColor, unpackRgba } from './label-colors.js';
 
 /** Label bricks loading at once, across layers; they share the network with the image. */
@@ -94,7 +94,7 @@ interface Load {
   controller: AbortController | null;
 }
 
-export class LabelManager implements LabelLayerHost {
+export class LabelManager {
   readonly gpu: LabelGpu;
   /** Label images in the dataset's `labels` group */
   available: readonly string[] = [];
